@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "Sf4qZbpC9yrfRiEeBhkXZ"
+uri = "file://pulse-project.zip"
+type = "unspecified"
+title = "Pulse — Project ZIP"
