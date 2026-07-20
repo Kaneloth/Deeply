@@ -1,8 +1,20 @@
 import { Router, type IRouter } from "express";
 import healthRouter from "./health";
+import authRouter from "./auth";
+import profileRouter from "./profile";
+import discoverRouter from "./discover";
+import matchesRouter from "./matches";
+import messagesRouter from "./messages";
+import sparksRouter from "./sparks";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
+router.use(authRouter);
+router.use(profileRouter);
+router.use(discoverRouter);
+router.use(matchesRouter);
+router.use(messagesRouter);
+router.use(sparksRouter);
 
 export default router;

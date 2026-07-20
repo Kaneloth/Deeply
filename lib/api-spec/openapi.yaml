@@ -1,36 +1,642 @@
-openapi: 3.1.0
+openapi: "3.1.0"
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
-  version: 0.1.0
-  description: API specification
+  version: "1.0.0"
 servers:
   - url: /api
-    description: Base API path
-tags:
-  - name: health
-    description: Health operations
+
 paths:
   /healthz:
     get:
-      operationId: healthCheck
-      tags: [health]
+      operationId: getHealth
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
-          description: Healthy
+          description: OK
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  # ─── Profile ───────────────────────────────────────────────────────────────
+  /profile/me:
+    get:
+      operationId: getMyProfile
+      summary: Get current user profile
+      responses:
+        "200":
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+        "401":
+          description: Unauthorized
+    put:
+      operationId: updateMyProfile
+      summary: Update current user profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileUpdate"
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+
+  /profile/{userId}:
+    get:
+      operationId: getUserProfile
+      summary: Get another user's profile (for match view)
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+        "404":
+          description: Not found
+
+  # ─── Audio Prompts ──────────────────────────────────────────────────────────
+  /prompts:
+    get:
+      operationId: getMyPrompts
+      summary: Get my audio prompt responses
+      responses:
+        "200":
+          description: List of prompts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AudioPrompt"
+    post:
+      operationId: createPrompt
+      summary: Add an audio prompt response
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AudioPromptInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AudioPrompt"
+
+  # ─── Discover ──────────────────────────────────────────────────────────────
+  /discover/today:
+    get:
+      operationId: getTodayMatch
+      summary: Get today's curated match
+      responses:
+        "200":
+          description: Today's match card (null if no match today)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiscoverCard"
+        "204":
+          description: No match today
+
+  # ─── Matches ───────────────────────────────────────────────────────────────
+  /matches:
+    get:
+      operationId: getMatches
+      summary: List all active matches with countdown info
+      responses:
+        "200":
+          description: Active matches
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Match"
+
+  /matches/{matchId}:
+    get:
+      operationId: getMatch
+      summary: Get a single match
+      parameters:
+        - name: matchId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Match detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Match"
+        "404":
+          description: Not found
+
+  /matches/{matchId}/accept:
+    post:
+      operationId: acceptMatch
+      summary: Accept a match blind (no photo reveal)
+      parameters:
+        - name: matchId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Accepted match
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Match"
+
+  /matches/{matchId}/reveal:
+    post:
+      operationId: revealMatchPhoto
+      summary: Reveal match photo early (costs 2 Sparks)
+      parameters:
+        - name: matchId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Match with photo revealed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Match"
+        "402":
+          description: Insufficient Sparks
+
+  /matches/{matchId}/extend:
+    post:
+      operationId: extendMatch
+      summary: Extend match timer by 2 hours (costs 1 Spark)
+      parameters:
+        - name: matchId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Match with extended timer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Match"
+        "402":
+          description: Insufficient Sparks
+
+  /matches/{matchId}/unlock-chat:
+    post:
+      operationId: unlockChat
+      summary: Use a chat key to unlock messaging (1 free/day, else 5 Sparks)
+      parameters:
+        - name: matchId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Chat unlocked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Match"
+        "402":
+          description: Insufficient Sparks or keys
+
+  /matches/{matchId}/stretch:
+    post:
+      operationId: stretchMessages
+      summary: Add 10 more messages to a chat (costs 3 Sparks)
+      parameters:
+        - name: matchId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Match with increased message limit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Match"
+        "402":
+          description: Insufficient Sparks
+
+  # ─── Messages ──────────────────────────────────────────────────────────────
+  /matches/{matchId}/messages:
+    get:
+      operationId: getMessages
+      summary: Get messages for a match
+      parameters:
+        - name: matchId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Message list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Message"
+    post:
+      operationId: sendMessage
+      summary: Send a message in a match
+      parameters:
+        - name: matchId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessageInput"
+      responses:
+        "201":
+          description: Sent message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+        "403":
+          description: Chat locked or message limit reached
+
+  /messages/{messageId}/unsend:
+    post:
+      operationId: unsendMessage
+      summary: Unsend a message within 60s (costs 2 Sparks after 1 free/day)
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Message unsent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+        "402":
+          description: Insufficient Sparks
+        "410":
+          description: Unsend window expired (>60s)
+
+  # ─── Sparks ────────────────────────────────────────────────────────────────
+  /sparks:
+    get:
+      operationId: getSparks
+      summary: Get current Sparks balance and weekly stats
+      responses:
+        "200":
+          description: Sparks balance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SparksBalance"
+
+  /sparks/history:
+    get:
+      operationId: getSparksHistory
+      summary: Get recent Sparks transaction history
+      responses:
+        "200":
+          description: Transaction history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SparksTransaction"
+
+  /sparks/bundles:
+    get:
+      operationId: getSparksBundles
+      summary: Get available Sparks purchase bundles
+      responses:
+        "200":
+          description: Available bundles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SparksBundle"
+
+  /sparks/earn:
+    post:
+      operationId: claimDailyEarn
+      summary: Claim a daily Sparks earn action
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EarnClaimInput"
+      responses:
+        "200":
+          description: Updated balance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SparksBalance"
+        "409":
+          description: Already claimed today
+
+  /sparks/purchase:
+    post:
+      operationId: purchaseSparks
+      summary: Simulate purchasing a Sparks bundle
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchaseInput"
+      responses:
+        "200":
+          description: Updated balance after purchase
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SparksBalance"
+
 components:
   schemas:
     HealthStatus:
       type: object
+      required: [status]
       properties:
         status:
           type: string
-      required:
-        - status
 
+    UserProfile:
+      type: object
+      required: [id, name, age, sparks_balance, integrity_score]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        age:
+          type: integer
+        bio:
+          type: ["string", "null"]
+        city:
+          type: ["string", "null"]
+        photo_url:
+          type: ["string", "null"]
+        sparks_balance:
+          type: integer
+        integrity_score:
+          type: integer
+        personality_tags:
+          type: array
+          items:
+            type: string
+        is_verified:
+          type: boolean
+        created_at:
+          type: string
+
+    ProfileUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        age:
+          type: integer
+        bio:
+          type: string
+        city:
+          type: string
+        photo_url:
+          type: string
+        personality_tags:
+          type: array
+          items:
+            type: string
+
+    AudioPrompt:
+      type: object
+      required: [id, user_id, prompt_question, audio_url]
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        prompt_question:
+          type: string
+        audio_url:
+          type: string
+        duration_seconds:
+          type: ["integer", "null"]
+        created_at:
+          type: string
+
+    AudioPromptInput:
+      type: object
+      required: [prompt_question, audio_url]
+      properties:
+        prompt_question:
+          type: string
+        audio_url:
+          type: string
+        duration_seconds:
+          type: integer
+
+    DiscoverCard:
+      type: object
+      required: [match_id, expires_at, audio_prompts]
+      properties:
+        match_id:
+          type: string
+        user_id:
+          type: string
+        name:
+          type: string
+        age:
+          type: integer
+        city:
+          type: ["string", "null"]
+        distance_km:
+          type: ["number", "null"]
+        photo_url:
+          type: ["string", "null"]
+        photo_revealed:
+          type: boolean
+        audio_prompts:
+          type: array
+          items:
+            $ref: "#/components/schemas/AudioPrompt"
+        personality_tags:
+          type: array
+          items:
+            type: string
+        expires_at:
+          type: string
+        status:
+          type: string
+
+    Match:
+      type: object
+      required: [id, status, expires_at, chat_unlocked, message_count, message_limit, photo_revealed]
+      properties:
+        id:
+          type: string
+        matched_user:
+          $ref: "#/components/schemas/UserProfile"
+        status:
+          type: string
+        photo_revealed:
+          type: boolean
+        chat_unlocked:
+          type: boolean
+        message_count:
+          type: integer
+        message_limit:
+          type: integer
+        expires_at:
+          type: string
+        matched_at:
+          type: ["string", "null"]
+        created_at:
+          type: string
+
+    Message:
+      type: object
+      required: [id, match_id, sender_id, content, sent_at, is_read, is_unsent]
+      properties:
+        id:
+          type: string
+        match_id:
+          type: string
+        sender_id:
+          type: string
+        content:
+          type: string
+        is_read:
+          type: boolean
+        is_unsent:
+          type: boolean
+        sent_at:
+          type: string
+
+    MessageInput:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          minLength: 1
+
+    SparksBalance:
+      type: object
+      required: [balance, earned_this_week, spent_this_week]
+      properties:
+        balance:
+          type: integer
+        earned_this_week:
+          type: integer
+        spent_this_week:
+          type: integer
+        free_keys_remaining:
+          type: integer
+        free_unsends_remaining:
+          type: integer
+        daily_earn_available:
+          type: array
+          items:
+            $ref: "#/components/schemas/DailyEarnOption"
+
+    DailyEarnOption:
+      type: object
+      required: [type, amount, claimed, label]
+      properties:
+        type:
+          type: string
+        label:
+          type: string
+        amount:
+          type: integer
+        claimed:
+          type: boolean
+
+    SparksTransaction:
+      type: object
+      required: [id, amount, reason, balance_after, created_at]
+      properties:
+        id:
+          type: string
+        amount:
+          type: integer
+        reason:
+          type: string
+        balance_after:
+          type: integer
+        created_at:
+          type: string
+
+    SparksBundle:
+      type: object
+      required: [id, name, sparks, price_usd, label]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        sparks:
+          type: integer
+        price_usd:
+          type: number
+        label:
+          type: ["string", "null"]
+        description:
+          type: ["string", "null"]
+
+    EarnClaimInput:
+      type: object
+      required: [claim_type]
+      properties:
+        claim_type:
+          type: string
+
+    PurchaseInput:
+      type: object
+      required: [bundle_id]
+      properties:
+        bundle_id:
+          type: string

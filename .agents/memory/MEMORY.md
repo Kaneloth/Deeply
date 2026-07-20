@@ -1,0 +1,1 @@
+- [Pulse architecture](pulse-arch.md) — full-stack dating app: Express API (Supabase admin), React frontend (generated hooks + raw fetch auth), no direct Supabase client on frontend.
