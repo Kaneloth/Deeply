@@ -24,7 +24,10 @@ const signupSchema = loginSchema.extend({
 
 export default function AuthPage() {
   const [isLogin, setIsLogin] = useState(true);
-  const [awaitingConfirmation, setAwaitingConfirmation] = useState<string | null>(null);
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
+  const [code, setCode] = useState("");
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [isResending, setIsResending] = useState(false);
   const { login } = useAuth();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -75,7 +78,7 @@ export default function AuthPage() {
       if (!res.ok) throw new Error(body.error ?? "Signup failed");
 
       if (body.requiresEmailConfirmation) {
-        setAwaitingConfirmation(body.user?.email ?? data.email);
+        setPendingEmail(body.user?.email ?? data.email);
         return;
       }
 
@@ -92,29 +95,92 @@ export default function AuthPage() {
     }
   };
 
-  if (awaitingConfirmation) {
+  const onVerifyCode = async () => {
+    if (!pendingEmail || code.length !== 6) return;
+    setIsVerifying(true);
+    try {
+      const res = await fetch("/api/auth/verify-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: pendingEmail, code }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Invalid or expired code");
+      login(body.access_token);
+      setLocation("/onboarding");
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Invalid or expired code.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  const onResendCode = async () => {
+    if (!pendingEmail) return;
+    setIsResending(true);
+    try {
+      const res = await fetch("/api/auth/resend-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: pendingEmail }),
+      });
+      if (!res.ok) {
+        const body = await res.json();
+        throw new Error(body.error ?? "Could not resend code");
+      }
+      toast({ title: "Code sent", description: "Check your inbox for a new code." });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Could not resend code.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsResending(false);
+    }
+  };
+
+  if (pendingEmail) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[100dvh] px-6 w-full relative text-center">
         <div className="absolute top-[-10%] left-[-20%] w-[150%] h-[50%] bg-primary/20 blur-[120px] rounded-full pointer-events-none" />
-        <div className="z-10 max-w-sm">
+        <div className="z-10 w-full max-w-sm">
           <HeartbeatVisual />
           <h1 className="text-2xl font-['Syne'] font-extrabold mt-6 mb-3">
-            Check your email
+            Enter your code
           </h1>
           <p className="text-muted-foreground text-sm mb-6">
-            We sent a confirmation link to <span className="text-foreground font-medium">{awaitingConfirmation}</span>.
-            Click the link to activate your account, then come back and log in.
+            We sent a 6-digit code to <span className="text-foreground font-medium">{pendingEmail}</span>.
           </p>
+
+          <Input
+            value={code}
+            onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+            placeholder="123456"
+            inputMode="numeric"
+            maxLength={6}
+            className="bg-card border-card-border text-center text-2xl tracking-[0.5em] h-14 mb-4"
+          />
+
           <Button
-            variant="outline"
-            className="w-full h-12 rounded-xl text-base font-semibold"
-            onClick={() => {
-              setAwaitingConfirmation(null);
-              setIsLogin(true);
-            }}
+            className="w-full h-12 rounded-xl text-base font-semibold bg-gradient-accent border-0 mb-3"
+            disabled={code.length !== 6 || isVerifying}
+            onClick={onVerifyCode}
           >
-            Back to Log In
+            {isVerifying ? "Verifying..." : "Verify"}
           </Button>
+
+          <button
+            onClick={onResendCode}
+            disabled={isResending}
+            className="text-muted-foreground text-sm hover:text-primary transition-colors font-medium"
+          >
+            {isResending ? "Sending..." : "Didn't get it? Resend code"}
+          </button>
         </div>
       </div>
     );
