@@ -2,6 +2,9 @@
   command = "pnpm --filter @workspace/pulse-app... run build"
   publish = "artifacts/pulse-app/dist/public"
 
+[build.environment]
+  PNPM_FLAGS = "--no-frozen-lockfile"
+
 [functions]
   directory = "netlify/functions"
   node_bundler = "esbuild"
