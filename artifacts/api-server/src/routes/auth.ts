@@ -23,12 +23,30 @@ router.post("/auth/signup", async (req, res): Promise<void> => {
     options: { data: { name, age } },
   });
 
-  if (error || !data.user || !data.session) {
-    res.status(400).json({ error: error?.message ?? "Signup failed" });
+  if (error) {
+    res.status(400).json({ error: error.message });
     return;
   }
 
-  // Fetch the auto-created profile
+  if (!data.user) {
+    res.status(400).json({ error: "Signup failed" });
+    return;
+  }
+
+  // No session means Supabase created the account but is waiting on email
+  // confirmation before issuing a session. This is a SUCCESS case, not an
+  // error — the frontend should show a "check your email" message rather
+  // than logging the user in immediately.
+  if (!data.session) {
+    res.status(201).json({
+      requiresEmailConfirmation: true,
+      user: { id: data.user.id, email: data.user.email },
+    });
+    return;
+  }
+
+  // Email confirmation is off (or already confirmed) — a session came back
+  // immediately, so log the user in right away as before.
   const { data: profile } = await supabase
     .from("profiles")
     .select("*")
@@ -60,7 +78,13 @@ router.post("/auth/login", async (req, res): Promise<void> => {
   });
 
   if (error || !data.user || !data.session) {
-    res.status(401).json({ error: error?.message ?? "Invalid credentials" });
+    // Give a clearer message when the real cause is an unconfirmed email,
+    // rather than a generic "invalid credentials".
+    const message =
+      error?.message === "Email not confirmed"
+        ? "Please confirm your email before logging in. Check your inbox for the confirmation link."
+        : (error?.message ?? "Invalid credentials");
+    res.status(401).json({ error: message });
     return;
   }
 

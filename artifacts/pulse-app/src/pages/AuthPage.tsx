@@ -24,6 +24,7 @@ const signupSchema = loginSchema.extend({
 
 export default function AuthPage() {
   const [isLogin, setIsLogin] = useState(true);
+  const [awaitingConfirmation, setAwaitingConfirmation] = useState<string | null>(null);
   const { login } = useAuth();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -47,14 +48,14 @@ export default function AuthPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error("Login failed");
-      const { access_token } = await res.json();
-      login(access_token);
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Login failed");
+      login(body.access_token);
       setLocation("/discover");
     } catch (err) {
       toast({
         title: "Error",
-        description: "Invalid credentials. Please try again.",
+        description: err instanceof Error ? err.message : "Invalid credentials. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -70,20 +71,54 @@ export default function AuthPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error("Signup failed");
-      const { access_token } = await res.json();
-      login(access_token);
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Signup failed");
+
+      if (body.requiresEmailConfirmation) {
+        setAwaitingConfirmation(body.user?.email ?? data.email);
+        return;
+      }
+
+      login(body.access_token);
       setLocation("/onboarding");
     } catch (err) {
       toast({
         title: "Error",
-        description: "Could not create account. Email may be taken.",
+        description: err instanceof Error ? err.message : "Could not create account. Email may be taken.",
         variant: "destructive",
       });
     } finally {
       setIsLoading(false);
     }
   };
+
+  if (awaitingConfirmation) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[100dvh] px-6 w-full relative text-center">
+        <div className="absolute top-[-10%] left-[-20%] w-[150%] h-[50%] bg-primary/20 blur-[120px] rounded-full pointer-events-none" />
+        <div className="z-10 max-w-sm">
+          <HeartbeatVisual />
+          <h1 className="text-2xl font-['Syne'] font-extrabold mt-6 mb-3">
+            Check your email
+          </h1>
+          <p className="text-muted-foreground text-sm mb-6">
+            We sent a confirmation link to <span className="text-foreground font-medium">{awaitingConfirmation}</span>.
+            Click the link to activate your account, then come back and log in.
+          </p>
+          <Button
+            variant="outline"
+            className="w-full h-12 rounded-xl text-base font-semibold"
+            onClick={() => {
+              setAwaitingConfirmation(null);
+              setIsLogin(true);
+            }}
+          >
+            Back to Log In
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[100dvh] px-6 w-full relative">
