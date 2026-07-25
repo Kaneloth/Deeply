@@ -13,3 +13,12 @@
   from = "/api/*"
   to = "/.netlify/functions/api"
   status = 200
+
+# SPA fallback: any other path that isn't a real file (like /discover,
+# /matches, /profile, etc.) should serve index.html so the app's own
+# client-side router can handle it. This MUST come after the /api/*
+# rule above, since redirects are matched in order.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
