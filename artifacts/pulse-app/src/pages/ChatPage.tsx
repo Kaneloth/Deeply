@@ -112,6 +112,17 @@ export default function ChatPage() {
         },
         body: JSON.stringify({ content }),
       });
+
+      if (res.status === 402) {
+        setInput(content);
+        toast({
+          title: "You're out of Sparks",
+          description: "Recharge now or wait for your next monthly grant to keep messaging.",
+          variant: "destructive",
+        });
+        return;
+      }
+
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to send message");
       await fetchMessages();
