@@ -4,7 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, Send } from "lucide-react";
+import { ChevronLeft, Send, Undo2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface MatchedUser {
@@ -138,6 +138,49 @@ export default function ChatPage() {
     }
   };
 
+  const handleUnsend = async (messageId: string) => {
+    try {
+      const res = await fetch(`/api/messages/${messageId}/unsend`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (res.status === 410) {
+        toast({
+          title: "Too late",
+          description: "The unsend window for this message has passed.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      if (res.status === 402) {
+        toast({
+          title: "You're out of Sparks",
+          description: "Recharge now or wait for your next monthly grant to unsend messages.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to unsend message");
+      await fetchMessages();
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to unsend message.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const canUnsend = (msg: Message) => {
+    if (msg.is_unsent) return false;
+    if (!isMyMsg(msg.sender_id)) return false;
+    return Date.now() - new Date(msg.sent_at).getTime() <= 5 * 60 * 1000;
+  };
+
   if (matchLoading) {
     return (
       <div className="p-6 pt-12">
@@ -191,8 +234,18 @@ export default function ChatPage() {
         ) : (
           messages.map((msg, i) => {
             const mine = isMyMsg(msg.sender_id);
+            const showUnsend = mine && canUnsend(msg);
             return (
-              <div key={msg.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+              <div key={msg.id} className={`flex items-end gap-1.5 ${mine ? "justify-end" : "justify-start"}`}>
+                {mine && showUnsend && (
+                  <button
+                    onClick={() => handleUnsend(msg.id)}
+                    title="Unsend"
+                    className="w-6 h-6 rounded-full flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-secondary transition-colors shrink-0 mb-1"
+                  >
+                    <Undo2 size={14} />
+                  </button>
+                )}
                 <div
                   className={`max-w-[75%] px-4 py-2.5 text-[15px] leading-snug ${
                     mine

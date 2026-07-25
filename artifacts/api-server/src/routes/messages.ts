@@ -121,8 +121,8 @@ router.post("/messages/:messageId/unsend", requireAuth, async (req, res): Promis
 
   const sentAt = new Date(message.sent_at).getTime();
   const now = Date.now();
-  if (now - sentAt > 60 * 1000) {
-    res.status(410).json({ error: "Unsend window expired (60 seconds)" });
+  if (now - sentAt > 5 * 60 * 1000) {
+    res.status(410).json({ error: "Unsend window expired (5 minutes)" });
     return;
   }
 
