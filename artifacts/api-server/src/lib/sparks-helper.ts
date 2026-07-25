@@ -149,3 +149,10 @@ export async function getSparksSummary(userId: string): Promise<{
     next_grant_at: profile.next_spark_grant_at,
   };
 }
+
+/**
+ * @deprecated Use spendSparks instead. Kept as an alias so older callers
+ * (like the pre-Phase-3 messages route) don't break the build while
+ * they're being migrated.
+ */
+export const deductSparks = spendSparks;
