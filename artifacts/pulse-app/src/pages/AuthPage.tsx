@@ -53,7 +53,7 @@ export default function AuthPage() {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Login failed");
-      login(body.access_token);
+      login(body.access_token, body.refresh_token, body.expires_in);
       setLocation("/discover");
     } catch (err) {
       toast({
@@ -82,7 +82,7 @@ export default function AuthPage() {
         return;
       }
 
-      login(body.access_token);
+      login(body.access_token, body.refresh_token, body.expires_in);
       setLocation("/onboarding");
     } catch (err) {
       toast({
@@ -106,7 +106,7 @@ export default function AuthPage() {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Invalid or expired code");
-      login(body.access_token);
+      login(body.access_token, body.refresh_token, body.expires_in);
       setLocation("/onboarding");
     } catch (err) {
       toast({
