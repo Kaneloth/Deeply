@@ -194,10 +194,10 @@ export default function AuthPage() {
       <div className="w-full z-10 flex flex-col items-center mt-[-10vh] mb-12">
         <HeartbeatVisual />
         <h1 className="text-5xl font-['Syne'] font-extrabold text-transparent bg-clip-text bg-gradient-accent mt-4 tracking-tighter">
-          PULSE
+          DEEPLY
         </h1>
         <p className="text-muted-foreground text-sm mt-2 text-center max-w-[280px]">
-          Match slower. Date faster. Ghost never.
+          Deep connections begin with a spark.
         </p>
       </div>
 
