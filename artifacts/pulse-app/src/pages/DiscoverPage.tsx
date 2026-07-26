@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { Link } from "wouter";
-import { motion, AnimatePresence, useMotionValue, useTransform, type PanInfo } from "framer-motion";
+import { Link, useLocation } from "wouter";
+import { motion, AnimatePresence, type PanInfo } from "framer-motion";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { X, Heart, Star, MapPin } from "lucide-react";
+import { X, Heart, MessageCircle, MapPin } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface Candidate {
@@ -14,79 +15,112 @@ interface Candidate {
   bio: string | null;
   city: string | null;
   photo_url: string | null;
+  photos: string[];
   personality_tags: string[];
   integrity_score: number;
 }
 
 type SwipeDirection = "like" | "pass" | "super_like";
 
+const EXIT_VARIANTS: Record<SwipeDirection, { x?: number; y?: number; opacity: number; rotate?: number; scale?: number }> = {
+  like: { x: 400, opacity: 0, rotate: 20 },
+  pass: { x: -400, opacity: 0, rotate: -20 },
+  super_like: { y: -400, opacity: 0, scale: 1.05 },
+};
+
 function SwipeCard({
   candidate,
-  onSwipe,
   isTop,
+  isExiting,
+  exitDirection,
 }: {
   candidate: Candidate;
-  onSwipe: (direction: SwipeDirection) => void;
   isTop: boolean;
+  isExiting: boolean;
+  exitDirection: SwipeDirection | null;
 }) {
-  const x = useMotionValue(0);
-  const rotate = useTransform(x, [-200, 200], [-15, 15]);
-  const likeOpacity = useTransform(x, [20, 120], [0, 1]);
-  const passOpacity = useTransform(x, [-120, -20], [1, 0]);
+  const [photoIndex, setPhotoIndex] = useState(0);
+  const photos = candidate.photos.length > 0 ? candidate.photos : [];
 
-  const handleDragEnd = (_: unknown, info: PanInfo) => {
-    if (info.offset.x > 120) {
-      onSwipe("like");
-    } else if (info.offset.x < -120) {
-      onSwipe("pass");
-    }
+  const goNext = () => setPhotoIndex((i) => Math.min(i + 1, Math.max(photos.length - 1, 0)));
+  const goPrev = () => setPhotoIndex((i) => Math.max(i - 1, 0));
+
+  // Photo browsing drag — Instagram-style. This is a SEPARATE gesture from
+  // the invite/pass decision (which is button-only below). Dragging here
+  // only ever changes which photo is shown; it can never trigger a match
+  // decision, and always snaps back to place.
+  const handlePhotoDragEnd = (_: unknown, info: PanInfo) => {
+    if (info.offset.x < -50) goNext();
+    else if (info.offset.x > 50) goPrev();
   };
 
   return (
     <motion.div
       className="absolute inset-0"
-      style={isTop ? { x, rotate } : undefined}
-      drag={isTop ? "x" : false}
-      dragConstraints={{ left: 0, right: 0 }}
-      onDragEnd={isTop ? handleDragEnd : undefined}
       initial={{ scale: 0.95, opacity: 0 }}
-      animate={{ scale: 1, opacity: 1 }}
-      exit={{ opacity: 0, scale: 0.9 }}
-      transition={{ duration: 0.2 }}
+      animate={
+        isExiting && exitDirection
+          ? EXIT_VARIANTS[exitDirection]
+          : { scale: 1, opacity: 1, x: 0, y: 0, rotate: 0 }
+      }
+      transition={{ duration: 0.3, ease: "easeOut" }}
     >
       <div className="w-full h-full bg-card border border-card-border rounded-3xl overflow-hidden shadow-2xl relative flex flex-col">
-        {/* Photo */}
+        {/* Photo carousel */}
         <div className="relative flex-1 min-h-[400px] w-full bg-muted overflow-hidden">
-          {candidate.photo_url ? (
-            <img src={candidate.photo_url} alt={candidate.name} className="w-full h-full object-cover" draggable={false} />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-card to-background">
-              <span className="text-primary text-6xl font-bold font-['Syne'] opacity-20">
-                {candidate.name?.[0]}
-              </span>
+          {photos.length > 1 && (
+            <div className="absolute top-3 left-3 right-3 z-20 flex gap-1 pointer-events-none">
+              {photos.map((_, idx) => (
+                <div key={idx} className="flex-1 h-1 rounded-full bg-white/30 overflow-hidden">
+                  <div className={`h-full bg-white transition-all duration-200 ${idx <= photoIndex ? "w-full" : "w-0"}`} />
+                </div>
+              ))}
             </div>
           )}
 
-          {isTop && (
+          <motion.div
+            drag={isTop && photos.length > 1 ? "x" : false}
+            dragConstraints={{ left: 0, right: 0 }}
+            dragElastic={0.15}
+            onDragEnd={isTop ? handlePhotoDragEnd : undefined}
+            className="w-full h-full"
+          >
+            {photos[photoIndex] ? (
+              <img
+                src={photos[photoIndex]}
+                alt={candidate.name}
+                className="w-full h-full object-cover"
+                draggable={false}
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-card to-background">
+                <span className="text-primary text-6xl font-bold font-['Syne'] opacity-20">
+                  {candidate.name?.[0]}
+                </span>
+              </div>
+            )}
+          </motion.div>
+
+          {/* Tap zones for photo browsing — distinct from, and never
+              triggers, the invite/pass decision. */}
+          {isTop && photos.length > 1 && (
             <>
-              <motion.div
-                style={{ opacity: likeOpacity }}
-                className="absolute top-8 left-8 border-4 border-primary text-primary font-['Syne'] font-extrabold text-3xl px-4 py-1 rounded-xl rotate-[-12deg]"
-              >
-                INVITE
-              </motion.div>
-              <motion.div
-                style={{ opacity: passOpacity }}
-                className="absolute top-8 right-8 border-4 border-muted-foreground text-muted-foreground font-['Syne'] font-extrabold text-3xl px-4 py-1 rounded-xl rotate-[12deg]"
-              >
-                PASS
-              </motion.div>
+              <button
+                onClick={goPrev}
+                aria-label="Previous photo"
+                className="absolute left-0 top-0 bottom-0 w-1/3 z-10"
+              />
+              <button
+                onClick={goNext}
+                aria-label="Next photo"
+                className="absolute right-0 top-0 bottom-0 w-1/3 z-10"
+              />
             </>
           )}
 
-          <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-card to-transparent" />
+          <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-card to-transparent pointer-events-none" />
 
-          <div className="absolute bottom-4 left-6 right-6">
+          <div className="absolute bottom-4 left-6 right-6 pointer-events-none z-10">
             <h2 className="text-3xl font-['Syne'] font-bold text-white flex items-end gap-2">
               {candidate.name} <span className="text-xl font-normal text-white/80">{candidate.age}</span>
             </h2>
@@ -142,7 +176,7 @@ function MatchCelebration({ name, onContinue }: { name: string; onContinue: () =
           onClick={onContinue}
           className="w-full max-w-xs h-14 rounded-2xl bg-gradient-accent border-0 text-white font-bold text-lg shadow-[0_8px_20px_rgba(225,29,72,0.3)]"
         >
-          Keep Swiping
+          Keep Browsing
         </Button>
       </motion.div>
     </motion.div>
@@ -152,11 +186,16 @@ function MatchCelebration({ name, onContinue }: { name: string; onContinue: () =
 export default function DiscoverPage() {
   const { token } = useAuth();
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [matchName, setMatchName] = useState<string | null>(null);
   const [isSwiping, setIsSwiping] = useState(false);
   const [invitesCount, setInvitesCount] = useState<number>(0);
+  const [exiting, setExiting] = useState<{ id: string; direction: SwipeDirection } | null>(null);
+  const [composeFor, setComposeFor] = useState<Candidate | null>(null);
+  const [messageText, setMessageText] = useState("");
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
 
   const fetchInvitesCount = useCallback(async () => {
     try {
@@ -196,26 +235,32 @@ export default function DiscoverPage() {
     fetchInvitesCount();
   }, [fetchQueue, fetchInvitesCount]);
 
-  const handleSwipe = async (direction: SwipeDirection) => {
+  const handleDecision = async (direction: SwipeDirection) => {
     if (isSwiping || candidates.length === 0) return;
     const target = candidates[0];
     setIsSwiping(true);
+    setExiting({ id: target.id, direction });
 
-    // Optimistically pop the card so the UI feels instant.
-    setCandidates((prev) => prev.slice(1));
-
-    try {
-      const res = await fetch("/api/discover/swipe", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ targetId: target.id, direction }),
-      });
+    const apiCall = fetch("/api/discover/swipe", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ targetId: target.id, direction }),
+    }).then(async (res) => {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to record swipe");
+      return body;
+    });
 
+    // Let the exit animation play before actually removing the card.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    setCandidates((prev) => prev.filter((c) => c.id !== target.id));
+    setExiting(null);
+
+    try {
+      const body = await apiCall;
       if (body.matched) {
         setMatchName(target.name);
         fetchInvitesCount();
@@ -228,6 +273,46 @@ export default function DiscoverPage() {
       });
     } finally {
       setIsSwiping(false);
+    }
+  };
+
+  const handleSendPreMatchMessage = async () => {
+    if (!composeFor || !messageText.trim() || isSendingMessage) return;
+    setIsSendingMessage(true);
+    try {
+      const res = await fetch("/api/discover/message-request", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ targetId: composeFor.id, content: messageText.trim() }),
+      });
+
+      if (res.status === 402) {
+        toast({
+          title: "You're out of Sparks",
+          description: "Recharge now or wait for your next monthly grant to send this message.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to send message");
+
+      setCandidates((prev) => prev.filter((c) => c.id !== composeFor.id));
+      setComposeFor(null);
+      setMessageText("");
+      setLocation(`/matches/${body.matchId}/chat`);
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to send message.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSendingMessage(false);
     }
   };
 
@@ -278,7 +363,8 @@ export default function DiscoverPage() {
                 key={candidate.id}
                 candidate={candidate}
                 isTop={i === 0}
-                onSwipe={handleSwipe}
+                isExiting={exiting?.id === candidate.id}
+                exitDirection={exiting?.id === candidate.id ? exiting.direction : null}
               />
             ))}
           </AnimatePresence>
@@ -288,21 +374,24 @@ export default function DiscoverPage() {
       {visibleCards.length > 0 && (
         <div className="flex items-center justify-center gap-4 mt-6">
           <button
-            onClick={() => handleSwipe("pass")}
+            onClick={() => handleDecision("pass")}
             disabled={isSwiping}
             className="w-16 h-16 rounded-full bg-card border border-card-border flex items-center justify-center text-muted-foreground hover:border-destructive hover:text-destructive transition-colors shadow-lg active:scale-95"
           >
             <X size={28} />
           </button>
           <button
-            onClick={() => handleSwipe("super_like")}
+            onClick={() => {
+              const top = candidates[0];
+              if (top) setComposeFor(top);
+            }}
             disabled={isSwiping}
             className="w-12 h-12 rounded-full bg-card border border-card-border flex items-center justify-center text-accent hover:border-accent transition-colors shadow-lg active:scale-95"
           >
-            <Star size={20} className="fill-current" />
+            <MessageCircle size={20} />
           </button>
           <button
-            onClick={() => handleSwipe("like")}
+            onClick={() => handleDecision("like")}
             disabled={isSwiping}
             className="w-16 h-16 rounded-full bg-gradient-accent flex items-center justify-center text-white shadow-[0_8px_20px_rgba(225,29,72,0.3)] active:scale-95 transition-transform"
           >
@@ -314,6 +403,64 @@ export default function DiscoverPage() {
       <AnimatePresence>
         {matchName && (
           <MatchCelebration name={matchName} onContinue={() => setMatchName(null)} />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {composeFor && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-end"
+            onClick={() => {
+              if (!isSendingMessage) {
+                setComposeFor(null);
+                setMessageText("");
+              }
+            }}
+          >
+            <motion.div
+              initial={{ y: 100 }}
+              animate={{ y: 0 }}
+              exit={{ y: 100 }}
+              transition={{ type: "spring", damping: 24 }}
+              className="w-full max-w-[430px] mx-auto bg-card border-t border-card-border rounded-t-3xl p-6 pb-10"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="font-['Syne'] font-bold text-lg mb-1">Message {composeFor.name}</h3>
+              <p className="text-xs text-muted-foreground mb-4">
+                Send an opening message before you match.
+              </p>
+              <Textarea
+                value={messageText}
+                onChange={(e) => setMessageText(e.target.value)}
+                placeholder={`Say hi to ${composeFor.name}...`}
+                className="bg-background border-card-border min-h-[100px] resize-none rounded-xl"
+                autoFocus
+              />
+              <div className="flex gap-3 mt-4">
+                <Button
+                  variant="outline"
+                  className="flex-1 h-12 rounded-xl"
+                  onClick={() => {
+                    setComposeFor(null);
+                    setMessageText("");
+                  }}
+                  disabled={isSendingMessage}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="flex-1 h-12 rounded-xl bg-gradient-accent border-0 text-white font-semibold"
+                  onClick={handleSendPreMatchMessage}
+                  disabled={!messageText.trim() || isSendingMessage}
+                >
+                  {isSendingMessage ? "Sending..." : "Send"}
+                </Button>
+              </div>
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

@@ -8,6 +8,7 @@ const router: IRouter = Router();
 const SUPER_LIKE_COST = 20;
 const UNDO_COST = 10;
 const REVEAL_LIKES_COST = 30;
+const MESSAGE_REQUEST_COST = 30;
 
 /** Attaches a `photos: string[]` array (ordered) to each item in a list of
  *  profile-like objects with `id` and `photo_url`. Falls back to a
@@ -622,6 +623,84 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
   const withPhotos = await attachPhotoGalleries(results);
 
   res.json({ results: withPhotos });
+});
+
+/** POST /api/discover/message-request — send an opening message to
+ *  someone before matching (30 Sparks). Creates the match immediately so
+ *  the conversation works exactly like a normal match's chat from then
+ *  on, for both people. */
+router.post("/discover/message-request", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const { targetId, content } = req.body as { targetId?: string; content?: string };
+
+  if (!targetId || !content || content.trim() === "") {
+    res.status(400).json({ error: "targetId and content are required" });
+    return;
+  }
+
+  if (targetId === userId) {
+    res.status(400).json({ error: "Cannot message yourself" });
+    return;
+  }
+
+  const [lo, hi] = [userId, targetId].sort();
+  const { data: existingMatch } = await supabase
+    .from("matches")
+    .select("id")
+    .eq("user1_id", lo)
+    .eq("user2_id", hi)
+    .maybeSingle();
+
+  if (existingMatch) {
+    res.status(400).json({
+      error: "You're already matched — send messages from your Matches list",
+      matchId: existingMatch.id,
+    });
+    return;
+  }
+
+  const { data: targetProfile } = await supabase.from("profiles").select("id").eq("id", targetId).single();
+  if (!targetProfile) {
+    res.status(404).json({ error: "Profile not found" });
+    return;
+  }
+
+  const spend = await spendSparks(userId, MESSAGE_REQUEST_COST, "Message before match");
+  if (!spend.success) {
+    res.status(402).json({ error: `Insufficient Sparks (need ${MESSAGE_REQUEST_COST})`, balance: spend.balance });
+    return;
+  }
+
+  // Best-effort: record this as an implicit invite so the profile doesn't
+  // keep reappearing in the sender's Discover queue. Not fatal if it
+  // conflicts with an existing swipe row.
+  await supabase.from("swipes").insert({ swiper_id: userId, target_id: targetId, direction: "like" });
+
+  const { data: match, error: matchError } = await supabase
+    .from("matches")
+    .insert({ user1_id: lo, user2_id: hi })
+    .select("id")
+    .single();
+
+  if (matchError || !match) {
+    res.status(500).json({ error: "Failed to start conversation" });
+    return;
+  }
+
+  const { data: message, error: messageError } = await supabase
+    .from("messages")
+    .insert({ match_id: match.id, sender_id: userId, content: content.trim() })
+    .select("*")
+    .single();
+
+  if (messageError || !message) {
+    res.status(500).json({ error: "Failed to send message" });
+    return;
+  }
+
+  await supabase.from("matches").update({ message_count: 1 }).eq("id", match.id);
+
+  res.status(201).json({ matchId: match.id, message, balance: spend.balance });
 });
 
 export default router;
