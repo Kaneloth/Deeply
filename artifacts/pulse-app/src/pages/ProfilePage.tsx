@@ -101,20 +101,98 @@ export default function ProfilePage() {
     fetchPhotos();
   }, [fetchPhotos]);
 
-  const getVideoDuration = (file: File): Promise<number> =>
+  const compressImage = (file: File, maxDimension = 1600, targetSize = 2 * 1024 * 1024): Promise<File> =>
     new Promise((resolve, reject) => {
+      const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
+
+      img.onload = () => {
+        URL.revokeObjectURL(objectUrl);
+
+        let { width, height } = img;
+        if (width > maxDimension || height > maxDimension) {
+          if (width > height) {
+            height = Math.round((height * maxDimension) / width);
+            width = maxDimension;
+          } else {
+            width = Math.round((width * maxDimension) / height);
+            height = maxDimension;
+          }
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          reject(new Error("Compression not supported on this device"));
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+
+        const tryQuality = (quality: number) => {
+          canvas.toBlob(
+            (blob) => {
+              if (!blob) {
+                reject(new Error("Compression failed"));
+                return;
+              }
+              if (blob.size > targetSize && quality > 0.4) {
+                tryQuality(quality - 0.15);
+                return;
+              }
+              const compressed = new File([blob], file.name.replace(/\.\w+$/, ".jpg"), { type: "image/jpeg" });
+              resolve(compressed);
+            },
+            "image/jpeg",
+            quality,
+          );
+        };
+        tryQuality(0.85);
+      };
+
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error("Could not load that image"));
+      };
+
+      img.src = objectUrl;
+    });
+
+  const getVideoDuration = (file: File): Promise<number> =>
+    new Promise((resolve) => {
       const video = document.createElement("video");
       video.preload = "metadata";
-      video.onloadedmetadata = () => {
+      let settled = false;
+
+      const finish = (duration: number) => {
+        if (settled) return;
+        settled = true;
         URL.revokeObjectURL(video.src);
-        resolve(video.duration);
+        resolve(duration);
       };
-      video.onerror = () => reject(new Error("Could not read that video file"));
+
+      video.onloadedmetadata = () => {
+        if (!isFinite(video.duration)) {
+          // Known browser quirk: some video files (often .mov from phone
+          // cameras) report Infinity until you seek into them.
+          video.currentTime = 1e101;
+          video.ontimeupdate = () => finish(video.duration);
+        } else {
+          finish(video.duration);
+        }
+      };
+
+      // If we can't read it at all, fail OPEN (-1) rather than blocking a
+      // valid video — the 15MB size cap is still a practical backstop.
+      video.onerror = () => finish(-1);
+      setTimeout(() => finish(-1), 4000);
+
       video.src = URL.createObjectURL(file);
     });
 
   const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    let file = e.target.files?.[0];
     e.target.value = ""; // allow re-selecting the same file later
     if (!file) return;
 
@@ -130,8 +208,21 @@ export default function ProfilePage() {
       return;
     }
 
+    if (isImage) {
+      try {
+        file = await compressImage(file);
+      } catch (err) {
+        toast({
+          title: "Error",
+          description: err instanceof Error ? err.message : "Couldn't process that image.",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
     if (isImage && file.size > MAX_IMAGE_SIZE) {
-      toast({ title: "File too large", description: "Photos must be under 5MB.", variant: "destructive" });
+      toast({ title: "File too large", description: "This photo is still too large even after compression.", variant: "destructive" });
       return;
     }
     if (isVideo && file.size > MAX_VIDEO_SIZE) {
@@ -140,18 +231,13 @@ export default function ProfilePage() {
     }
 
     if (isVideo) {
-      try {
-        const duration = await getVideoDuration(file);
-        if (duration > MAX_VIDEO_DURATION) {
-          toast({
-            title: "Clip too long",
-            description: `Video clips must be 5 seconds or shorter (this one is ${duration.toFixed(1)}s).`,
-            variant: "destructive",
-          });
-          return;
-        }
-      } catch {
-        toast({ title: "Error", description: "Couldn't read that video file. Try a different one.", variant: "destructive" });
+      const duration = await getVideoDuration(file);
+      if (duration > 0 && duration > MAX_VIDEO_DURATION) {
+        toast({
+          title: "Clip too long",
+          description: `Video clips must be 5 seconds or shorter (this one is ${duration.toFixed(1)}s). Please retake a shorter clip.`,
+          variant: "destructive",
+        });
         return;
       }
     }
