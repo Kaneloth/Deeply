@@ -301,11 +301,15 @@ export default function SearchPage() {
   };
 
   return (
-    <div className="min-h-full pb-6 pt-10 px-4">
-      <header className="mb-6 px-2">
+    <div className="min-h-full pb-6">
+      <header
+        className="sticky top-0 z-30 bg-background/90 backdrop-blur-xl border-b border-border px-4 pb-3"
+        style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
+      >
         <h1 className="text-2xl font-['Syne'] font-bold tracking-tight">Search</h1>
       </header>
 
+      <div className="px-4 pt-6">
       {results === null && (
         <div className="mb-6">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 px-2">Explore</h2>
@@ -528,6 +532,7 @@ export default function SearchPage() {
           ))}
         </div>
       )}
+      </div>
 
       {selectedProfile && (
         <ProfileDetailOverlay

@@ -27,7 +27,10 @@ export function AppShell({ children }: AppShellProps) {
   return (
     <div className="w-full max-w-[430px] mx-auto min-h-[100dvh] bg-background relative flex flex-col overflow-hidden">
       {/* Profile menu — top right, sits above every page's own header */}
-      <div className="fixed top-12 right-4 z-40">
+      <div
+        className="fixed right-4 z-40"
+        style={{ top: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
+      >
         <button
           onClick={() => setShowMenu((v) => !v)}
           className={`w-10 h-10 rounded-full flex items-center justify-center border transition-colors ${

@@ -546,10 +546,15 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="min-h-full pb-6 pt-12 px-6 bg-background">
-      <div className="flex justify-between items-center mb-8">
+    <div className="min-h-full pb-6 bg-background">
+      <header
+        className="sticky top-0 z-30 bg-background/90 backdrop-blur-xl border-b border-border px-6 pb-3"
+        style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
+      >
         <h1 className="text-3xl font-['Syne'] font-bold tracking-tight">Profile</h1>
-      </div>
+      </header>
+
+      <div className="px-6 pt-8">
 
       <div className="flex flex-col items-center mb-10">
         <div className="relative">
@@ -835,6 +840,7 @@ export default function ProfilePage() {
           </Button>
         </motion.div>
       )}
+      </div>
     </div>
   );
 }

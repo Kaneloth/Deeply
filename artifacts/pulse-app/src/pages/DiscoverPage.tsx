@@ -271,8 +271,11 @@ export default function DiscoverPage() {
   const visibleCards = candidates.slice(0, 3);
 
   return (
-    <div className="flex flex-col min-h-full pb-6 pt-10 px-4">
-      <header className="flex justify-between items-center mb-6 px-2">
+    <div className="flex flex-col min-h-full pb-6">
+      <header
+        className="sticky top-0 z-30 flex justify-between items-center bg-background/90 backdrop-blur-xl border-b border-border px-4 pb-3"
+        style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
+      >
         <h1 className="text-2xl font-['Syne'] font-bold tracking-tight">Discover</h1>
         {invitesCount > 0 && (
           <Link
@@ -285,7 +288,7 @@ export default function DiscoverPage() {
         )}
       </header>
 
-      <div className="flex-1 relative min-h-[500px]">
+      <div className="flex-1 relative min-h-[500px] px-4 pt-6">
         {visibleCards.length === 0 ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-6">
             <div className="w-20 h-20 rounded-full bg-card border border-card-border flex items-center justify-center mb-6">
@@ -316,7 +319,7 @@ export default function DiscoverPage() {
       </div>
 
       {visibleCards.length > 0 && (
-        <div className="flex items-center justify-center gap-4 mt-6">
+        <div className="flex items-center justify-center gap-4 mt-6 px-4">
           <button
             onClick={() => handleDecision("pass")}
             disabled={isSwiping}
