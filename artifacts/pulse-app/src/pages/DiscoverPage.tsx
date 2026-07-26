@@ -15,7 +15,7 @@ interface Candidate {
   bio: string | null;
   city: string | null;
   photo_url: string | null;
-  photos: string[];
+  photos: { url: string; media_type: "image" | "video" }[];
   personality_tags: string[];
   integrity_score: number;
 }
@@ -86,12 +86,24 @@ function SwipeCard({
             className="w-full h-full"
           >
             {photos[photoIndex] ? (
-              <img
-                src={photos[photoIndex]}
-                alt={candidate.name}
-                className="w-full h-full object-cover"
-                draggable={false}
-              />
+              photos[photoIndex].media_type === "video" ? (
+                <video
+                  key={photos[photoIndex].url}
+                  src={photos[photoIndex].url}
+                  className="w-full h-full object-cover"
+                  autoPlay
+                  muted
+                  loop
+                  playsInline
+                />
+              ) : (
+                <img
+                  src={photos[photoIndex].url}
+                  alt={candidate.name}
+                  className="w-full h-full object-cover"
+                  draggable={false}
+                />
+              )
             ) : (
               <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-card to-background">
                 <span className="text-primary text-6xl font-bold font-['Syne'] opacity-20">

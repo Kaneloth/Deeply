@@ -11,16 +11,21 @@ const BOOST_COST = 50;
 const BOOST_DURATION_MS = 5 * 60 * 60 * 1000; // 5 hours
 const BOOST_COOLDOWN_MS = 24 * 60 * 60 * 1000; // once per 24 hours
 
-const MAX_PHOTOS = 6;
-const MAX_PHOTO_SIZE = 5 * 1024 * 1024; // 5MB
-const ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const MAX_FREE_PHOTOS = 8;
+const MAX_GALLERY_ITEMS = 20; // hard safety ceiling regardless of Sparks spent
+const EXTRA_PHOTO_COST = 10; // same as a message
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
+const MAX_VIDEO_SIZE = 15 * 1024 * 1024; // 15MB, ~5-second clip
+const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"];
+const ALLOWED_MIME_TYPES = [...ALLOWED_IMAGE_TYPES, ...ALLOWED_VIDEO_TYPES];
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_PHOTO_SIZE },
+  limits: { fileSize: MAX_VIDEO_SIZE },
   fileFilter: (_req, file, cb) => {
     if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
-      cb(new Error("Only JPEG, PNG, and WEBP images are allowed"));
+      cb(new Error("Only JPEG, PNG, WEBP images or MP4, WEBM, MOV video clips are allowed"));
       return;
     }
     cb(null, true);
@@ -31,6 +36,9 @@ const EXT_BY_MIME: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/png": "png",
   "image/webp": "webp",
+  "video/mp4": "mp4",
+  "video/webm": "webm",
+  "video/quicktime": "mov",
 };
 
 /** GET /api/profile/me */
@@ -196,7 +204,7 @@ router.post("/prompts", requireAuth, async (req, res): Promise<void> => {
 router.get("/profile/me/photos", requireAuth, async (req, res): Promise<void> => {
   const { data: photos } = await supabase
     .from("profile_photos")
-    .select("id, photo_url, position, created_at")
+    .select("id, photo_url, media_type, position, created_at")
     .eq("user_id", req.user!.id)
     .order("position", { ascending: true });
 
@@ -223,7 +231,16 @@ router.post(
     const userId = req.user!.id;
 
     if (!req.file) {
-      res.status(400).json({ error: "No photo file provided" });
+      res.status(400).json({ error: "No photo or video file provided" });
+      return;
+    }
+
+    const isVideo = req.file.mimetype.startsWith("video/");
+    const sizeLimit = isVideo ? MAX_VIDEO_SIZE : MAX_IMAGE_SIZE;
+    if (req.file.size > sizeLimit) {
+      res.status(400).json({
+        error: isVideo ? "Video clips must be under 15MB (~5 seconds)" : "Photos must be under 5MB",
+      });
       return;
     }
 
@@ -232,12 +249,30 @@ router.post(
       .select("id", { count: "exact", head: true })
       .eq("user_id", userId);
 
-    if ((count ?? 0) >= MAX_PHOTOS) {
-      res.status(400).json({ error: `Maximum ${MAX_PHOTOS} photos allowed` });
+    const currentCount = count ?? 0;
+
+    if (currentCount >= MAX_GALLERY_ITEMS) {
+      res.status(400).json({ error: `Maximum ${MAX_GALLERY_ITEMS} gallery items reached` });
       return;
     }
 
-    const ext = EXT_BY_MIME[req.file.mimetype] ?? "jpg";
+    let sparksCharged = 0;
+    let balanceAfter: number | null = null;
+
+    if (currentCount >= MAX_FREE_PHOTOS) {
+      const spend = await spendSparks(userId, EXTRA_PHOTO_COST, "Extra gallery photo");
+      if (!spend.success) {
+        res.status(402).json({
+          error: `You've used your ${MAX_FREE_PHOTOS} free photos. Adding more costs ${EXTRA_PHOTO_COST} Sparks (insufficient balance).`,
+          balance: spend.balance,
+        });
+        return;
+      }
+      sparksCharged = EXTRA_PHOTO_COST;
+      balanceAfter = spend.balance;
+    }
+
+    const ext = EXT_BY_MIME[req.file.mimetype] ?? (isVideo ? "mp4" : "jpg");
     const storagePath = `${userId}/${randomUUID()}.${ext}`;
 
     const { error: uploadError } = await supabase.storage
@@ -245,7 +280,7 @@ router.post(
       .upload(storagePath, req.file.buffer, { contentType: req.file.mimetype });
 
     if (uploadError) {
-      res.status(500).json({ error: "Failed to upload photo" });
+      res.status(500).json({ error: "Failed to upload file" });
       return;
     }
 
@@ -253,12 +288,13 @@ router.post(
       data: { publicUrl },
     } = supabase.storage.from("profile-photos").getPublicUrl(storagePath);
 
-    const position = count ?? 0;
+    const position = currentCount;
+    const mediaType = isVideo ? "video" : "image";
 
     const { data: photo, error: insertError } = await supabase
       .from("profile_photos")
-      .insert({ user_id: userId, photo_url: publicUrl, storage_path: storagePath, position })
-      .select("id, photo_url, position, created_at")
+      .insert({ user_id: userId, photo_url: publicUrl, storage_path: storagePath, position, media_type: mediaType })
+      .select("id, photo_url, media_type, position, created_at")
       .single();
 
     if (insertError || !photo) {
@@ -266,12 +302,14 @@ router.post(
       return;
     }
 
-    // Keep the legacy single photo_url field pointed at the first photo.
-    if (position === 0) {
+    // Keep the legacy single photo_url field pointed at the first item,
+    // but only if it's an image (avatars elsewhere in the app expect a
+    // static image, not a video).
+    if (position === 0 && !isVideo) {
       await supabase.from("profiles").update({ photo_url: publicUrl }).eq("id", userId);
     }
 
-    res.status(201).json(photo);
+    res.status(201).json({ ...photo, sparks_charged: sparksCharged, balance: balanceAfter });
   },
 );
 
@@ -301,7 +339,7 @@ router.delete("/profile/me/photos/:photoId", requireAuth, async (req, res): Prom
   // Re-pack remaining positions to stay contiguous (0, 1, 2, ...).
   const { data: remaining } = await supabase
     .from("profile_photos")
-    .select("id, photo_url, position")
+    .select("id, photo_url, media_type, position")
     .eq("user_id", userId)
     .order("position", { ascending: true });
 
@@ -312,10 +350,10 @@ router.delete("/profile/me/photos/:photoId", requireAuth, async (req, res): Prom
   }
 
   // If we deleted the first photo, keep profiles.photo_url in sync with
-  // whatever is now first (or null if the gallery is empty).
+  // the new first IMAGE in the gallery (never a video), or null if none.
   if (photo.position === 0) {
-    const newFirstUrl = remaining && remaining.length > 0 ? remaining[0].photo_url : null;
-    await supabase.from("profiles").update({ photo_url: newFirstUrl }).eq("id", userId);
+    const newFirstImage = remaining?.find((p) => p.media_type === "image");
+    await supabase.from("profiles").update({ photo_url: newFirstImage?.photo_url ?? null }).eq("id", userId);
   }
 
   res.sendStatus(204);

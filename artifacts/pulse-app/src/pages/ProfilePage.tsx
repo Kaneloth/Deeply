@@ -5,10 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
-import { LogOut, CheckCircle2, AlertCircle, Rocket } from "lucide-react";
-import { motion } from "framer-motion";
+import { LogOut, CheckCircle2, AlertCircle, Rocket, Plus, X, ImageIcon, Camera } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 
 interface BoostStatus {
   is_active: boolean;
@@ -16,6 +16,22 @@ interface BoostStatus {
   can_boost: boolean;
   next_eligible_at: string | null;
 }
+
+interface GalleryPhoto {
+  id: string;
+  photo_url: string;
+  media_type: "image" | "video";
+  position: number;
+}
+
+const MAX_FREE_PHOTOS = 8;
+const MAX_GALLERY_ITEMS = 20;
+const EXTRA_PHOTO_COST = 10;
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
+const MAX_VIDEO_SIZE = 15 * 1024 * 1024; // 15MB
+const MAX_VIDEO_DURATION = 5.5; // seconds, small buffer over the 5s target
+const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"];
 
 function BoostCountdown({ until }: { until: string }) {
   const [label, setLabel] = useState("");
@@ -55,6 +71,147 @@ export default function ProfilePage() {
 
   const [boostStatus, setBoostStatus] = useState<BoostStatus | null>(null);
   const [isBoosting, setIsBoosting] = useState(false);
+
+  const [photos, setPhotos] = useState<GalleryPhoto[]>([]);
+  const [isLoadingPhotos, setIsLoadingPhotos] = useState(true);
+  const [isUploading, setIsUploading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [showAddSheet, setShowAddSheet] = useState(false);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  const fetchPhotos = useCallback(async () => {
+    setIsLoadingPhotos(true);
+    try {
+      const res = await fetch("/api/profile/me/photos", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const body = await res.json();
+      setPhotos(body ?? []);
+    } catch {
+      // Silent — non-critical.
+    } finally {
+      setIsLoadingPhotos(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    fetchPhotos();
+  }, [fetchPhotos]);
+
+  const getVideoDuration = (file: File): Promise<number> =>
+    new Promise((resolve, reject) => {
+      const video = document.createElement("video");
+      video.preload = "metadata";
+      video.onloadedmetadata = () => {
+        URL.revokeObjectURL(video.src);
+        resolve(video.duration);
+      };
+      video.onerror = () => reject(new Error("Could not read that video file"));
+      video.src = URL.createObjectURL(file);
+    });
+
+  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file later
+    if (!file) return;
+
+    const isImage = ALLOWED_IMAGE_TYPES.includes(file.type);
+    const isVideo = ALLOWED_VIDEO_TYPES.includes(file.type);
+
+    if (!isImage && !isVideo) {
+      toast({
+        title: "Unsupported file type",
+        description: "Please choose a JPEG/PNG/WEBP photo or an MP4/WEBM/MOV video clip.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (isImage && file.size > MAX_IMAGE_SIZE) {
+      toast({ title: "File too large", description: "Photos must be under 5MB.", variant: "destructive" });
+      return;
+    }
+    if (isVideo && file.size > MAX_VIDEO_SIZE) {
+      toast({ title: "File too large", description: "Video clips must be under 15MB.", variant: "destructive" });
+      return;
+    }
+
+    if (isVideo) {
+      try {
+        const duration = await getVideoDuration(file);
+        if (duration > MAX_VIDEO_DURATION) {
+          toast({
+            title: "Clip too long",
+            description: `Video clips must be 5 seconds or shorter (this one is ${duration.toFixed(1)}s).`,
+            variant: "destructive",
+          });
+          return;
+        }
+      } catch {
+        toast({ title: "Error", description: "Couldn't read that video file. Try a different one.", variant: "destructive" });
+        return;
+      }
+    }
+
+    setShowAddSheet(false);
+    setIsUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("photo", file);
+
+      const res = await fetch("/api/profile/me/photos", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Upload failed");
+
+      setPhotos((prev) => [...prev, body]);
+
+      if (body.sparks_charged > 0) {
+        toast({
+          title: "Added — 10 Sparks used",
+          description: "You're past your 8 free photos, so extra items use Sparks like a message.",
+        });
+        refreshSparksBadge();
+      }
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to upload file.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleDeletePhoto = async (photoId: string) => {
+    setDeletingId(photoId);
+    try {
+      const res = await fetch(`/api/profile/me/photos/${photoId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to delete photo");
+      }
+      await fetchPhotos();
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to delete photo.",
+        variant: "destructive",
+      });
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const fetchBoostStatus = useCallback(async () => {
     try {
@@ -223,6 +380,137 @@ export default function ProfilePage() {
           </Button>
         )}
       </div>
+
+      {/* Photos Section */}
+      <div className="bg-card border border-card-border rounded-2xl p-5 mb-8">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="font-['Syne'] font-bold text-base">Photos & Clips</h3>
+            <p className="text-xs text-muted-foreground">
+              {photos.length}/{MAX_FREE_PHOTOS} free — extra items cost {EXTRA_PHOTO_COST} Sparks each
+            </p>
+          </div>
+          <ImageIcon size={18} className="text-muted-foreground shrink-0" />
+        </div>
+
+        {isLoadingPhotos ? (
+          <div className="grid grid-cols-3 gap-2">
+            {[1, 2, 3].map((i) => (
+              <Skeleton key={i} className="aspect-square rounded-xl" />
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-2">
+            {photos.map((photo, idx) => (
+              <div key={photo.id} className="relative aspect-square rounded-xl overflow-hidden bg-muted group">
+                {photo.media_type === "video" ? (
+                  <video src={photo.photo_url} className="w-full h-full object-cover" muted loop playsInline />
+                ) : (
+                  <img src={photo.photo_url} alt="" className="w-full h-full object-cover" />
+                )}
+                {idx === 0 && photo.media_type === "image" && (
+                  <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-full bg-black/60 text-white text-[10px] font-semibold">
+                    Main
+                  </span>
+                )}
+                {photo.media_type === "video" && (
+                  <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-full bg-black/60 text-white text-[10px] font-semibold">
+                    Clip
+                  </span>
+                )}
+                <button
+                  onClick={() => handleDeletePhoto(photo.id)}
+                  disabled={deletingId === photo.id}
+                  className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-destructive transition-colors disabled:opacity-50"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+
+            {photos.length < MAX_GALLERY_ITEMS && (
+              <button
+                onClick={() => setShowAddSheet(true)}
+                disabled={isUploading}
+                className="aspect-square rounded-xl border-2 border-dashed border-card-border flex flex-col items-center justify-center gap-1 text-muted-foreground hover:border-primary/50 hover:text-primary transition-colors disabled:opacity-50"
+              >
+                {isUploading ? (
+                  <span className="text-xs">Uploading...</span>
+                ) : (
+                  <>
+                    <Plus size={20} />
+                    <span className="text-xs">Add</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Gallery picker (no camera capture) */}
+        <input
+          ref={galleryInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime"
+          onChange={handleFileSelected}
+          className="hidden"
+        />
+        {/* Camera capture */}
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime"
+          capture="user"
+          onChange={handleFileSelected}
+          className="hidden"
+        />
+      </div>
+
+      {/* Add Photo/Video choice sheet */}
+      <AnimatePresence>
+        {showAddSheet && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-end"
+            onClick={() => setShowAddSheet(false)}
+          >
+            <motion.div
+              initial={{ y: 100 }}
+              animate={{ y: 0 }}
+              exit={{ y: 100 }}
+              transition={{ type: "spring", damping: 24 }}
+              className="w-full max-w-[430px] mx-auto bg-card border-t border-card-border rounded-t-3xl p-6 pb-10"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="font-['Syne'] font-bold text-lg mb-4">Add a Photo or Clip</h3>
+              <div className="space-y-3">
+                <button
+                  onClick={() => cameraInputRef.current?.click()}
+                  className="w-full h-14 rounded-xl bg-gradient-accent text-white font-semibold flex items-center justify-center gap-2"
+                >
+                  <Camera size={18} />
+                  Take Photo or Video
+                </button>
+                <button
+                  onClick={() => galleryInputRef.current?.click()}
+                  className="w-full h-14 rounded-xl bg-secondary text-foreground font-semibold flex items-center justify-center gap-2"
+                >
+                  <ImageIcon size={18} />
+                  Choose from Gallery
+                </button>
+                <button
+                  onClick={() => setShowAddSheet(false)}
+                  className="w-full h-12 rounded-xl text-muted-foreground font-medium"
+                >
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="space-y-6">
         <div className="grid grid-cols-4 gap-4">
