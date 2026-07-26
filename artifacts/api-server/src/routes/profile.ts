@@ -1,4 +1,6 @@
 import { Router, type IRouter } from "express";
+import multer from "multer";
+import { randomUUID } from "crypto";
 import { requireAuth } from "../middlewares/auth";
 import { supabase } from "../lib/supabase";
 import { spendSparks } from "../lib/sparks-helper";
@@ -8,6 +10,28 @@ const router: IRouter = Router();
 const BOOST_COST = 50;
 const BOOST_DURATION_MS = 5 * 60 * 60 * 1000; // 5 hours
 const BOOST_COOLDOWN_MS = 24 * 60 * 60 * 1000; // once per 24 hours
+
+const MAX_PHOTOS = 6;
+const MAX_PHOTO_SIZE = 5 * 1024 * 1024; // 5MB
+const ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_PHOTO_SIZE },
+  fileFilter: (_req, file, cb) => {
+    if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+      cb(new Error("Only JPEG, PNG, and WEBP images are allowed"));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
+const EXT_BY_MIME: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+};
 
 /** GET /api/profile/me */
 router.get("/profile/me", requireAuth, async (req, res): Promise<void> => {
@@ -166,6 +190,135 @@ router.post("/prompts", requireAuth, async (req, res): Promise<void> => {
     return;
   }
   res.status(201).json(prompt);
+});
+
+/** GET /api/profile/me/photos — list own gallery, ordered */
+router.get("/profile/me/photos", requireAuth, async (req, res): Promise<void> => {
+  const { data: photos } = await supabase
+    .from("profile_photos")
+    .select("id, photo_url, position, created_at")
+    .eq("user_id", req.user!.id)
+    .order("position", { ascending: true });
+
+  res.json(photos ?? []);
+});
+
+/** POST /api/profile/me/photos — upload a new gallery photo (multipart,
+ *  field name "photo"). Keeps profiles.photo_url in sync as the first
+ *  photo in the gallery, so every other page that reads that single
+ *  field keeps working unchanged. */
+router.post(
+  "/profile/me/photos",
+  requireAuth,
+  (req, res, next) => {
+    upload.single("photo")(req, res, (err) => {
+      if (err) {
+        res.status(400).json({ error: err.message ?? "Upload failed" });
+        return;
+      }
+      next();
+    });
+  },
+  async (req, res): Promise<void> => {
+    const userId = req.user!.id;
+
+    if (!req.file) {
+      res.status(400).json({ error: "No photo file provided" });
+      return;
+    }
+
+    const { count } = await supabase
+      .from("profile_photos")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId);
+
+    if ((count ?? 0) >= MAX_PHOTOS) {
+      res.status(400).json({ error: `Maximum ${MAX_PHOTOS} photos allowed` });
+      return;
+    }
+
+    const ext = EXT_BY_MIME[req.file.mimetype] ?? "jpg";
+    const storagePath = `${userId}/${randomUUID()}.${ext}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("profile-photos")
+      .upload(storagePath, req.file.buffer, { contentType: req.file.mimetype });
+
+    if (uploadError) {
+      res.status(500).json({ error: "Failed to upload photo" });
+      return;
+    }
+
+    const {
+      data: { publicUrl },
+    } = supabase.storage.from("profile-photos").getPublicUrl(storagePath);
+
+    const position = count ?? 0;
+
+    const { data: photo, error: insertError } = await supabase
+      .from("profile_photos")
+      .insert({ user_id: userId, photo_url: publicUrl, storage_path: storagePath, position })
+      .select("id, photo_url, position, created_at")
+      .single();
+
+    if (insertError || !photo) {
+      res.status(500).json({ error: "Failed to save photo" });
+      return;
+    }
+
+    // Keep the legacy single photo_url field pointed at the first photo.
+    if (position === 0) {
+      await supabase.from("profiles").update({ photo_url: publicUrl }).eq("id", userId);
+    }
+
+    res.status(201).json(photo);
+  },
+);
+
+/** DELETE /api/profile/me/photos/:photoId */
+router.delete("/profile/me/photos/:photoId", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const photoId = Array.isArray(req.params.photoId) ? req.params.photoId[0] : req.params.photoId;
+
+  const { data: photo } = await supabase
+    .from("profile_photos")
+    .select("id, storage_path, position")
+    .eq("id", photoId)
+    .eq("user_id", userId)
+    .single();
+
+  if (!photo) {
+    res.status(404).json({ error: "Photo not found" });
+    return;
+  }
+
+  if (photo.storage_path) {
+    await supabase.storage.from("profile-photos").remove([photo.storage_path]);
+  }
+
+  await supabase.from("profile_photos").delete().eq("id", photoId);
+
+  // Re-pack remaining positions to stay contiguous (0, 1, 2, ...).
+  const { data: remaining } = await supabase
+    .from("profile_photos")
+    .select("id, photo_url, position")
+    .eq("user_id", userId)
+    .order("position", { ascending: true });
+
+  for (let i = 0; i < (remaining?.length ?? 0); i++) {
+    if (remaining![i].position !== i) {
+      await supabase.from("profile_photos").update({ position: i }).eq("id", remaining![i].id);
+    }
+  }
+
+  // If we deleted the first photo, keep profiles.photo_url in sync with
+  // whatever is now first (or null if the gallery is empty).
+  if (photo.position === 0) {
+    const newFirstUrl = remaining && remaining.length > 0 ? remaining[0].photo_url : null;
+    await supabase.from("profiles").update({ photo_url: newFirstUrl }).eq("id", userId);
+  }
+
+  res.sendStatus(204);
 });
 
 export default router;

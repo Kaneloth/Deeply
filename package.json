@@ -10,11 +10,13 @@
   },
   "private": true,
   "dependencies": {
-    "@replit/connectors-sdk": "^0.4.1"
+    "@replit/connectors-sdk": "^0.4.1",
+	"multer": "^2.2.0"
   },
   "devDependencies": {
     "prettier": "^3.9.5",
     "typescript": "~5.9.3",
-    "serverless-http": "^4.0.0"
+    "serverless-http": "^4.0.0",
+	"@types/multer": "^2.2.0"
   }
 }
