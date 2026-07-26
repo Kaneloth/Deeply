@@ -164,6 +164,16 @@ export default function ProfilePage() {
       const video = document.createElement("video");
       video.preload = "metadata";
       video.muted = true;
+      video.playsInline = true;
+      // Some mobile browsers won't reliably fire metadata events on a
+      // detached element — keep it in the DOM (invisible) while reading.
+      video.style.position = "fixed";
+      video.style.opacity = "0";
+      video.style.pointerEvents = "none";
+      video.style.width = "1px";
+      video.style.height = "1px";
+      document.body.appendChild(video);
+
       const objectUrl = URL.createObjectURL(file);
       let settled = false;
 
@@ -171,6 +181,7 @@ export default function ProfilePage() {
         if (settled) return;
         settled = true;
         URL.revokeObjectURL(objectUrl);
+        video.remove();
         resolve(duration);
       };
 
@@ -185,17 +196,11 @@ export default function ProfilePage() {
           finish(video.duration);
           return;
         }
-        // Known quirk: some video blobs (often from phone cameras) report
-        // Infinity duration until you seek into them. Seeking triggers a
-        // corrected value via 'durationchange' in most browsers, or
-        // 'timeupdate' in others — listen for both to cover more devices.
         video.addEventListener("durationchange", checkFixed);
         video.addEventListener("timeupdate", checkFixed);
         video.currentTime = 1e101;
       };
 
-      // If we genuinely can't read it, fail OPEN but let the caller know
-      // so it isn't silent.
       video.onerror = () => finish(-1);
       setTimeout(() => finish(-1), 6000);
 
@@ -239,19 +244,21 @@ export default function ProfilePage() {
 
     if (isVideo) {
       const duration = await getVideoDuration(file);
-      if (duration > 0 && duration > MAX_VIDEO_DURATION) {
+      if (duration <= 0) {
+        toast({
+          title: "Couldn't verify clip length",
+          description: "We couldn't confirm this clip is 5 seconds or shorter, so it wasn't uploaded. Try a different clip or app.",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (duration > MAX_VIDEO_DURATION) {
         toast({
           title: "Clip too long",
           description: `Video clips must be 5 seconds or shorter (this one is ${duration.toFixed(1)}s). Please retake a shorter clip.`,
           variant: "destructive",
         });
         return;
-      }
-      if (duration <= 0) {
-        toast({
-          title: "Couldn't verify clip length",
-          description: "Uploading anyway — please make sure it's 5 seconds or shorter.",
-        });
       }
       if (file.size > MAX_VIDEO_SIZE) {
         toast({
