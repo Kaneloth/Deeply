@@ -9,6 +9,36 @@ const SUPER_LIKE_COST = 20;
 const UNDO_COST = 10;
 const REVEAL_LIKES_COST = 30;
 
+/** Attaches a `photos: string[]` array (ordered) to each item in a list of
+ *  profile-like objects with `id` and `photo_url`. Falls back to a
+ *  single-element array from photo_url for anyone who hasn't built a
+ *  gallery yet. */
+async function attachPhotoGalleries<T extends { id: string; photo_url: string | null }>(
+  items: T[],
+): Promise<(T & { photos: string[] })[]> {
+  if (items.length === 0) return [];
+
+  const ids = items.map((i) => i.id);
+  const { data: galleryPhotos } = await supabase
+    .from("profile_photos")
+    .select("user_id, photo_url, position")
+    .in("user_id", ids)
+    .order("position", { ascending: true });
+
+  const photosByUser = new Map<string, string[]>();
+  for (const p of galleryPhotos ?? []) {
+    const list = photosByUser.get(p.user_id) ?? [];
+    list.push(p.photo_url);
+    photosByUser.set(p.user_id, list);
+  }
+
+  return items.map((item) => {
+    const gallery = photosByUser.get(item.id);
+    const photos = gallery && gallery.length > 0 ? gallery : item.photo_url ? [item.photo_url] : [];
+    return { ...item, photos };
+  });
+}
+
 /** GET /api/discover/queue — return a batch of candidate profiles the user
  *  hasn't swiped on yet, ready to swipe through Tinder-style. */
 router.get("/discover/queue", requireAuth, async (req, res): Promise<void> => {
@@ -70,7 +100,9 @@ router.get("/discover/queue", requireAuth, async (req, res): Promise<void> => {
     audio_prompts: promptsByUser.get(c.id) ?? [],
   }));
 
-  res.json({ candidates: enriched });
+  const withPhotos = await attachPhotoGalleries(enriched);
+
+  res.json({ candidates: withPhotos });
 });
 
 /** POST /api/discover/swipe — record a like / pass / super_like and report
@@ -176,7 +208,9 @@ router.post("/discover/undo", requireAuth, async (req, res): Promise<void> => {
     .eq("id", lastSwipe.target_id)
     .single();
 
-  res.json({ restoredProfile: restoredProfile ?? null, balance: spend.balance });
+  const [restoredWithPhotos] = restoredProfile ? await attachPhotoGalleries([restoredProfile]) : [null];
+
+  res.json({ restoredProfile: restoredWithPhotos ?? null, balance: spend.balance });
 });
 
 /** GET /api/discover/invites/count — FREE. Just the number of people who
@@ -265,8 +299,9 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
   );
 
   const enriched = (inviters ?? []).map((l) => ({ ...l, super_liked: superLikerIds.has(l.id) }));
+  const enrichedWithPhotos = await attachPhotoGalleries(enriched);
 
-  res.json({ invites: enriched, balance: spend.balance });
+  res.json({ invites: enrichedWithPhotos, balance: spend.balance });
 });
 
 /** GET /api/discover/search — filter/search the same unswiped candidate
@@ -319,7 +354,9 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
-  res.json({ results: results ?? [] });
+  const withPhotos = await attachPhotoGalleries(results ?? []);
+
+  res.json({ results: withPhotos });
 });
 
 /** GET /api/discover/categories — lightweight preview data for stat cards
@@ -582,7 +619,9 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
     }
   }
 
-  res.json({ results });
+  const withPhotos = await attachPhotoGalleries(results);
+
+  res.json({ results: withPhotos });
 });
 
 export default router;
