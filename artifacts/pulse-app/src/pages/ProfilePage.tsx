@@ -280,110 +280,144 @@ export default function ProfilePage() {
     });
   };
 
-  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    let file = e.target.files?.[0];
-    e.target.value = ""; // allow re-selecting the same file later
-    if (!file) return;
-
-    const isImage = ALLOWED_IMAGE_TYPES.includes(file.type);
-    const isVideo = ALLOWED_VIDEO_TYPES.includes(file.type);
-
-    if (!isImage && !isVideo) {
-      toast({
-        title: "Unsupported file type",
-        description: "Please choose a JPEG/PNG/WEBP photo or an MP4/WEBM/MOV video clip.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (isVideo && photos.some((p) => p.media_type === "video")) {
-      toast({
-        title: "Only 1 video clip allowed",
-        description: "Delete your existing clip first if you'd like to upload a different one.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (isImage) {
-      try {
-        file = await compressImage(file);
-      } catch (err) {
-        toast({
-          title: "Error",
-          description: err instanceof Error ? err.message : "Couldn't process that image.",
-          variant: "destructive",
-        });
-        return;
-      }
-    }
-
-    if (isImage && file.size > MAX_IMAGE_SIZE) {
-      toast({ title: "File too large", description: "This photo is still too large even after compression.", variant: "destructive" });
-      return;
-    }
-
-    if (isVideo) {
-      const duration = await getVideoDuration(file);
-      if (duration <= 0) {
-        toast({
-          title: "Couldn't verify clip length",
-          description: "We couldn't confirm this clip is 5 seconds or shorter, so it wasn't uploaded. Try a different clip or app.",
-          variant: "destructive",
-        });
-        return;
-      }
-      if (duration > MAX_VIDEO_DURATION) {
-        toast({
-          title: "Clip too long",
-          description: `Video clips must be 5 seconds or shorter (this one is ${duration.toFixed(1)}s). Please retake a shorter clip.`,
-          variant: "destructive",
-        });
-        return;
-      }
-      if (file.size > MAX_VIDEO_SIZE) {
-        toast({
-          title: "File too large",
-          description: `This clip is ${(file.size / 1024 / 1024).toFixed(1)}MB — try recording at a lower quality setting in your camera app, or a shorter clip.`,
-          variant: "destructive",
-        });
-        return;
-      }
-    }
+  const handleFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = e.target.files ? Array.from(e.target.files) : [];
+    e.target.value = ""; // allow re-selecting the same file(s) later
+    if (selectedFiles.length === 0) return;
 
     setShowAddSheet(false);
     setIsUploading(true);
-    try {
-      const formData = new FormData();
-      formData.append("photo", file);
 
-      const res = await fetch("/api/profile/me/photos", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
+    // Track a local running copy since React state won't reflect earlier
+    // items in this same batch until after each render.
+    let localPhotos = [...photos];
+    let successCount = 0;
+    let failCount = 0;
+    let totalSparksCharged = 0;
 
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? "Upload failed");
+    for (const originalFile of selectedFiles) {
+      let file = originalFile;
+      const isImage = ALLOWED_IMAGE_TYPES.includes(file.type);
+      const isVideo = ALLOWED_VIDEO_TYPES.includes(file.type);
 
-      setPhotos((prev) => [...prev, body]);
-
-      if (body.sparks_charged > 0) {
+      if (!isImage && !isVideo) {
         toast({
-          title: "Added — 10 Sparks used",
-          description: "You're past your 8 free photos, so extra items use Sparks like a message.",
+          title: "Unsupported file type",
+          description: `${originalFile.name}: please choose a JPEG/PNG/WEBP photo or MP4/WEBM/MOV clip.`,
+          variant: "destructive",
         });
-        refreshSparksBadge();
+        failCount++;
+        continue;
       }
-    } catch (err) {
+
+      if (isVideo && localPhotos.some((p) => p.media_type === "video")) {
+        toast({
+          title: "Only 1 video clip allowed",
+          description: `${originalFile.name} skipped — delete your existing clip first.`,
+          variant: "destructive",
+        });
+        failCount++;
+        continue;
+      }
+
+      if (isImage) {
+        try {
+          file = await compressImage(file);
+        } catch (err) {
+          toast({
+            title: "Error",
+            description: `${originalFile.name}: ${err instanceof Error ? err.message : "couldn't process image"}`,
+            variant: "destructive",
+          });
+          failCount++;
+          continue;
+        }
+        if (file.size > MAX_IMAGE_SIZE) {
+          toast({
+            title: "File too large",
+            description: `${originalFile.name} is still too large even after compression.`,
+            variant: "destructive",
+          });
+          failCount++;
+          continue;
+        }
+      }
+
+      if (isVideo) {
+        const duration = await getVideoDuration(file);
+        if (duration <= 0) {
+          toast({
+            title: "Couldn't verify clip length",
+            description: `${originalFile.name} wasn't uploaded — couldn't confirm it's 5 seconds or shorter.`,
+            variant: "destructive",
+          });
+          failCount++;
+          continue;
+        }
+        if (duration > MAX_VIDEO_DURATION) {
+          toast({
+            title: "Clip too long",
+            description: `${originalFile.name} is ${duration.toFixed(1)}s — must be 5 seconds or shorter.`,
+            variant: "destructive",
+          });
+          failCount++;
+          continue;
+        }
+        if (file.size > MAX_VIDEO_SIZE) {
+          toast({
+            title: "File too large",
+            description: `${originalFile.name} is ${(file.size / 1024 / 1024).toFixed(1)}MB — try a lower quality camera setting.`,
+            variant: "destructive",
+          });
+          failCount++;
+          continue;
+        }
+      }
+
+      try {
+        const formData = new FormData();
+        formData.append("photo", file);
+
+        const res = await fetch("/api/profile/me/photos", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData,
+        });
+
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? "Upload failed");
+
+        localPhotos = [...localPhotos, body];
+        setPhotos((prev) => [...prev, body]);
+        successCount++;
+
+        if (body.sparks_charged > 0) {
+          totalSparksCharged += body.sparks_charged;
+        }
+      } catch (err) {
+        toast({
+          title: "Error",
+          description: `${originalFile.name}: ${err instanceof Error ? err.message : "upload failed"}`,
+          variant: "destructive",
+        });
+        failCount++;
+      }
+    }
+
+    setIsUploading(false);
+
+    if (totalSparksCharged > 0) {
+      refreshSparksBadge();
+    }
+
+    if (successCount > 0) {
+      const parts: string[] = [];
+      if (totalSparksCharged > 0) parts.push(`${totalSparksCharged} Sparks used for items beyond your free ${MAX_FREE_PHOTOS}.`);
+      if (failCount > 0) parts.push(`${failCount} item${failCount === 1 ? "" : "s"} couldn't be added.`);
       toast({
-        title: "Error",
-        description: err instanceof Error ? err.message : "Failed to upload file.",
-        variant: "destructive",
+        title: successCount === 1 ? "Added" : `Added ${successCount} items`,
+        description: parts.length > 0 ? parts.join(" ") : undefined,
       });
-    } finally {
-      setIsUploading(false);
     }
   };
 
@@ -644,24 +678,26 @@ export default function ProfilePage() {
           </div>
         )}
 
-        {/* Gallery picker (no camera capture) */}
+        {/* Gallery picker — allows selecting multiple files at once */}
         <input
           ref={galleryInputRef}
           type="file"
           accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime"
-          onChange={handleFileSelected}
+          onChange={handleFilesSelected}
+          multiple
           className="hidden"
         />
-        {/* Camera capture — photo only. Split from video into its own
-            input because mixing image+video in `accept` alongside
-            `capture` makes many mobile browsers fall back to the
-            gallery picker instead of launching the camera. */}
+        {/* Camera capture — photo only. One at a time, inherent to how a
+            live camera launch works. Split from video into its own input
+            because mixing image+video in `accept` alongside `capture`
+            makes many mobile browsers fall back to the gallery picker
+            instead of launching the camera. */}
         <input
           ref={cameraPhotoInputRef}
           type="file"
           accept="image/jpeg,image/png,image/webp"
           capture="user"
-          onChange={handleFileSelected}
+          onChange={handleFilesSelected}
           className="hidden"
         />
         {/* Camera capture — video only, same reasoning as above. */}
@@ -670,7 +706,7 @@ export default function ProfilePage() {
           type="file"
           accept="video/mp4,video/webm,video/quicktime"
           capture="user"
-          onChange={handleFileSelected}
+          onChange={handleFilesSelected}
           className="hidden"
         />
       </div>
