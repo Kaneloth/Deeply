@@ -21,11 +21,13 @@ router.get("/discover/queue", requireAuth, async (req, res): Promise<void> => {
 
   const excludedIds = [userId, ...(alreadySwiped?.map((s) => s.target_id) ?? [])];
 
+  // Fetch a larger pool than we'll return, so we can prioritize active
+  // boosts before trimming down to the final page size.
   const { data: candidates, error } = await supabase
     .from("profiles")
-    .select("id, name, age, bio, city, photo_url, personality_tags, integrity_score")
+    .select("id, name, age, bio, city, photo_url, personality_tags, integrity_score, boosted_until")
     .not("id", "in", `(${excludedIds.join(",")})`)
-    .limit(20);
+    .limit(60);
 
   if (error) {
     res.status(500).json({ error: "Failed to load discover queue" });
@@ -37,7 +39,18 @@ router.get("/discover/queue", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
-  const candidateIds = candidates.map((c) => c.id);
+  const now = Date.now();
+  const boosted = candidates.filter((c) => c.boosted_until && new Date(c.boosted_until).getTime() > now);
+  const rest = candidates.filter((c) => !c.boosted_until || new Date(c.boosted_until).getTime() <= now);
+
+  // Shuffle each group independently so it's not always the same order,
+  // then boosted profiles first.
+  const shuffle = <T,>(arr: T[]) => arr.sort(() => Math.random() - 0.5);
+  const prioritized = [...shuffle(boosted), ...shuffle(rest)].slice(0, 20);
+
+  const strippedCandidates = prioritized.map(({ boosted_until, ...profileFields }) => profileFields);
+
+  const candidateIds = strippedCandidates.map((c) => c.id);
   const { data: prompts } = await supabase
     .from("audio_prompts")
     .select("*")
@@ -52,7 +65,7 @@ router.get("/discover/queue", requireAuth, async (req, res): Promise<void> => {
     }
   }
 
-  const enriched = candidates.map((c) => ({
+  const enriched = strippedCandidates.map((c) => ({
     ...c,
     audio_prompts: promptsByUser.get(c.id) ?? [],
   }));

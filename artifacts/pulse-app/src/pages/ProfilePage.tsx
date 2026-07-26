@@ -1,18 +1,49 @@
 import { useGetMyProfile, useUpdateMyProfile } from "@workspace/api-client-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useSparks } from "@/contexts/SparksContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useToast } from "@/hooks/use-toast";
-import { LogOut, CheckCircle2, AlertCircle } from "lucide-react";
+import { LogOut, CheckCircle2, AlertCircle, Rocket } from "lucide-react";
 import { motion } from "framer-motion";
+
+interface BoostStatus {
+  is_active: boolean;
+  boosted_until: string | null;
+  can_boost: boolean;
+  next_eligible_at: string | null;
+}
+
+function BoostCountdown({ until }: { until: string }) {
+  const [label, setLabel] = useState("");
+
+  useEffect(() => {
+    const update = () => {
+      const diff = new Date(until).getTime() - Date.now();
+      if (diff <= 0) {
+        setLabel("");
+        return;
+      }
+      const h = Math.floor(diff / (1000 * 60 * 60));
+      const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      setLabel(`${h}h ${m}m`);
+    };
+    update();
+    const interval = setInterval(update, 30000);
+    return () => clearInterval(interval);
+  }, [until]);
+
+  return <>{label}</>;
+}
 
 export default function ProfilePage() {
   const { data: profile, isLoading } = useGetMyProfile();
   const updateProfile = useUpdateMyProfile();
-  const { logout } = useAuth();
+  const { logout, token } = useAuth();
+  const { refresh: refreshSparksBadge } = useSparks();
   const { toast } = useToast();
 
   const [formData, setFormData] = useState({
@@ -21,6 +52,70 @@ export default function ProfilePage() {
     city: "",
     bio: ""
   });
+
+  const [boostStatus, setBoostStatus] = useState<BoostStatus | null>(null);
+  const [isBoosting, setIsBoosting] = useState(false);
+
+  const fetchBoostStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/profile/boost/status", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const body = await res.json();
+      setBoostStatus(body);
+    } catch {
+      // Silent — non-critical.
+    }
+  }, [token]);
+
+  useEffect(() => {
+    fetchBoostStatus();
+  }, [fetchBoostStatus]);
+
+  const handleBoost = async () => {
+    setIsBoosting(true);
+    try {
+      const res = await fetch("/api/profile/boost", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (res.status === 402) {
+        toast({
+          title: "You're out of Sparks",
+          description: "Recharge now or wait for your next monthly grant to boost your profile.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      if (res.status === 429) {
+        toast({
+          title: "Boost on cooldown",
+          description: "You can boost your profile once every 24 hours.",
+          variant: "destructive",
+        });
+        await fetchBoostStatus();
+        return;
+      }
+
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to boost");
+
+      toast({ title: "You're boosted!", description: "Your profile has priority placement for the next 5 hours." });
+      refreshSparksBadge();
+      await fetchBoostStatus();
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to boost profile.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsBoosting(false);
+    }
+  };
 
   // Sync state once data loads
   useEffect(() => {
@@ -94,6 +189,39 @@ export default function ProfilePage() {
              <><AlertCircle size={14} className="text-accent" /><span className="text-xs font-medium text-muted-foreground">Unverified</span></>
           )}
         </div>
+      </div>
+
+      {/* Boost Section */}
+      <div className="bg-card border border-card-border rounded-2xl p-5 mb-8">
+        <div className="flex items-center gap-3 mb-3">
+          <div className="w-10 h-10 rounded-full bg-gradient-accent flex items-center justify-center text-white shrink-0">
+            <Rocket size={18} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="font-['Syne'] font-bold text-base">Boost</h3>
+            <p className="text-xs text-muted-foreground">Priority placement in Discover for 5 hours</p>
+          </div>
+        </div>
+
+        {boostStatus?.is_active && boostStatus.boosted_until ? (
+          <div className="text-center py-2">
+            <p className="text-sm font-semibold text-primary">
+              Boosted — <BoostCountdown until={boostStatus.boosted_until} /> left
+            </p>
+          </div>
+        ) : (
+          <Button
+            onClick={handleBoost}
+            disabled={isBoosting || (boostStatus !== null && !boostStatus.can_boost)}
+            className="w-full h-12 rounded-xl bg-gradient-accent border-0 text-white font-semibold"
+          >
+            {isBoosting
+              ? "Boosting..."
+              : boostStatus && !boostStatus.can_boost
+                ? "Available again tomorrow"
+                : "Boost My Profile"}
+          </Button>
+        )}
       </div>
 
       <div className="space-y-6">
