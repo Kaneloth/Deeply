@@ -9,7 +9,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { CheckCircle2, AlertCircle, Rocket, Plus, X, ImageIcon, Camera, Video } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AppBrand } from "@/components/AppBrand";
+import { PageHeader } from "@/components/PageHeader";
 
 interface BoostStatus {
   is_active: boolean;
@@ -547,15 +547,8 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="min-h-full pb-6 bg-background">
-      <header
-        className="sticky top-0 z-30 bg-background/90 backdrop-blur-xl border-b border-border px-6 pb-3"
-        style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
-      >
-        <AppBrand />
-      </header>
-
-      <div className="px-6 pt-8">
+    <div className="min-h-full px-6 pb-6 pt-6 bg-background">
+      <PageHeader title="Profile" />
 
       <div className="flex flex-col items-center mb-10">
         <div className="relative">
@@ -841,7 +834,6 @@ export default function ProfilePage() {
           </Button>
         </motion.div>
       )}
-      </div>
     </div>
   );
 }

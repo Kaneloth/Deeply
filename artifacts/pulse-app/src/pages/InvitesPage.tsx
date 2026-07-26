@@ -4,7 +4,7 @@ import { useSparks } from "@/contexts/SparksContext";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PhotoCarousel } from "@/components/PhotoCarousel";
-import { AppBrand } from "@/components/AppBrand";
+import { PageHeader } from "@/components/PageHeader";
 import { ChevronLeft, Star, Lock, Heart, X, MapPin } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
@@ -265,36 +265,27 @@ export default function InvitesPage() {
   };
 
   return (
-    <div className="min-h-full pb-6">
-      <div
-        className="sticky top-0 z-30 bg-background/90 backdrop-blur-xl border-b border-border px-4 pb-3"
-        style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
-      >
-        <header className="flex items-center mb-4 px-2">
-          <AppBrand />
-        </header>
+    <div className="min-h-full px-4 pb-6 pt-6">
+      <PageHeader title="Invites" />
 
-        <div className="flex gap-2 px-2">
-          <button
-            onClick={() => handleSwitchMode("received")}
-            className={`flex-1 h-10 rounded-xl text-sm font-semibold transition-colors ${
-              mode === "received" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
-            }`}
-          >
-            Received
-          </button>
-          <button
-            onClick={() => handleSwitchMode("sent")}
-            className={`flex-1 h-10 rounded-xl text-sm font-semibold transition-colors ${
-              mode === "sent" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
-            }`}
-          >
-            Sent
-          </button>
-        </div>
+      <div className="flex gap-2 mb-6">
+        <button
+          onClick={() => handleSwitchMode("received")}
+          className={`flex-1 h-10 rounded-xl text-sm font-semibold transition-colors ${
+            mode === "received" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
+          }`}
+        >
+          Received
+        </button>
+        <button
+          onClick={() => handleSwitchMode("sent")}
+          className={`flex-1 h-10 rounded-xl text-sm font-semibold transition-colors ${
+            mode === "sent" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
+          }`}
+        >
+          Sent
+        </button>
       </div>
-
-      <div className="px-4 pt-6">
 
       {mode === "sent" ? (
         sentLoading ? (
@@ -429,7 +420,6 @@ export default function InvitesPage() {
           ) : null}
         </>
       )}
-      </div>
 
       <AnimatePresence>
         {matchName && <MatchCelebration name={matchName} onContinue={() => setMatchName(null)} />}

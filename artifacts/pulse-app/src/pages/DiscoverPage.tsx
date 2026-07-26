@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PhotoCarousel } from "@/components/PhotoCarousel";
-import { AppBrand } from "@/components/AppBrand";
+import { PageHeader } from "@/components/PageHeader";
 import { X, Heart, MessageCircle, MapPin } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -272,24 +272,23 @@ export default function DiscoverPage() {
   const visibleCards = candidates.slice(0, 3);
 
   return (
-    <div className="flex flex-col min-h-full pb-6">
-      <header
-        className="sticky top-0 z-30 flex justify-between items-center bg-background/90 backdrop-blur-xl border-b border-border px-4 pb-3"
-        style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
-      >
-        <AppBrand />
-        {invitesCount > 0 && (
-          <Link
-            href="/invites"
-            className="flex items-center gap-1.5 bg-card/80 backdrop-blur border border-card-border px-3 py-1.5 rounded-full text-sm font-semibold text-primary hover:border-primary/50 transition-colors"
-          >
-            <Heart size={14} className="fill-current" />
-            <span>{invitesCount} invite{invitesCount === 1 ? "" : "s"}</span>
-          </Link>
-        )}
-      </header>
+    <div className="flex flex-col min-h-full px-4 pb-6 pt-6">
+      <PageHeader
+        title="Discover"
+        action={
+          invitesCount > 0 ? (
+            <Link
+              href="/invites"
+              className="flex items-center gap-1.5 bg-card/80 backdrop-blur border border-card-border px-3 py-1.5 rounded-full text-sm font-semibold text-primary hover:border-primary/50 transition-colors"
+            >
+              <Heart size={14} className="fill-current" />
+              <span>{invitesCount} invite{invitesCount === 1 ? "" : "s"}</span>
+            </Link>
+          ) : undefined
+        }
+      />
 
-      <div className="flex-1 relative min-h-[500px] px-4 pt-6">
+      <div className="flex-1 relative min-h-[500px]">
         {visibleCards.length === 0 ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-6">
             <div className="w-20 h-20 rounded-full bg-card border border-card-border flex items-center justify-center mb-6">
@@ -320,7 +319,7 @@ export default function DiscoverPage() {
       </div>
 
       {visibleCards.length > 0 && (
-        <div className="flex items-center justify-center gap-4 mt-6 px-4">
+        <div className="flex items-center justify-center gap-4 mt-6">
           <button
             onClick={() => handleDecision("pass")}
             disabled={isSwiping}

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PhotoCarousel } from "@/components/PhotoCarousel";
-import { AppBrand } from "@/components/AppBrand";
+import { PageHeader } from "@/components/PageHeader";
 import { Search as SearchIcon, Heart, X, MessageCircle, SlidersHorizontal, Sparkles, ShieldCheck, Mic, MapPin, TrendingUp, ChevronLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -302,15 +302,9 @@ export default function SearchPage() {
   };
 
   return (
-    <div className="min-h-full pb-6">
-      <header
-        className="sticky top-0 z-30 bg-background/90 backdrop-blur-xl border-b border-border px-4 pb-3"
-        style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
-      >
-        <AppBrand />
-      </header>
+    <div className="min-h-full px-4 pb-6 pt-6">
+      <PageHeader title="Search" />
 
-      <div className="px-4 pt-6">
       {results === null && (
         <div className="mb-6">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 px-2">Explore</h2>
@@ -533,7 +527,6 @@ export default function SearchPage() {
           ))}
         </div>
       )}
-      </div>
 
       {selectedProfile && (
         <ProfileDetailOverlay
