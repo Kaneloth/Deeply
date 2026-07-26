@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Link, useLocation } from "wouter";
-import { motion, AnimatePresence, type PanInfo } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -28,6 +28,8 @@ const EXIT_VARIANTS: Record<SwipeDirection, { x?: number; y?: number; opacity: n
   super_like: { y: -400, opacity: 0, scale: 1.05 },
 };
 
+const PHOTO_DRAG_THRESHOLD_PCT = 20;
+
 function SwipeCard({
   candidate,
   isTop,
@@ -42,31 +44,88 @@ function SwipeCard({
   stackIndex: number;
 }) {
   const [photoIndex, setPhotoIndex] = useState(0);
+  const [dragPercent, setDragPercent] = useState(0);
+  const isDraggingPhoto = dragPercent !== 0;
   const photoContainerRef = useRef<HTMLDivElement>(null);
+  const touchStateRef = useRef({ startX: 0, startY: 0, active: false, axisLocked: false, horizontal: false });
   const photos = candidate.photos.length > 0 ? candidate.photos : [];
 
   const goNext = () => setPhotoIndex((i) => Math.min(i + 1, Math.max(photos.length - 1, 0)));
   const goPrev = () => setPhotoIndex((i) => Math.max(i - 1, 0));
 
-  // Photo browsing — Instagram-style. This is a SEPARATE gesture from the
-  // invite/pass decision (which is button-only below). Both tap and drag
-  // live on the SAME layer here (a tap-zone button layered on top would
-  // swallow the drag gesture before it ever reached this element).
-  const handlePhotoDragEnd = (_: unknown, info: PanInfo) => {
-    if (info.offset.x < -50) goNext();
-    else if (info.offset.x > 50) goPrev();
+  // Photo browsing — a real filmstrip that tracks the finger 1:1 while
+  // dragging (no spring/elastic snap-back-to-center like a generic drag
+  // gesture), with edge resistance and a threshold-based snap on release.
+  // This is a SEPARATE gesture from the invite/pass decision (button-only
+  // below) — it can never trigger a match decision.
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (!isTop || photos.length <= 1) return;
+    touchStateRef.current = {
+      startX: e.touches[0].clientX,
+      startY: e.touches[0].clientY,
+      active: true,
+      axisLocked: false,
+      horizontal: false,
+    };
   };
 
-  const handlePhotoTap = (_: unknown, info: { point: { x: number; y: number } }) => {
-    const rect = photoContainerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const relativeX = info.point.x - rect.left;
-    if (relativeX < rect.width / 3) {
-      goPrev();
-    } else if (relativeX > (rect.width * 2) / 3) {
-      goNext();
+  const handleTouchMove = (e: React.TouchEvent) => {
+    const t = touchStateRef.current;
+    if (!t.active) return;
+
+    const dx = e.touches[0].clientX - t.startX;
+    const dy = e.touches[0].clientY - t.startY;
+
+    if (!t.axisLocked) {
+      if (Math.abs(dx) < 5 && Math.abs(dy) < 5) return;
+      t.axisLocked = true;
+      t.horizontal = Math.abs(dx) > Math.abs(dy);
     }
+
+    if (!t.horizontal) return;
+    e.preventDefault();
+
+    const width = photoContainerRef.current?.getBoundingClientRect().width || 1;
+    let pct = (dx / width) * 100;
+    if (pct > 0 && photoIndex === 0) pct *= 0.15; // resistance at first photo
+    if (pct < 0 && photoIndex === photos.length - 1) pct *= 0.15; // resistance at last photo
+    setDragPercent(pct);
   };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    const t = touchStateRef.current;
+    t.active = false;
+
+    if (!t.axisLocked) {
+      // Never moved enough to register as a drag — treat as a tap.
+      const rect = photoContainerRef.current?.getBoundingClientRect();
+      const tapX = e.changedTouches[0]?.clientX;
+      if (rect && tapX !== undefined) {
+        const relativeX = tapX - rect.left;
+        if (relativeX < rect.width / 3) goPrev();
+        else if (relativeX > (rect.width * 2) / 3) goNext();
+      }
+      setDragPercent(0);
+      return;
+    }
+
+    if (!t.horizontal) {
+      setDragPercent(0);
+      return;
+    }
+
+    if (dragPercent < -PHOTO_DRAG_THRESHOLD_PCT && photoIndex < photos.length - 1) {
+      setPhotoIndex((i) => i + 1);
+    } else if (dragPercent > PHOTO_DRAG_THRESHOLD_PCT && photoIndex > 0) {
+      setPhotoIndex((i) => i - 1);
+    }
+    setDragPercent(0);
+  };
+
+  const N = Math.max(photos.length, 1);
+  const baseX = -(photoIndex / N) * 100;
+  const dragX = (dragPercent / 100) * (100 / N);
+  const stripX = baseX + dragX;
 
   return (
     <motion.div
@@ -100,44 +159,53 @@ function SwipeCard({
             </>
           )}
 
-          <motion.div
-            ref={photoContainerRef}
-            drag={isTop && photos.length > 1 ? "x" : false}
-            dragConstraints={{ left: 0, right: 0 }}
-            dragElastic={0.6}
-            dragMomentum={false}
-            style={{ touchAction: "pan-y" }}
-            onDragEnd={isTop ? handlePhotoDragEnd : undefined}
-            onTap={isTop && photos.length > 1 ? handlePhotoTap : undefined}
-            className="w-full h-full"
-          >
-            {photos[photoIndex] ? (
-              photos[photoIndex].media_type === "video" ? (
-                <video
-                  key={photos[photoIndex].url}
-                  src={photos[photoIndex].url}
-                  className="w-full h-full object-cover"
-                  autoPlay
-                  muted
-                  loop
-                  playsInline
-                />
-              ) : (
-                <img
-                  src={photos[photoIndex].url}
-                  alt={candidate.name}
-                  className="w-full h-full object-cover"
-                  draggable={false}
-                />
-              )
-            ) : (
-              <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-card to-background">
-                <span className="text-primary text-6xl font-bold font-['Syne'] opacity-20">
-                  {candidate.name?.[0]}
-                </span>
+          {photos.length === 0 ? (
+            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-card to-background">
+              <span className="text-primary text-6xl font-bold font-['Syne'] opacity-20">
+                {candidate.name?.[0]}
+              </span>
+            </div>
+          ) : (
+            <div
+              ref={photoContainerRef}
+              className="relative w-full h-full overflow-hidden"
+              onTouchStart={handleTouchStart}
+              onTouchMove={handleTouchMove}
+              onTouchEnd={handleTouchEnd}
+              style={{ touchAction: "pan-y" }}
+            >
+              <div
+                className="absolute inset-0 flex h-full"
+                style={{
+                  width: `${N * 100}%`,
+                  transform: `translateX(${stripX}%)`,
+                  transition: isDraggingPhoto ? "none" : "transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)",
+                }}
+              >
+                {photos.map((photo, idx) => (
+                  <div key={photo.url} style={{ width: `${100 / N}%` }} className="h-full shrink-0">
+                    {photo.media_type === "video" ? (
+                      <video
+                        src={photo.url}
+                        className="w-full h-full object-cover"
+                        autoPlay={idx === photoIndex}
+                        muted
+                        loop
+                        playsInline
+                      />
+                    ) : (
+                      <img
+                        src={photo.url}
+                        alt={candidate.name}
+                        className="w-full h-full object-cover"
+                        draggable={false}
+                      />
+                    )}
+                  </div>
+                ))}
               </div>
-            )}
-          </motion.div>
+            </div>
+          )}
 
           <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-card to-transparent pointer-events-none" />
 
