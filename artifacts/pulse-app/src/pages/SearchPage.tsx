@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PhotoCarousel } from "@/components/PhotoCarousel";
+import { AppBrand } from "@/components/AppBrand";
 import { Search as SearchIcon, Heart, X, MessageCircle, SlidersHorizontal, Sparkles, ShieldCheck, Mic, MapPin, TrendingUp, ChevronLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -306,7 +307,7 @@ export default function SearchPage() {
         className="sticky top-0 z-30 bg-background/90 backdrop-blur-xl border-b border-border px-4 pb-3"
         style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
       >
-        <h1 className="text-2xl font-['Syne'] font-bold tracking-tight">Search</h1>
+        <AppBrand />
       </header>
 
       <div className="px-4 pt-6">

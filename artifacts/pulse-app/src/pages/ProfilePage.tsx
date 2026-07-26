@@ -9,6 +9,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { CheckCircle2, AlertCircle, Rocket, Plus, X, ImageIcon, Camera, Video } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { AppBrand } from "@/components/AppBrand";
 
 interface BoostStatus {
   is_active: boolean;
@@ -551,7 +552,7 @@ export default function ProfilePage() {
         className="sticky top-0 z-30 bg-background/90 backdrop-blur-xl border-b border-border px-6 pb-3"
         style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
       >
-        <h1 className="text-3xl font-['Syne'] font-bold tracking-tight">Profile</h1>
+        <AppBrand />
       </header>
 
       <div className="px-6 pt-8">

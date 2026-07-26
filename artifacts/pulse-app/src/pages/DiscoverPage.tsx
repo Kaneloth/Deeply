@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PhotoCarousel } from "@/components/PhotoCarousel";
+import { AppBrand } from "@/components/AppBrand";
 import { X, Heart, MessageCircle, MapPin } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -276,7 +277,7 @@ export default function DiscoverPage() {
         className="sticky top-0 z-30 flex justify-between items-center bg-background/90 backdrop-blur-xl border-b border-border px-4 pb-3"
         style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
       >
-        <h1 className="text-2xl font-['Syne'] font-bold tracking-tight">Discover</h1>
+        <AppBrand />
         {invitesCount > 0 && (
           <Link
             href="/invites"

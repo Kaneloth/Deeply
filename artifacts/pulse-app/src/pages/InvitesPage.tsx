@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSparks } from "@/contexts/SparksContext";
-import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PhotoCarousel } from "@/components/PhotoCarousel";
+import { AppBrand } from "@/components/AppBrand";
 import { ChevronLeft, Star, Lock, Heart, X, MapPin } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
@@ -270,11 +270,8 @@ export default function InvitesPage() {
         className="sticky top-0 z-30 bg-background/90 backdrop-blur-xl border-b border-border px-4 pb-3"
         style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
       >
-        <header className="flex items-center gap-3 mb-4 px-2">
-          <Link href="/discover" className="w-10 h-10 flex items-center justify-center rounded-full bg-secondary text-foreground hover:bg-secondary/80 transition-colors">
-            <ChevronLeft size={22} />
-          </Link>
-          <h1 className="text-2xl font-['Syne'] font-bold tracking-tight">Invites</h1>
+        <header className="flex items-center mb-4 px-2">
+          <AppBrand />
         </header>
 
         <div className="flex gap-2 px-2">
