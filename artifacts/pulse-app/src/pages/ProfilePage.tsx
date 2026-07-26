@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
-import { LogOut, CheckCircle2, AlertCircle, Rocket, Plus, X, ImageIcon, Camera } from "lucide-react";
+import { LogOut, CheckCircle2, AlertCircle, Rocket, Plus, X, ImageIcon, Camera, Video } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface BoostStatus {
@@ -78,7 +78,8 @@ export default function ProfilePage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showAddSheet, setShowAddSheet] = useState(false);
   const galleryInputRef = useRef<HTMLInputElement>(null);
-  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const cameraPhotoInputRef = useRef<HTMLInputElement>(null);
+  const cameraVideoInputRef = useRef<HTMLInputElement>(null);
 
   const fetchPhotos = useCallback(async () => {
     setIsLoadingPhotos(true);
@@ -455,11 +456,23 @@ export default function ProfilePage() {
           onChange={handleFileSelected}
           className="hidden"
         />
-        {/* Camera capture */}
+        {/* Camera capture — photo only. Split from video into its own
+            input because mixing image+video in `accept` alongside
+            `capture` makes many mobile browsers fall back to the
+            gallery picker instead of launching the camera. */}
         <input
-          ref={cameraInputRef}
+          ref={cameraPhotoInputRef}
           type="file"
-          accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime"
+          accept="image/jpeg,image/png,image/webp"
+          capture="user"
+          onChange={handleFileSelected}
+          className="hidden"
+        />
+        {/* Camera capture — video only, same reasoning as above. */}
+        <input
+          ref={cameraVideoInputRef}
+          type="file"
+          accept="video/mp4,video/webm,video/quicktime"
           capture="user"
           onChange={handleFileSelected}
           className="hidden"
@@ -487,11 +500,18 @@ export default function ProfilePage() {
               <h3 className="font-['Syne'] font-bold text-lg mb-4">Add a Photo or Clip</h3>
               <div className="space-y-3">
                 <button
-                  onClick={() => cameraInputRef.current?.click()}
+                  onClick={() => cameraPhotoInputRef.current?.click()}
                   className="w-full h-14 rounded-xl bg-gradient-accent text-white font-semibold flex items-center justify-center gap-2"
                 >
                   <Camera size={18} />
-                  Take Photo or Video
+                  Take Photo
+                </button>
+                <button
+                  onClick={() => cameraVideoInputRef.current?.click()}
+                  className="w-full h-14 rounded-xl bg-gradient-accent text-white font-semibold flex items-center justify-center gap-2"
+                >
+                  <Video size={18} />
+                  Record Video Clip
                 </button>
                 <button
                   onClick={() => galleryInputRef.current?.click()}
