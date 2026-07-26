@@ -28,7 +28,7 @@ const MAX_FREE_PHOTOS = 8;
 const MAX_GALLERY_ITEMS = 20;
 const EXTRA_PHOTO_COST = 10;
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
-const MAX_VIDEO_SIZE = 15 * 1024 * 1024; // 15MB
+const MAX_VIDEO_SIZE = 6 * 1024 * 1024; // 6MB — target is ~3MB for a 5s clip, this is a ceiling not a guarantee
 const MAX_VIDEO_DURATION = 5.5; // seconds, small buffer over the 5s target
 const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"];
@@ -163,32 +163,43 @@ export default function ProfilePage() {
     new Promise((resolve) => {
       const video = document.createElement("video");
       video.preload = "metadata";
+      video.muted = true;
+      const objectUrl = URL.createObjectURL(file);
       let settled = false;
 
       const finish = (duration: number) => {
         if (settled) return;
         settled = true;
-        URL.revokeObjectURL(video.src);
+        URL.revokeObjectURL(objectUrl);
         resolve(duration);
       };
 
-      video.onloadedmetadata = () => {
-        if (!isFinite(video.duration)) {
-          // Known browser quirk: some video files (often .mov from phone
-          // cameras) report Infinity until you seek into them.
-          video.currentTime = 1e101;
-          video.ontimeupdate = () => finish(video.duration);
-        } else {
+      const checkFixed = () => {
+        if (isFinite(video.duration) && video.duration > 0) {
           finish(video.duration);
         }
       };
 
-      // If we can't read it at all, fail OPEN (-1) rather than blocking a
-      // valid video — the 15MB size cap is still a practical backstop.
-      video.onerror = () => finish(-1);
-      setTimeout(() => finish(-1), 4000);
+      video.onloadedmetadata = () => {
+        if (isFinite(video.duration) && video.duration > 0) {
+          finish(video.duration);
+          return;
+        }
+        // Known quirk: some video blobs (often from phone cameras) report
+        // Infinity duration until you seek into them. Seeking triggers a
+        // corrected value via 'durationchange' in most browsers, or
+        // 'timeupdate' in others — listen for both to cover more devices.
+        video.addEventListener("durationchange", checkFixed);
+        video.addEventListener("timeupdate", checkFixed);
+        video.currentTime = 1e101;
+      };
 
-      video.src = URL.createObjectURL(file);
+      // If we genuinely can't read it, fail OPEN but let the caller know
+      // so it isn't silent.
+      video.onerror = () => finish(-1);
+      setTimeout(() => finish(-1), 6000);
+
+      video.src = objectUrl;
     });
 
   const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -225,10 +236,6 @@ export default function ProfilePage() {
       toast({ title: "File too large", description: "This photo is still too large even after compression.", variant: "destructive" });
       return;
     }
-    if (isVideo && file.size > MAX_VIDEO_SIZE) {
-      toast({ title: "File too large", description: "Video clips must be under 15MB.", variant: "destructive" });
-      return;
-    }
 
     if (isVideo) {
       const duration = await getVideoDuration(file);
@@ -236,6 +243,20 @@ export default function ProfilePage() {
         toast({
           title: "Clip too long",
           description: `Video clips must be 5 seconds or shorter (this one is ${duration.toFixed(1)}s). Please retake a shorter clip.`,
+          variant: "destructive",
+        });
+        return;
+      }
+      if (duration <= 0) {
+        toast({
+          title: "Couldn't verify clip length",
+          description: "Uploading anyway — please make sure it's 5 seconds or shorter.",
+        });
+      }
+      if (file.size > MAX_VIDEO_SIZE) {
+        toast({
+          title: "File too large",
+          description: `This clip is ${(file.size / 1024 / 1024).toFixed(1)}MB — try recording at a lower quality setting in your camera app, or a shorter clip.`,
           variant: "destructive",
         });
         return;
