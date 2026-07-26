@@ -10,6 +10,8 @@ import NotFound from '@/pages/not-found';
 import AuthPage from '@/pages/AuthPage';
 import OnboardingPage from '@/pages/OnboardingPage';
 import DiscoverPage from '@/pages/DiscoverPage';
+import SearchPage from '@/pages/SearchPage';
+import InvitesPage from '@/pages/InvitesPage';
 import MatchesPage from '@/pages/MatchesPage';
 import MatchDetailPage from '@/pages/MatchDetailPage';
 import ChatPage from '@/pages/ChatPage';
@@ -48,6 +50,8 @@ function Router() {
         {/* Protected Routes */}
         <Route path="/onboarding" component={() => <ProtectedRoute component={OnboardingPage} />} />
         <Route path="/discover" component={() => <ProtectedRoute component={DiscoverPage} />} />
+        <Route path="/search" component={() => <ProtectedRoute component={SearchPage} />} />
+        <Route path="/invites" component={() => <ProtectedRoute component={InvitesPage} />} />
         <Route path="/matches" component={() => <ProtectedRoute component={MatchesPage} />} />
         <Route path="/matches/:matchId" component={() => <ProtectedRoute component={MatchDetailPage} />} />
         <Route path="/matches/:matchId/chat" component={() => <ProtectedRoute component={ChatPage} />} />

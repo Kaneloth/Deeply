@@ -166,10 +166,10 @@ router.post("/discover/undo", requireAuth, async (req, res): Promise<void> => {
   res.json({ restoredProfile: restoredProfile ?? null, balance: spend.balance });
 });
 
-/** GET /api/discover/likes/count — FREE. Just the number of people who
- *  like this user but haven't matched yet, to create curiosity without
- *  a paywall on the number itself. */
-router.get("/discover/likes/count", requireAuth, async (req, res): Promise<void> => {
+/** GET /api/discover/invites/count — FREE. Just the number of people who
+ *  invited this user (liked them) but haven't matched yet, to create
+ *  curiosity without a paywall on the number itself. */
+router.get("/discover/invites/count", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
   const { data: incomingLikes } = await supabase
@@ -178,9 +178,9 @@ router.get("/discover/likes/count", requireAuth, async (req, res): Promise<void>
     .eq("target_id", userId)
     .in("direction", ["like", "super_like"]);
 
-  const likerIds = incomingLikes?.map((l) => l.swiper_id) ?? [];
+  const inviterIds = incomingLikes?.map((l) => l.swiper_id) ?? [];
 
-  if (likerIds.length === 0) {
+  if (inviterIds.length === 0) {
     res.json({ count: 0 });
     return;
   }
@@ -196,17 +196,17 @@ router.get("/discover/likes/count", requireAuth, async (req, res): Promise<void>
     (existingMatches ?? []).map((m) => (m.user1_id === userId ? m.user2_id : m.user1_id)),
   );
 
-  const pendingCount = likerIds.filter((id) => !matchedIds.has(id)).length;
+  const pendingCount = inviterIds.filter((id) => !matchedIds.has(id)).length;
 
   res.json({ count: pendingCount });
 });
 
-/** POST /api/discover/likes/reveal — PAID (30 Sparks). Returns the full
- *  profiles of everyone who likes this user and hasn't matched yet. */
-router.post("/discover/likes/reveal", requireAuth, async (req, res): Promise<void> => {
+/** POST /api/discover/invites/reveal — PAID (30 Sparks). Returns the full
+ *  profiles of everyone who invited this user and hasn't matched yet. */
+router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
-  const spend = await spendSparks(userId, REVEAL_LIKES_COST, "See who liked you");
+  const spend = await spendSparks(userId, REVEAL_LIKES_COST, "See who invited you");
   if (!spend.success) {
     res.status(402).json({ error: `Insufficient Sparks (need ${REVEAL_LIKES_COST})`, balance: spend.balance });
     return;
@@ -218,10 +218,10 @@ router.post("/discover/likes/reveal", requireAuth, async (req, res): Promise<voi
     .eq("target_id", userId)
     .in("direction", ["like", "super_like"]);
 
-  const likerIds = incomingLikes?.map((l) => l.swiper_id) ?? [];
+  const inviterIds = incomingLikes?.map((l) => l.swiper_id) ?? [];
 
-  if (likerIds.length === 0) {
-    res.json({ likers: [], balance: spend.balance });
+  if (inviterIds.length === 0) {
+    res.json({ invites: [], balance: spend.balance });
     return;
   }
 
@@ -234,26 +234,79 @@ router.post("/discover/likes/reveal", requireAuth, async (req, res): Promise<voi
     (existingMatches ?? []).map((m) => (m.user1_id === userId ? m.user2_id : m.user1_id)),
   );
 
-  const pendingLikerIds = likerIds.filter((id) => !matchedIds.has(id));
+  const pendingInviterIds = inviterIds.filter((id) => !matchedIds.has(id));
 
-  if (pendingLikerIds.length === 0) {
-    res.json({ likers: [], balance: spend.balance });
+  if (pendingInviterIds.length === 0) {
+    res.json({ invites: [], balance: spend.balance });
     return;
   }
 
-  const { data: likers } = await supabase
+  const { data: inviters } = await supabase
     .from("profiles")
     .select("id, name, age, bio, city, photo_url, personality_tags, integrity_score")
-    .in("id", pendingLikerIds);
+    .in("id", pendingInviterIds);
 
   // Flag super-likers so the frontend can show a star badge.
   const superLikerIds = new Set(
     (incomingLikes ?? []).filter((l) => l.direction === "super_like").map((l) => l.swiper_id),
   );
 
-  const enriched = (likers ?? []).map((l) => ({ ...l, super_liked: superLikerIds.has(l.id) }));
+  const enriched = (inviters ?? []).map((l) => ({ ...l, super_liked: superLikerIds.has(l.id) }));
 
-  res.json({ likers: enriched, balance: spend.balance });
+  res.json({ invites: enriched, balance: spend.balance });
+});
+
+/** GET /api/discover/search — filter/search the same unswiped candidate
+ *  pool as /queue, by name, age range, city, and personality tags. */
+router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const { name, min_age, max_age, city, tags } = req.query as {
+    name?: string;
+    min_age?: string;
+    max_age?: string;
+    city?: string;
+    tags?: string;
+  };
+
+  const { data: alreadySwiped } = await supabase
+    .from("swipes")
+    .select("target_id")
+    .eq("swiper_id", userId);
+
+  const excludedIds = [userId, ...(alreadySwiped?.map((s) => s.target_id) ?? [])];
+
+  let query = supabase
+    .from("profiles")
+    .select("id, name, age, bio, city, photo_url, personality_tags, integrity_score")
+    .not("id", "in", `(${excludedIds.join(",")})`);
+
+  if (name) {
+    query = query.ilike("name", `%${name}%`);
+  }
+  if (min_age) {
+    query = query.gte("age", Number(min_age));
+  }
+  if (max_age) {
+    query = query.lte("age", Number(max_age));
+  }
+  if (city) {
+    query = query.ilike("city", `%${city}%`);
+  }
+  if (tags) {
+    const tagList = tags.split(",").map((t) => t.trim()).filter(Boolean);
+    if (tagList.length > 0) {
+      query = query.overlaps("personality_tags", tagList);
+    }
+  }
+
+  const { data: results, error } = await query.limit(30);
+
+  if (error) {
+    res.status(500).json({ error: "Search failed" });
+    return;
+  }
+
+  res.json({ results: results ?? [] });
 });
 
 export default router;

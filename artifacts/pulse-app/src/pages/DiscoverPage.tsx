@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { Link } from "wouter";
 import { motion, AnimatePresence, useMotionValue, useTransform, type PanInfo } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -72,7 +73,7 @@ function SwipeCard({
                 style={{ opacity: likeOpacity }}
                 className="absolute top-8 left-8 border-4 border-primary text-primary font-['Syne'] font-extrabold text-3xl px-4 py-1 rounded-xl rotate-[-12deg]"
               >
-                LIKE
+                INVITE
               </motion.div>
               <motion.div
                 style={{ opacity: passOpacity }}
@@ -155,6 +156,20 @@ export default function DiscoverPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [matchName, setMatchName] = useState<string | null>(null);
   const [isSwiping, setIsSwiping] = useState(false);
+  const [invitesCount, setInvitesCount] = useState<number>(0);
+
+  const fetchInvitesCount = useCallback(async () => {
+    try {
+      const res = await fetch("/api/discover/invites/count", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const body = await res.json();
+      setInvitesCount(body.count ?? 0);
+    } catch {
+      // Silent — non-critical background fetch.
+    }
+  }, [token]);
 
   const fetchQueue = useCallback(async () => {
     setIsLoading(true);
@@ -178,7 +193,8 @@ export default function DiscoverPage() {
 
   useEffect(() => {
     fetchQueue();
-  }, [fetchQueue]);
+    fetchInvitesCount();
+  }, [fetchQueue, fetchInvitesCount]);
 
   const handleSwipe = async (direction: SwipeDirection) => {
     if (isSwiping || candidates.length === 0) return;
@@ -202,6 +218,7 @@ export default function DiscoverPage() {
 
       if (body.matched) {
         setMatchName(target.name);
+        fetchInvitesCount();
       }
     } catch (err) {
       toast({
@@ -229,6 +246,15 @@ export default function DiscoverPage() {
     <div className="flex flex-col min-h-full pb-6 pt-10 px-4">
       <header className="flex justify-between items-center mb-6 px-2">
         <h1 className="text-2xl font-['Syne'] font-bold tracking-tight">Discover</h1>
+        {invitesCount > 0 && (
+          <Link
+            href="/invites"
+            className="flex items-center gap-1.5 bg-card/80 backdrop-blur border border-card-border px-3 py-1.5 rounded-full text-sm font-semibold text-primary hover:border-primary/50 transition-colors"
+          >
+            <Heart size={14} className="fill-current" />
+            <span>{invitesCount} invite{invitesCount === 1 ? "" : "s"}</span>
+          </Link>
+        )}
       </header>
 
       <div className="flex-1 relative min-h-[500px]">

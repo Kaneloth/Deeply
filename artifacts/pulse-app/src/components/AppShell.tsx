@@ -1,6 +1,6 @@
 import { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { Flame, MessageCircle, Zap, User } from "lucide-react";
+import { Flame, Search, MessageCircle, Zap, User } from "lucide-react";
 import { useSparks } from "@/contexts/SparksContext";
 
 interface AppShellProps {
@@ -23,12 +23,26 @@ export function AppShell({ children }: AppShellProps) {
 
   return (
     <div className="w-full max-w-[430px] mx-auto min-h-[100dvh] bg-background relative flex flex-col overflow-hidden">
+      {/* Floating Profile button — top right, sits above every page's own header */}
+      <Link
+        href="/profile"
+        className={`fixed top-12 right-4 z-40 w-10 h-10 rounded-full flex items-center justify-center border transition-colors ${
+          location === "/profile"
+            ? "bg-primary text-primary-foreground border-primary"
+            : "bg-card/80 backdrop-blur text-foreground border-card-border hover:border-primary/50"
+        }`}
+      >
+        <User size={18} />
+      </Link>
+
       <main className="flex-1 overflow-y-auto pb-20 no-scrollbar">
         {children}
       </main>
+
       {/* Bottom Navigation */}
       <nav className="fixed bottom-0 w-full max-w-[430px] bg-background/80 backdrop-blur-xl border-t border-border z-50 px-6 py-4 flex items-center justify-between">
         <NavItem href="/discover" icon={<Flame size={24} />} active={location === "/discover"} label="Discover" />
+        <NavItem href="/search" icon={<Search size={24} />} active={location === "/search"} label="Search" />
         <NavItem href="/matches" icon={<MessageCircle size={24} />} active={location.startsWith("/matches")} label="Matches" />
         <NavItem
           href="/sparks"
@@ -37,7 +51,6 @@ export function AppShell({ children }: AppShellProps) {
           label="Sparks"
           badge={balance !== null ? balance : undefined}
         />
-        <NavItem href="/profile" icon={<User size={24} />} active={location === "/profile"} label="Profile" />
       </nav>
     </div>
   );
