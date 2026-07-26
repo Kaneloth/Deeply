@@ -293,7 +293,7 @@ router.post(
       .upload(storagePath, req.file.buffer, { contentType: req.file.mimetype });
 
     if (uploadError) {
-      res.status(500).json({ error: "Failed to upload file" });
+      res.status(500).json({ error: `Storage upload failed: ${uploadError.message}` });
       return;
     }
 
