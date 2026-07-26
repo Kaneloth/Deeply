@@ -288,12 +288,12 @@ export default function DiscoverPage() {
 
   const fetchInvitesCount = useCallback(async () => {
     try {
-      const res = await fetch("/api/discover/invites/count", {
+      const res = await fetch("/api/discover/invites", {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) return;
       const body = await res.json();
-      setInvitesCount(body.count ?? 0);
+      setInvitesCount((body.revealed?.length ?? 0) + (body.new_count ?? 0));
     } catch {
       // Silent — non-critical background fetch.
     }

@@ -218,51 +218,13 @@ router.post("/discover/undo", requireAuth, async (req, res): Promise<void> => {
   res.json({ restoredProfile: restoredWithPhotos ?? null, balance: spend.balance });
 });
 
-/** GET /api/discover/invites/count — FREE. Just the number of people who
- *  invited this user (liked them) but haven't matched yet, to create
- *  curiosity without a paywall on the number itself. */
-router.get("/discover/invites/count", requireAuth, async (req, res): Promise<void> => {
+/** GET /api/discover/invites — FREE. Returns people who already invited
+ *  this user and haven't matched yet, split into:
+ *  - revealed: profiles this user already paid to see (free forever now)
+ *  - new_count: how many additional pending inviters haven't been
+ *    revealed yet (still requires a paid reveal) */
+router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
-
-  const { data: incomingLikes } = await supabase
-    .from("swipes")
-    .select("swiper_id")
-    .eq("target_id", userId)
-    .in("direction", ["like", "super_like"]);
-
-  const inviterIds = incomingLikes?.map((l) => l.swiper_id) ?? [];
-
-  if (inviterIds.length === 0) {
-    res.json({ count: 0 });
-    return;
-  }
-
-  // Exclude anyone already matched — no need to "reveal" someone you're
-  // already talking to.
-  const { data: existingMatches } = await supabase
-    .from("matches")
-    .select("user1_id, user2_id")
-    .or(`user1_id.eq.${userId},user2_id.eq.${userId}`);
-
-  const matchedIds = new Set(
-    (existingMatches ?? []).map((m) => (m.user1_id === userId ? m.user2_id : m.user1_id)),
-  );
-
-  const pendingCount = inviterIds.filter((id) => !matchedIds.has(id)).length;
-
-  res.json({ count: pendingCount });
-});
-
-/** POST /api/discover/invites/reveal — PAID (30 Sparks). Returns the full
- *  profiles of everyone who invited this user and hasn't matched yet. */
-router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<void> => {
-  const userId = req.user!.id;
-
-  const spend = await spendSparks(userId, REVEAL_LIKES_COST, "See who invited you");
-  if (!spend.success) {
-    res.status(402).json({ error: `Insufficient Sparks (need ${REVEAL_LIKES_COST})`, balance: spend.balance });
-    return;
-  }
 
   const { data: incomingLikes } = await supabase
     .from("swipes")
@@ -273,7 +235,7 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
   const inviterIds = incomingLikes?.map((l) => l.swiper_id) ?? [];
 
   if (inviterIds.length === 0) {
-    res.json({ invites: [], balance: spend.balance });
+    res.json({ revealed: [], new_count: 0 });
     return;
   }
 
@@ -286,11 +248,114 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
     (existingMatches ?? []).map((m) => (m.user1_id === userId ? m.user2_id : m.user1_id)),
   );
 
-  const pendingInviterIds = inviterIds.filter((id) => !matchedIds.has(id));
+  // Also exclude anyone the user has already swiped on themselves —
+  // accepting or declining an invite is a decision that shouldn't keep
+  // reappearing even if it didn't result in a match.
+  const { data: myOwnSwipes } = await supabase
+    .from("swipes")
+    .select("target_id")
+    .eq("swiper_id", userId);
+
+  const alreadyDecidedIds = new Set((myOwnSwipes ?? []).map((s) => s.target_id));
+
+  const pendingInviterIds = inviterIds.filter((id) => !matchedIds.has(id) && !alreadyDecidedIds.has(id));
 
   if (pendingInviterIds.length === 0) {
-    res.json({ invites: [], balance: spend.balance });
+    res.json({ revealed: [], new_count: 0 });
     return;
+  }
+
+  const { data: alreadyRevealed } = await supabase
+    .from("invite_reveals")
+    .select("target_id")
+    .eq("user_id", userId)
+    .in("target_id", pendingInviterIds);
+
+  const revealedIds = new Set((alreadyRevealed ?? []).map((r) => r.target_id));
+  const revealedPendingIds = pendingInviterIds.filter((id) => revealedIds.has(id));
+  const newCount = pendingInviterIds.length - revealedPendingIds.length;
+
+  if (revealedPendingIds.length === 0) {
+    res.json({ revealed: [], new_count: newCount });
+    return;
+  }
+
+  const { data: revealedProfiles } = await supabase
+    .from("profiles")
+    .select("id, name, age, bio, city, photo_url, personality_tags, integrity_score")
+    .in("id", revealedPendingIds);
+
+  const superLikerIds = new Set(
+    (incomingLikes ?? []).filter((l) => l.direction === "super_like").map((l) => l.swiper_id),
+  );
+  const enriched = (revealedProfiles ?? []).map((p) => ({ ...p, super_liked: superLikerIds.has(p.id) }));
+  const enrichedWithPhotos = await attachPhotoGalleries(enriched);
+
+  res.json({ revealed: enrichedWithPhotos, new_count: newCount });
+});
+
+/** POST /api/discover/invites/reveal — PAID (30 Sparks), but ONLY if
+ *  there's at least one genuinely new inviter since the last reveal.
+ *  Already-revealed people never cost Sparks again. Returns the full
+ *  updated list of everyone pending (previously revealed + newly
+ *  revealed). */
+router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+
+  const { data: incomingLikes } = await supabase
+    .from("swipes")
+    .select("swiper_id, direction")
+    .eq("target_id", userId)
+    .in("direction", ["like", "super_like"]);
+
+  const inviterIds = incomingLikes?.map((l) => l.swiper_id) ?? [];
+
+  const { data: existingMatches } = await supabase
+    .from("matches")
+    .select("user1_id, user2_id")
+    .or(`user1_id.eq.${userId},user2_id.eq.${userId}`);
+
+  const matchedIds = new Set(
+    (existingMatches ?? []).map((m) => (m.user1_id === userId ? m.user2_id : m.user1_id)),
+  );
+
+  const { data: myOwnSwipes } = await supabase
+    .from("swipes")
+    .select("target_id")
+    .eq("swiper_id", userId);
+
+  const alreadyDecidedIds = new Set((myOwnSwipes ?? []).map((s) => s.target_id));
+
+  const pendingInviterIds = inviterIds.filter((id) => !matchedIds.has(id) && !alreadyDecidedIds.has(id));
+
+  if (pendingInviterIds.length === 0) {
+    res.json({ invites: [], balance: null });
+    return;
+  }
+
+  const { data: alreadyRevealed } = await supabase
+    .from("invite_reveals")
+    .select("target_id")
+    .eq("user_id", userId)
+    .in("target_id", pendingInviterIds);
+
+  const revealedIds = new Set((alreadyRevealed ?? []).map((r) => r.target_id));
+  const hasNew = pendingInviterIds.some((id) => !revealedIds.has(id));
+
+  let balance: number | null = null;
+
+  if (hasNew) {
+    const spend = await spendSparks(userId, REVEAL_LIKES_COST, "See who invited you");
+    if (!spend.success) {
+      res.status(402).json({ error: `Insufficient Sparks (need ${REVEAL_LIKES_COST})`, balance: spend.balance });
+      return;
+    }
+    balance = spend.balance;
+
+    // Mark everyone currently pending as revealed, so revisiting never
+    // re-charges for people already seen.
+    const rows = pendingInviterIds.map((targetId) => ({ user_id: userId, target_id: targetId }));
+    await supabase.from("invite_reveals").upsert(rows, { onConflict: "user_id,target_id" });
   }
 
   const { data: inviters } = await supabase
@@ -298,7 +363,6 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
     .select("id, name, age, bio, city, photo_url, personality_tags, integrity_score")
     .in("id", pendingInviterIds);
 
-  // Flag super-likers so the frontend can show a star badge.
   const superLikerIds = new Set(
     (incomingLikes ?? []).filter((l) => l.direction === "super_like").map((l) => l.swiper_id),
   );
@@ -306,7 +370,7 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
   const enriched = (inviters ?? []).map((l) => ({ ...l, super_liked: superLikerIds.has(l.id) }));
   const enrichedWithPhotos = await attachPhotoGalleries(enriched);
 
-  res.json({ invites: enrichedWithPhotos, balance: spend.balance });
+  res.json({ invites: enrichedWithPhotos, balance });
 });
 
 /** GET /api/discover/search — filter/search the same unswiped candidate
