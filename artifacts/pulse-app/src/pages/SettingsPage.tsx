@@ -1,0 +1,38 @@
+import { useAuth } from "@/contexts/AuthContext";
+import { Button } from "@/components/ui/button";
+import { Link } from "wouter";
+import { ChevronLeft, LogOut } from "lucide-react";
+
+export default function SettingsPage() {
+  const { logout } = useAuth();
+
+  return (
+    <div className="min-h-full pb-6 pt-12 px-6 bg-background">
+      <div className="flex items-center gap-3 mb-8">
+        <Link href="/profile" className="w-10 h-10 flex items-center justify-center rounded-full bg-secondary text-foreground hover:bg-secondary/80 transition-colors">
+          <ChevronLeft size={22} />
+        </Link>
+        <h1 className="text-2xl font-['Syne'] font-bold tracking-tight">Settings</h1>
+      </div>
+
+      <div className="space-y-6">
+        <div className="bg-card border border-card-border rounded-2xl p-5">
+          <h3 className="font-['Syne'] font-bold text-sm uppercase tracking-wider text-muted-foreground mb-1">
+            About
+          </h3>
+          <p className="text-sm text-foreground">Deeply</p>
+          <p className="text-xs text-muted-foreground mt-1">Deep connections begin with a spark.</p>
+        </div>
+
+        <Button
+          onClick={logout}
+          variant="outline"
+          className="w-full h-12 rounded-xl border-destructive/30 text-destructive hover:bg-destructive/10 flex items-center justify-center gap-2"
+        >
+          <LogOut size={16} />
+          Log Out
+        </Button>
+      </div>
+    </div>
+  );
+}

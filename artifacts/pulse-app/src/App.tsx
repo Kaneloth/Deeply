@@ -17,6 +17,7 @@ import MatchDetailPage from '@/pages/MatchDetailPage';
 import ChatPage from '@/pages/ChatPage';
 import SparksPage from '@/pages/SparksPage';
 import ProfilePage from '@/pages/ProfilePage';
+import SettingsPage from '@/pages/SettingsPage';
 
 const queryClient = new QueryClient();
 
@@ -57,6 +58,7 @@ function Router() {
         <Route path="/matches/:matchId/chat" component={() => <ProtectedRoute component={ChatPage} />} />
         <Route path="/sparks" component={() => <ProtectedRoute component={SparksPage} />} />
         <Route path="/profile" component={() => <ProtectedRoute component={ProfilePage} />} />
+        <Route path="/settings" component={() => <ProtectedRoute component={SettingsPage} />} />
         
         {/* Catch all */}
         <Route component={NotFound} />

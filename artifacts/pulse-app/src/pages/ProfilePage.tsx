@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
-import { LogOut, CheckCircle2, AlertCircle, Rocket, Plus, X, ImageIcon, Camera, Video } from "lucide-react";
+import { CheckCircle2, AlertCircle, Rocket, Plus, X, ImageIcon, Camera, Video } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface BoostStatus {
@@ -58,7 +58,7 @@ function BoostCountdown({ until }: { until: string }) {
 export default function ProfilePage() {
   const { data: profile, isLoading } = useGetMyProfile();
   const updateProfile = useUpdateMyProfile();
-  const { logout, token } = useAuth();
+  const { token } = useAuth();
   const { refresh: refreshSparksBadge } = useSparks();
   const { toast } = useToast();
 
@@ -549,9 +549,6 @@ export default function ProfilePage() {
     <div className="min-h-full pb-6 pt-12 px-6 bg-background">
       <div className="flex justify-between items-center mb-8">
         <h1 className="text-3xl font-['Syne'] font-bold tracking-tight">Profile</h1>
-        <Button variant="ghost" size="icon" onClick={logout} className="text-muted-foreground hover:text-destructive">
-          <LogOut size={20} />
-        </Button>
       </div>
 
       <div className="flex flex-col items-center mb-10">
