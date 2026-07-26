@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSparks } from "@/contexts/SparksContext";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PhotoCarousel } from "@/components/PhotoCarousel";
 import { ChevronLeft, Star, Lock, Heart, X, MapPin } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
@@ -20,8 +21,6 @@ interface Invite {
   super_liked: boolean;
 }
 
-const PHOTO_DRAG_THRESHOLD_PCT = 20;
-
 function InviteDetailOverlay({
   invite,
   onClose,
@@ -30,86 +29,10 @@ function InviteDetailOverlay({
 }: {
   invite: Invite;
   onClose: () => void;
-  onDecide: (direction: "like" | "pass") => void;
-  isActioning: boolean;
+  onDecide?: (direction: "like" | "pass") => void;
+  isActioning?: boolean;
 }) {
-  const [photoIndex, setPhotoIndex] = useState(0);
-  const [dragPercent, setDragPercent] = useState(0);
-  const isDraggingPhoto = dragPercent !== 0;
-  const photoContainerRef = useRef<HTMLDivElement>(null);
-  const touchStateRef = useRef({ startX: 0, startY: 0, active: false, axisLocked: false, horizontal: false });
   const photos = invite.photos.length > 0 ? invite.photos : [];
-
-  const goNext = () => setPhotoIndex((i) => Math.min(i + 1, Math.max(photos.length - 1, 0)));
-  const goPrev = () => setPhotoIndex((i) => Math.max(i - 1, 0));
-
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (photos.length <= 1) return;
-    touchStateRef.current = {
-      startX: e.touches[0].clientX,
-      startY: e.touches[0].clientY,
-      active: true,
-      axisLocked: false,
-      horizontal: false,
-    };
-  };
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    const t = touchStateRef.current;
-    if (!t.active) return;
-
-    const dx = e.touches[0].clientX - t.startX;
-    const dy = e.touches[0].clientY - t.startY;
-
-    if (!t.axisLocked) {
-      if (Math.abs(dx) < 5 && Math.abs(dy) < 5) return;
-      t.axisLocked = true;
-      t.horizontal = Math.abs(dx) > Math.abs(dy);
-    }
-
-    if (!t.horizontal) return;
-    e.preventDefault();
-
-    const width = photoContainerRef.current?.getBoundingClientRect().width || 1;
-    let pct = (dx / width) * 100;
-    if (pct > 0 && photoIndex === 0) pct *= 0.15;
-    if (pct < 0 && photoIndex === photos.length - 1) pct *= 0.15;
-    setDragPercent(pct);
-  };
-
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    const t = touchStateRef.current;
-    t.active = false;
-
-    if (!t.axisLocked) {
-      const rect = photoContainerRef.current?.getBoundingClientRect();
-      const tapX = e.changedTouches[0]?.clientX;
-      if (rect && tapX !== undefined) {
-        const relativeX = tapX - rect.left;
-        if (relativeX < rect.width / 3) goPrev();
-        else if (relativeX > (rect.width * 2) / 3) goNext();
-      }
-      setDragPercent(0);
-      return;
-    }
-
-    if (!t.horizontal) {
-      setDragPercent(0);
-      return;
-    }
-
-    if (dragPercent < -PHOTO_DRAG_THRESHOLD_PCT && photoIndex < photos.length - 1) {
-      setPhotoIndex((i) => i + 1);
-    } else if (dragPercent > PHOTO_DRAG_THRESHOLD_PCT && photoIndex > 0) {
-      setPhotoIndex((i) => i - 1);
-    }
-    setDragPercent(0);
-  };
-
-  const N = Math.max(photos.length, 1);
-  const baseX = -(photoIndex / N) * 100;
-  const dragX = (dragPercent / 100) * (100 / N);
-  const stripX = baseX + dragX;
 
   return (
     <div className="fixed inset-0 z-[100] bg-background flex flex-col">
@@ -122,67 +45,11 @@ function InviteDetailOverlay({
         </button>
 
         <div className="relative h-[55%] min-h-[350px] w-full bg-muted overflow-hidden shrink-0">
-          {photos.length > 1 && (
-            <>
-              <div className="absolute top-12 left-16 right-3 z-20 flex gap-1 pointer-events-none">
-                {photos.map((_, idx) => (
-                  <div key={idx} className="flex-1 h-1.5 rounded-full bg-white/40 overflow-hidden">
-                    <div className={`h-full bg-white transition-all duration-200 ${idx <= photoIndex ? "w-full" : "w-0"}`} />
-                  </div>
-                ))}
-              </div>
-              <div className="absolute top-[4.5rem] right-3 z-20 px-2 py-0.5 rounded-full bg-black/50 pointer-events-none">
-                <span className="text-white text-xs font-semibold">
-                  {photoIndex + 1} / {photos.length}
-                </span>
-              </div>
-            </>
-          )}
+          <PhotoCarousel photos={photos} name={invite.name} />
 
           {invite.super_liked && (
             <div className="absolute top-12 right-3 z-20 w-8 h-8 rounded-full bg-accent flex items-center justify-center shadow-lg">
               <Star size={16} className="fill-current text-white" />
-            </div>
-          )}
-
-          {photos.length === 0 ? (
-            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-card to-background">
-              <span className="text-primary text-6xl font-bold font-['Syne'] opacity-20">{invite.name?.[0]}</span>
-            </div>
-          ) : (
-            <div
-              ref={photoContainerRef}
-              className="relative w-full h-full overflow-hidden"
-              onTouchStart={handleTouchStart}
-              onTouchMove={handleTouchMove}
-              onTouchEnd={handleTouchEnd}
-              style={{ touchAction: "pan-y" }}
-            >
-              <div
-                className="absolute inset-0 flex h-full"
-                style={{
-                  width: `${N * 100}%`,
-                  transform: `translateX(${stripX}%)`,
-                  transition: isDraggingPhoto ? "none" : "transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)",
-                }}
-              >
-                {photos.map((photo, idx) => (
-                  <div key={photo.url} style={{ width: `${100 / N}%` }} className="h-full shrink-0">
-                    {photo.media_type === "video" ? (
-                      <video
-                        src={photo.url}
-                        className="w-full h-full object-cover"
-                        autoPlay={idx === photoIndex}
-                        muted
-                        loop
-                        playsInline
-                      />
-                    ) : (
-                      <img src={photo.url} alt={invite.name} className="w-full h-full object-cover" draggable={false} />
-                    )}
-                  </div>
-                ))}
-              </div>
             </div>
           )}
 
@@ -213,22 +80,28 @@ function InviteDetailOverlay({
         </div>
 
         <div className="flex-none p-6 pt-3 flex items-center justify-center gap-6">
-          <button
-            onClick={() => onDecide("pass")}
-            disabled={isActioning}
-            className="flex-1 h-14 rounded-2xl bg-card border border-card-border flex items-center justify-center gap-2 text-muted-foreground hover:border-destructive hover:text-destructive transition-colors font-semibold"
-          >
-            <X size={20} />
-            Decline
-          </button>
-          <button
-            onClick={() => onDecide("like")}
-            disabled={isActioning}
-            className="flex-1 h-14 rounded-2xl bg-gradient-accent text-white flex items-center justify-center gap-2 font-semibold shadow-[0_8px_20px_rgba(225,29,72,0.3)]"
-          >
-            <Heart size={20} className="fill-current" />
-            Accept
-          </button>
+          {onDecide ? (
+            <>
+              <button
+                onClick={() => onDecide("pass")}
+                disabled={isActioning}
+                className="flex-1 h-14 rounded-2xl bg-card border border-card-border flex items-center justify-center gap-2 text-muted-foreground hover:border-destructive hover:text-destructive transition-colors font-semibold"
+              >
+                <X size={20} />
+                Decline
+              </button>
+              <button
+                onClick={() => onDecide("like")}
+                disabled={isActioning}
+                className="flex-1 h-14 rounded-2xl bg-gradient-accent text-white flex items-center justify-center gap-2 font-semibold shadow-[0_8px_20px_rgba(225,29,72,0.3)]"
+              >
+                <Heart size={20} className="fill-current" />
+                Accept
+              </button>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">Waiting for them to respond</p>
+          )}
         </div>
       </div>
     </div>
@@ -269,6 +142,9 @@ export default function InvitesPage() {
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [matchName, setMatchName] = useState<string | null>(null);
   const [selectedInvite, setSelectedInvite] = useState<Invite | null>(null);
+  const [mode, setMode] = useState<"received" | "sent">("received");
+  const [sent, setSent] = useState<Invite[] | null>(null);
+  const [sentLoading, setSentLoading] = useState(false);
 
   const fetchInvites = useCallback(async () => {
     setIsLoading(true);
@@ -294,6 +170,33 @@ export default function InvitesPage() {
   useEffect(() => {
     fetchInvites();
   }, [fetchInvites]);
+
+  const fetchSent = useCallback(async () => {
+    setSentLoading(true);
+    try {
+      const res = await fetch("/api/discover/invites/sent", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to load sent invites");
+      setSent(body.sent ?? []);
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to load sent invites.",
+        variant: "destructive",
+      });
+    } finally {
+      setSentLoading(false);
+    }
+  }, [token, toast]);
+
+  const handleSwitchMode = (next: "received" | "sent") => {
+    setMode(next);
+    if (next === "sent" && sent === null) {
+      fetchSent();
+    }
+  };
 
   const handleReveal = async () => {
     setIsRevealing(true);
@@ -363,14 +266,77 @@ export default function InvitesPage() {
 
   return (
     <div className="min-h-full pb-6 pt-10 px-4">
-      <header className="flex items-center gap-3 mb-6 px-2">
+      <header className="flex items-center gap-3 mb-4 px-2">
         <Link href="/discover" className="w-10 h-10 flex items-center justify-center rounded-full bg-secondary text-foreground hover:bg-secondary/80 transition-colors">
           <ChevronLeft size={22} />
         </Link>
         <h1 className="text-2xl font-['Syne'] font-bold tracking-tight">Invites</h1>
       </header>
 
-      {isLoading ? (
+      <div className="flex gap-2 mb-6 px-2">
+        <button
+          onClick={() => handleSwitchMode("received")}
+          className={`flex-1 h-10 rounded-xl text-sm font-semibold transition-colors ${
+            mode === "received" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
+          }`}
+        >
+          Received
+        </button>
+        <button
+          onClick={() => handleSwitchMode("sent")}
+          className={`flex-1 h-10 rounded-xl text-sm font-semibold transition-colors ${
+            mode === "sent" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
+          }`}
+        >
+          Sent
+        </button>
+      </div>
+
+      {mode === "sent" ? (
+        sentLoading ? (
+          <Skeleton className="h-40 w-full rounded-3xl" />
+        ) : !sent || sent.length === 0 ? (
+          <div className="flex flex-col items-center text-center px-4 mt-10">
+            <div className="w-20 h-20 rounded-full bg-card border border-card-border flex items-center justify-center mb-6">
+              <Heart className="text-muted-foreground" size={28} />
+            </div>
+            <h2 className="text-xl font-['Syne'] font-bold">No pending invites sent</h2>
+            <p className="text-muted-foreground mt-2 max-w-[260px]">
+              People you invite from Discover or Search who haven't matched back yet will show up here.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            {sent.map((invite) => (
+              <button
+                key={invite.id}
+                onClick={() => setSelectedInvite(invite)}
+                className="relative aspect-[3/4] bg-card border border-card-border rounded-2xl overflow-hidden"
+              >
+                {invite.photo_url ? (
+                  <img src={invite.photo_url} alt={invite.name} className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-card to-background">
+                    <span className="text-primary text-3xl font-bold font-['Syne'] opacity-20">{invite.name?.[0]}</span>
+                  </div>
+                )}
+                {invite.super_liked && (
+                  <div className="absolute top-2 right-2 w-7 h-7 rounded-full bg-accent flex items-center justify-center shadow-lg">
+                    <Star size={14} className="fill-current text-white" />
+                  </div>
+                )}
+                <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-black/70 to-transparent" />
+                <div className="absolute bottom-2 left-3 right-3">
+                  <p className="text-white font-semibold text-sm truncate">
+                    {invite.name}, {invite.age}
+                  </p>
+                  <p className="text-white/70 text-xs">Pending</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        )
+      ) : isLoading ? (
         <Skeleton className="h-40 w-full rounded-3xl" />
       ) : (
         <>
@@ -468,7 +434,7 @@ export default function InvitesPage() {
         <InviteDetailOverlay
           invite={selectedInvite}
           onClose={() => setSelectedInvite(null)}
-          onDecide={(direction) => handleDecide(selectedInvite, direction)}
+          onDecide={mode === "received" ? (direction) => handleDecide(selectedInvite, direction) : undefined}
           isActioning={acceptingId === selectedInvite.id}
         />
       )}

@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLocation } from "wouter";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PhotoCarousel } from "@/components/PhotoCarousel";
 import { Search as SearchIcon, Heart, X, MessageCircle, SlidersHorizontal, Sparkles, ShieldCheck, Mic, MapPin, TrendingUp, ChevronLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -42,8 +43,6 @@ const CATEGORY_STYLE: Record<string, { icon: React.ReactNode; gradient: string }
   popular: { icon: <TrendingUp size={18} />, gradient: "from-rose-500/30 to-pink-500/30" },
 };
 
-const PHOTO_DRAG_THRESHOLD_PCT = 20;
-
 function ProfileDetailOverlay({
   profile,
   onClose,
@@ -57,83 +56,7 @@ function ProfileDetailOverlay({
   onMessage: () => void;
   isActioning: boolean;
 }) {
-  const [photoIndex, setPhotoIndex] = useState(0);
-  const [dragPercent, setDragPercent] = useState(0);
-  const isDraggingPhoto = dragPercent !== 0;
-  const photoContainerRef = useRef<HTMLDivElement>(null);
-  const touchStateRef = useRef({ startX: 0, startY: 0, active: false, axisLocked: false, horizontal: false });
   const photos = profile.photos.length > 0 ? profile.photos : [];
-
-  const goNext = () => setPhotoIndex((i) => Math.min(i + 1, Math.max(photos.length - 1, 0)));
-  const goPrev = () => setPhotoIndex((i) => Math.max(i - 1, 0));
-
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (photos.length <= 1) return;
-    touchStateRef.current = {
-      startX: e.touches[0].clientX,
-      startY: e.touches[0].clientY,
-      active: true,
-      axisLocked: false,
-      horizontal: false,
-    };
-  };
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    const t = touchStateRef.current;
-    if (!t.active) return;
-
-    const dx = e.touches[0].clientX - t.startX;
-    const dy = e.touches[0].clientY - t.startY;
-
-    if (!t.axisLocked) {
-      if (Math.abs(dx) < 5 && Math.abs(dy) < 5) return;
-      t.axisLocked = true;
-      t.horizontal = Math.abs(dx) > Math.abs(dy);
-    }
-
-    if (!t.horizontal) return;
-    e.preventDefault();
-
-    const width = photoContainerRef.current?.getBoundingClientRect().width || 1;
-    let pct = (dx / width) * 100;
-    if (pct > 0 && photoIndex === 0) pct *= 0.15;
-    if (pct < 0 && photoIndex === photos.length - 1) pct *= 0.15;
-    setDragPercent(pct);
-  };
-
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    const t = touchStateRef.current;
-    t.active = false;
-
-    if (!t.axisLocked) {
-      const rect = photoContainerRef.current?.getBoundingClientRect();
-      const tapX = e.changedTouches[0]?.clientX;
-      if (rect && tapX !== undefined) {
-        const relativeX = tapX - rect.left;
-        if (relativeX < rect.width / 3) goPrev();
-        else if (relativeX > (rect.width * 2) / 3) goNext();
-      }
-      setDragPercent(0);
-      return;
-    }
-
-    if (!t.horizontal) {
-      setDragPercent(0);
-      return;
-    }
-
-    if (dragPercent < -PHOTO_DRAG_THRESHOLD_PCT && photoIndex < photos.length - 1) {
-      setPhotoIndex((i) => i + 1);
-    } else if (dragPercent > PHOTO_DRAG_THRESHOLD_PCT && photoIndex > 0) {
-      setPhotoIndex((i) => i - 1);
-    }
-    setDragPercent(0);
-  };
-
-  const N = Math.max(photos.length, 1);
-  const baseX = -(photoIndex / N) * 100;
-  const dragX = (dragPercent / 100) * (100 / N);
-  const stripX = baseX + dragX;
 
   return (
     <div className="fixed inset-0 z-[100] bg-background flex flex-col">
@@ -146,63 +69,7 @@ function ProfileDetailOverlay({
         </button>
 
         <div className="relative h-[55%] min-h-[350px] w-full bg-muted overflow-hidden shrink-0">
-          {photos.length > 1 && (
-            <>
-              <div className="absolute top-12 left-16 right-3 z-20 flex gap-1 pointer-events-none">
-                {photos.map((_, idx) => (
-                  <div key={idx} className="flex-1 h-1.5 rounded-full bg-white/40 overflow-hidden">
-                    <div className={`h-full bg-white transition-all duration-200 ${idx <= photoIndex ? "w-full" : "w-0"}`} />
-                  </div>
-                ))}
-              </div>
-              <div className="absolute top-[4.5rem] right-3 z-20 px-2 py-0.5 rounded-full bg-black/50 pointer-events-none">
-                <span className="text-white text-xs font-semibold">
-                  {photoIndex + 1} / {photos.length}
-                </span>
-              </div>
-            </>
-          )}
-
-          {photos.length === 0 ? (
-            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-card to-background">
-              <span className="text-primary text-6xl font-bold font-['Syne'] opacity-20">{profile.name?.[0]}</span>
-            </div>
-          ) : (
-            <div
-              ref={photoContainerRef}
-              className="relative w-full h-full overflow-hidden"
-              onTouchStart={handleTouchStart}
-              onTouchMove={handleTouchMove}
-              onTouchEnd={handleTouchEnd}
-              style={{ touchAction: "pan-y" }}
-            >
-              <div
-                className="absolute inset-0 flex h-full"
-                style={{
-                  width: `${N * 100}%`,
-                  transform: `translateX(${stripX}%)`,
-                  transition: isDraggingPhoto ? "none" : "transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)",
-                }}
-              >
-                {photos.map((photo, idx) => (
-                  <div key={photo.url} style={{ width: `${100 / N}%` }} className="h-full shrink-0">
-                    {photo.media_type === "video" ? (
-                      <video
-                        src={photo.url}
-                        className="w-full h-full object-cover"
-                        autoPlay={idx === photoIndex}
-                        muted
-                        loop
-                        playsInline
-                      />
-                    ) : (
-                      <img src={photo.url} alt={profile.name} className="w-full h-full object-cover" draggable={false} />
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          <PhotoCarousel photos={photos} name={profile.name} />
 
           <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-background to-transparent pointer-events-none" />
           <div className="absolute bottom-4 left-6 right-6 pointer-events-none">

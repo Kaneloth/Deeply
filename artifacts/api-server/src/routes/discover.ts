@@ -771,4 +771,53 @@ router.post("/discover/message-request", requireAuth, async (req, res): Promise<
   res.status(201).json({ matchId: match.id, message, balance: spend.balance });
 });
 
+/** GET /api/discover/invites/sent — FREE. People this user has invited
+ *  (liked/super-liked) who haven't matched back yet. No paywall here —
+ *  the user already knows exactly who they chose to invite. */
+router.get("/discover/invites/sent", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+
+  const { data: outgoingLikes } = await supabase
+    .from("swipes")
+    .select("target_id, direction")
+    .eq("swiper_id", userId)
+    .in("direction", ["like", "super_like"]);
+
+  const sentIds = outgoingLikes?.map((l) => l.target_id) ?? [];
+
+  if (sentIds.length === 0) {
+    res.json({ sent: [] });
+    return;
+  }
+
+  const { data: existingMatches } = await supabase
+    .from("matches")
+    .select("user1_id, user2_id")
+    .or(`user1_id.eq.${userId},user2_id.eq.${userId}`);
+
+  const matchedIds = new Set(
+    (existingMatches ?? []).map((m) => (m.user1_id === userId ? m.user2_id : m.user1_id)),
+  );
+
+  const pendingSentIds = sentIds.filter((id) => !matchedIds.has(id));
+
+  if (pendingSentIds.length === 0) {
+    res.json({ sent: [] });
+    return;
+  }
+
+  const { data: sentProfiles } = await supabase
+    .from("profiles")
+    .select("id, name, age, bio, city, photo_url, personality_tags, integrity_score")
+    .in("id", pendingSentIds);
+
+  const superSentIds = new Set(
+    (outgoingLikes ?? []).filter((l) => l.direction === "super_like").map((l) => l.target_id),
+  );
+  const enriched = (sentProfiles ?? []).map((p) => ({ ...p, super_liked: superSentIds.has(p.id) }));
+  const enrichedWithPhotos = await attachPhotoGalleries(enriched);
+
+  res.json({ sent: enrichedWithPhotos });
+});
+
 export default router;
