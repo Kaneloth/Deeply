@@ -29,7 +29,7 @@ const MAX_GALLERY_ITEMS = 20;
 const EXTRA_PHOTO_COST = 10;
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
 const MAX_VIDEO_SIZE = 6 * 1024 * 1024; // 6MB — target is ~3MB for a 5s clip, this is a ceiling not a guarantee
-const MAX_VIDEO_DURATION = 5.5; // seconds, small buffer over the 5s target
+const MAX_VIDEO_DURATION = 6; // actual cutoff; user-facing message still says "5 seconds"
 const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"];
 
@@ -159,14 +159,86 @@ export default function ProfilePage() {
       img.src = objectUrl;
     });
 
-  const getVideoDuration = (file: File): Promise<number> =>
-    new Promise((resolve) => {
+  // Reads the duration directly out of an MP4/MOV file's own metadata
+  // (the 'mvhd' box inside 'moov'), without relying on the browser's
+  // video element to decode/report it. Far more reliable across mobile
+  // browsers than waiting on loadedmetadata events.
+  const parseMp4DurationSeconds = async (file: File): Promise<number | null> => {
+    try {
+      const buffer = await file.arrayBuffer();
+      const view = new DataView(buffer);
+      const len = buffer.byteLength;
+
+      const findBox = (start: number, end: number, boxType: string): { start: number; end: number } | null => {
+        let offset = start;
+        while (offset + 8 <= end) {
+          let size = view.getUint32(offset);
+          const type = String.fromCharCode(
+            view.getUint8(offset + 4),
+            view.getUint8(offset + 5),
+            view.getUint8(offset + 6),
+            view.getUint8(offset + 7),
+          );
+          let headerSize = 8;
+          if (size === 1) {
+            const high = view.getUint32(offset + 8);
+            const low = view.getUint32(offset + 12);
+            size = high * 2 ** 32 + low;
+            headerSize = 16;
+          } else if (size === 0) {
+            size = end - offset;
+          }
+          if (size <= 0) break;
+          if (type === boxType) {
+            return { start: offset + headerSize, end: offset + size };
+          }
+          offset += size;
+        }
+        return null;
+      };
+
+      const moov = findBox(0, len, "moov");
+      if (!moov) return null;
+      const mvhd = findBox(moov.start, moov.end, "mvhd");
+      if (!mvhd) return null;
+
+      const version = view.getUint8(mvhd.start);
+      let timescale: number;
+      let duration: number;
+      if (version === 1) {
+        timescale = view.getUint32(mvhd.start + 20);
+        const high = view.getUint32(mvhd.start + 24);
+        const low = view.getUint32(mvhd.start + 28);
+        duration = high * 2 ** 32 + low;
+      } else {
+        timescale = view.getUint32(mvhd.start + 12);
+        duration = view.getUint32(mvhd.start + 16);
+      }
+
+      if (!timescale) return null;
+      return duration / timescale;
+    } catch {
+      return null;
+    }
+  };
+
+  const getVideoDuration = async (file: File): Promise<number> => {
+    // First try: read duration directly from file bytes (MP4/MOV only,
+    // covers the vast majority of phone camera clips).
+    if (file.type === "video/mp4" || file.type === "video/quicktime") {
+      const binaryDuration = await parseMp4DurationSeconds(file);
+      if (binaryDuration !== null && binaryDuration > 0) {
+        return binaryDuration;
+      }
+    }
+
+    // Fallback: the browser's own video element (works for WebM, and
+    // MP4/MOV files the binary parser couldn't read).
+    return new Promise((resolve) => {
       const video = document.createElement("video");
       video.preload = "metadata";
       video.muted = true;
       video.playsInline = true;
-      // Some mobile browsers won't reliably fire metadata events on a
-      // detached element — keep it in the DOM (invisible) while reading.
       video.style.position = "fixed";
       video.style.opacity = "0";
       video.style.pointerEvents = "none";
@@ -206,6 +278,7 @@ export default function ProfilePage() {
 
       video.src = objectUrl;
     });
+  };
 
   const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     let file = e.target.files?.[0];
