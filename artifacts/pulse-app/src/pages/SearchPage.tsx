@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useLocation } from "wouter";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Search as SearchIcon, Heart, X, SlidersHorizontal, Sparkles, ShieldCheck, Mic, MapPin, TrendingUp, ChevronLeft } from "lucide-react";
+import { Search as SearchIcon, Heart, X, MessageCircle, SlidersHorizontal, Sparkles, ShieldCheck, Mic, MapPin, TrendingUp, ChevronLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const PERSONALITY_TAGS = [
@@ -46,11 +48,13 @@ function ProfileDetailOverlay({
   profile,
   onClose,
   onSwipe,
+  onMessage,
   isActioning,
 }: {
   profile: Result;
   onClose: () => void;
   onSwipe: (direction: "like" | "pass") => void;
+  onMessage: () => void;
   isActioning: boolean;
 }) {
   const [photoIndex, setPhotoIndex] = useState(0);
@@ -235,6 +239,13 @@ function ProfileDetailOverlay({
             <X size={28} />
           </button>
           <button
+            onClick={onMessage}
+            disabled={isActioning}
+            className="w-12 h-12 rounded-full bg-card border border-card-border flex items-center justify-center text-accent hover:border-accent transition-colors shadow-lg active:scale-95"
+          >
+            <MessageCircle size={20} />
+          </button>
+          <button
             onClick={() => onSwipe("like")}
             disabled={isActioning}
             className="w-16 h-16 rounded-full bg-gradient-accent flex items-center justify-center text-white shadow-[0_8px_20px_rgba(225,29,72,0.3)] active:scale-95 transition-transform"
@@ -250,6 +261,7 @@ function ProfileDetailOverlay({
 export default function SearchPage() {
   const { token } = useAuth();
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
 
   const [name, setName] = useState("");
   const [minAge, setMinAge] = useState("");
@@ -262,6 +274,9 @@ export default function SearchPage() {
   const [isSearching, setIsSearching] = useState(false);
   const [actioningId, setActioningId] = useState<string | null>(null);
   const [selectedProfile, setSelectedProfile] = useState<Result | null>(null);
+  const [composeFor, setComposeFor] = useState<Result | null>(null);
+  const [messageText, setMessageText] = useState("");
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoriesLoading, setCategoriesLoading] = useState(true);
@@ -374,6 +389,47 @@ export default function SearchPage() {
       });
     } finally {
       setActioningId(null);
+    }
+  };
+
+  const handleSendPreMatchMessage = async () => {
+    if (!composeFor || !messageText.trim() || isSendingMessage) return;
+    setIsSendingMessage(true);
+    try {
+      const res = await fetch("/api/discover/message-request", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ targetId: composeFor.id, content: messageText.trim() }),
+      });
+
+      if (res.status === 402) {
+        toast({
+          title: "You're out of Sparks",
+          description: "Recharge now or wait for your next monthly grant to send this message.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to send message");
+
+      setResults((prev) => (prev ? prev.filter((r) => r.id !== composeFor.id) : prev));
+      setSelectedProfile((prev) => (prev?.id === composeFor.id ? null : prev));
+      setComposeFor(null);
+      setMessageText("");
+      setLocation(`/matches/${body.matchId}/chat`);
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to send message.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSendingMessage(false);
     }
   };
 
@@ -583,6 +639,16 @@ export default function SearchPage() {
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
+                    setComposeFor(r);
+                  }}
+                  disabled={actioningId === r.id}
+                  className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center text-accent hover:border-accent transition-colors"
+                >
+                  <MessageCircle size={16} />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
                     handleSwipe(r.id, "like");
                   }}
                   disabled={actioningId === r.id}
@@ -601,8 +667,56 @@ export default function SearchPage() {
           profile={selectedProfile}
           onClose={() => setSelectedProfile(null)}
           onSwipe={(direction) => handleSwipe(selectedProfile.id, direction)}
+          onMessage={() => setComposeFor(selectedProfile)}
           isActioning={actioningId === selectedProfile.id}
         />
+      )}
+
+      {composeFor && (
+        <div
+          className="fixed inset-0 z-[110] bg-background/80 backdrop-blur-sm flex items-end"
+          onClick={() => {
+            if (!isSendingMessage) {
+              setComposeFor(null);
+              setMessageText("");
+            }
+          }}
+        >
+          <div
+            className="w-full max-w-[430px] mx-auto bg-card border-t border-card-border rounded-t-3xl p-6 pb-10"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-['Syne'] font-bold text-lg mb-1">Message {composeFor.name}</h3>
+            <p className="text-xs text-muted-foreground mb-4">Send an opening message before you match.</p>
+            <Textarea
+              value={messageText}
+              onChange={(e) => setMessageText(e.target.value)}
+              placeholder={`Say hi to ${composeFor.name}...`}
+              className="bg-background border-card-border min-h-[100px] resize-none rounded-xl"
+              autoFocus
+            />
+            <div className="flex gap-3 mt-4">
+              <Button
+                variant="outline"
+                className="flex-1 h-12 rounded-xl"
+                onClick={() => {
+                  setComposeFor(null);
+                  setMessageText("");
+                }}
+                disabled={isSendingMessage}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="flex-1 h-12 rounded-xl bg-gradient-accent border-0 text-white font-semibold"
+                onClick={handleSendPreMatchMessage}
+                disabled={!messageText.trim() || isSendingMessage}
+              >
+                {isSendingMessage ? "Sending..." : "Send"}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
