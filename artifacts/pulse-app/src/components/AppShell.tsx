@@ -1,6 +1,6 @@
 import { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { Flame, Search, MessageCircle, Zap, User } from "lucide-react";
+import { Flame, Search, Heart, MessageCircle, Zap, User } from "lucide-react";
 import { useSparks } from "@/contexts/SparksContext";
 
 interface AppShellProps {
@@ -40,13 +40,14 @@ export function AppShell({ children }: AppShellProps) {
       </main>
 
       {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 w-full max-w-[430px] bg-background/80 backdrop-blur-xl border-t border-border z-50 px-6 py-4 flex items-center justify-between">
-        <NavItem href="/discover" icon={<Flame size={24} />} active={location === "/discover"} label="Discover" />
-        <NavItem href="/search" icon={<Search size={24} />} active={location === "/search"} label="Search" />
-        <NavItem href="/matches" icon={<MessageCircle size={24} />} active={location.startsWith("/matches")} label="Matches" />
+      <nav className="fixed bottom-0 w-full max-w-[430px] bg-background/80 backdrop-blur-xl border-t border-border z-50 px-4 py-4 flex items-center justify-between">
+        <NavItem href="/discover" icon={<Flame size={22} />} active={location === "/discover"} label="Discover" />
+        <NavItem href="/search" icon={<Search size={22} />} active={location === "/search"} label="Search" />
+        <NavItem href="/invites" icon={<Heart size={22} />} active={location === "/invites"} label="Invites" />
+        <NavItem href="/matches" icon={<MessageCircle size={22} />} active={location.startsWith("/matches")} label="Matches" />
         <NavItem
           href="/sparks"
-          icon={<Zap size={24} />}
+          icon={<Zap size={22} />}
           active={location === "/sparks"}
           label="Sparks"
           badge={balance !== null ? balance : undefined}
