@@ -297,6 +297,15 @@ export default function ProfilePage() {
       return;
     }
 
+    if (isVideo && photos.some((p) => p.media_type === "video")) {
+      toast({
+        title: "Only 1 video clip allowed",
+        description: "Delete your existing clip first if you'd like to upload a different one.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     if (isImage) {
       try {
         file = await compressImage(file);
@@ -695,11 +704,17 @@ export default function ProfilePage() {
                 </button>
                 <button
                   onClick={() => cameraVideoInputRef.current?.click()}
-                  className="w-full h-14 rounded-xl bg-gradient-accent text-white font-semibold flex items-center justify-center gap-2"
+                  disabled={photos.some((p) => p.media_type === "video")}
+                  className="w-full h-14 rounded-xl bg-gradient-accent text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <Video size={18} />
                   Record Video Clip
                 </button>
+                {photos.some((p) => p.media_type === "video") && (
+                  <p className="text-xs text-muted-foreground text-center -mt-2">
+                    Only 1 video clip allowed — delete your current one to add a new one.
+                  </p>
+                )}
                 <button
                   onClick={() => galleryInputRef.current?.click()}
                   className="w-full h-14 rounded-xl bg-secondary text-foreground font-semibold flex items-center justify-center gap-2"

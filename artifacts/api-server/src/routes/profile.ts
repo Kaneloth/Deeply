@@ -239,9 +239,22 @@ router.post(
     const sizeLimit = isVideo ? MAX_VIDEO_SIZE : MAX_IMAGE_SIZE;
     if (req.file.size > sizeLimit) {
       res.status(400).json({
-        error: isVideo ? "Video clips must be under 15MB (~5 seconds)" : "Photos must be under 5MB",
+        error: isVideo ? "Video clips must be under 6MB (~5 seconds)" : "Photos must be under 5MB",
       });
       return;
+    }
+
+    if (isVideo) {
+      const { count: videoCount } = await supabase
+        .from("profile_photos")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("media_type", "video");
+
+      if ((videoCount ?? 0) >= 1) {
+        res.status(400).json({ error: "You can only have 1 video clip. Delete your existing clip to upload a new one." });
+        return;
+      }
     }
 
     const { count } = await supabase
