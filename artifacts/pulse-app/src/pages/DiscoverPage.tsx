@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Link, useLocation } from "wouter";
 import { motion, AnimatePresence, type PanInfo } from "framer-motion";
@@ -42,18 +42,30 @@ function SwipeCard({
   stackIndex: number;
 }) {
   const [photoIndex, setPhotoIndex] = useState(0);
+  const photoContainerRef = useRef<HTMLDivElement>(null);
   const photos = candidate.photos.length > 0 ? candidate.photos : [];
 
   const goNext = () => setPhotoIndex((i) => Math.min(i + 1, Math.max(photos.length - 1, 0)));
   const goPrev = () => setPhotoIndex((i) => Math.max(i - 1, 0));
 
-  // Photo browsing drag — Instagram-style. This is a SEPARATE gesture from
-  // the invite/pass decision (which is button-only below). Dragging here
-  // only ever changes which photo is shown; it can never trigger a match
-  // decision, and always snaps back to place.
+  // Photo browsing — Instagram-style. This is a SEPARATE gesture from the
+  // invite/pass decision (which is button-only below). Both tap and drag
+  // live on the SAME layer here (a tap-zone button layered on top would
+  // swallow the drag gesture before it ever reached this element).
   const handlePhotoDragEnd = (_: unknown, info: PanInfo) => {
     if (info.offset.x < -50) goNext();
     else if (info.offset.x > 50) goPrev();
+  };
+
+  const handlePhotoTap = (_: unknown, info: { point: { x: number; y: number } }) => {
+    const rect = photoContainerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const relativeX = info.point.x - rect.left;
+    if (relativeX < rect.width / 3) {
+      goPrev();
+    } else if (relativeX > (rect.width * 2) / 3) {
+      goNext();
+    }
   };
 
   return (
@@ -82,10 +94,12 @@ function SwipeCard({
           )}
 
           <motion.div
+            ref={photoContainerRef}
             drag={isTop && photos.length > 1 ? "x" : false}
             dragConstraints={{ left: 0, right: 0 }}
             dragElastic={0.15}
             onDragEnd={isTop ? handlePhotoDragEnd : undefined}
+            onTap={isTop && photos.length > 1 ? handlePhotoTap : undefined}
             className="w-full h-full"
           >
             {photos[photoIndex] ? (
@@ -115,23 +129,6 @@ function SwipeCard({
               </div>
             )}
           </motion.div>
-
-          {/* Tap zones for photo browsing — distinct from, and never
-              triggers, the invite/pass decision. */}
-          {isTop && photos.length > 1 && (
-            <>
-              <button
-                onClick={goPrev}
-                aria-label="Previous photo"
-                className="absolute left-0 top-0 bottom-0 w-1/3 z-10"
-              />
-              <button
-                onClick={goNext}
-                aria-label="Next photo"
-                className="absolute right-0 top-0 bottom-0 w-1/3 z-10"
-              />
-            </>
-          )}
 
           <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-card to-transparent pointer-events-none" />
 
@@ -173,7 +170,7 @@ function MatchCelebration({ name, onContinue }: { name: string; onContinue: () =
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 bg-background/95 backdrop-blur-md flex flex-col items-center justify-center px-6 text-center"
+      className="fixed inset-0 z-[100] bg-background/95 backdrop-blur-md flex flex-col items-center justify-center px-6 text-center"
     >
       <motion.div
         initial={{ scale: 0.5, opacity: 0 }}
@@ -428,7 +425,7 @@ export default function DiscoverPage() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-end"
+            className="fixed inset-0 z-[100] bg-background/80 backdrop-blur-sm flex items-end"
             onClick={() => {
               if (!isSendingMessage) {
                 setComposeFor(null);
