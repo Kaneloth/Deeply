@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useParams, Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
+import { useSparks } from "@/contexts/SparksContext";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, Send, Undo2 } from "lucide-react";
+import { ChevronLeft, Send, Undo2, Eye, CheckCheck } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface MatchedUser {
@@ -34,6 +35,7 @@ export default function ChatPage() {
   const params = useParams();
   const matchId = params.matchId || "";
   const { token } = useAuth();
+  const { refresh: refreshSparksBadge } = useSparks();
   const { toast } = useToast();
 
   const [match, setMatch] = useState<Match | null>(null);
@@ -41,9 +43,59 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [receiptsUnlocked, setReceiptsUnlocked] = useState(false);
+  const [isUnlockingReceipts, setIsUnlockingReceipts] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const isMyMsg = (senderId: string) => match?.matched_user?.id !== senderId;
+
+  const fetchReceiptsStatus = useCallback(async () => {
+    if (!matchId) return;
+    try {
+      const res = await fetch(`/api/matches/${matchId}/read-receipts/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const body = await res.json();
+      setReceiptsUnlocked(!!body.unlocked);
+    } catch {
+      // Silent — non-critical.
+    }
+  }, [matchId, token]);
+
+  const handleUnlockReceipts = async () => {
+    setIsUnlockingReceipts(true);
+    try {
+      const res = await fetch(`/api/matches/${matchId}/read-receipts/unlock`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (res.status === 402) {
+        toast({
+          title: "You're out of Sparks",
+          description: "Recharge now or wait for your next monthly grant to unlock read receipts.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to unlock read receipts");
+      setReceiptsUnlocked(true);
+      refreshSparksBadge();
+      await fetchMessages();
+      toast({ title: "Read receipts unlocked", description: "You'll now see when your messages are read." });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to unlock read receipts.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUnlockingReceipts(false);
+    }
+  };
 
   const fetchMatch = useCallback(async () => {
     if (!matchId) return;
@@ -82,7 +134,8 @@ export default function ChatPage() {
 
   useEffect(() => {
     fetchMatch();
-  }, [fetchMatch]);
+    fetchReceiptsStatus();
+  }, [fetchMatch, fetchReceiptsStatus]);
 
   useEffect(() => {
     fetchMessages();
@@ -196,27 +249,41 @@ export default function ChatPage() {
     <div className="flex flex-col h-[100dvh] w-full max-w-[430px] mx-auto bg-background relative z-50">
       {/* Header */}
       <header className="flex-none bg-card/90 backdrop-blur-xl border-b border-card-border pt-12 pb-4 px-4 sticky top-0 z-10">
-        <div className="flex items-center gap-3">
-          <Link href={`/matches/${matchId}`} className="w-10 h-10 flex items-center justify-center rounded-full bg-secondary text-foreground hover:bg-secondary/80 transition-colors">
-            <ChevronLeft size={24} />
-          </Link>
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-muted overflow-hidden border border-border">
-              {match.matched_user?.photo_url ? (
-                <img src={match.matched_user.photo_url} alt="" className="w-full h-full object-cover" />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center bg-primary/20 text-primary font-bold font-['Syne']">
-                  {match.matched_user?.name?.[0] || "?"}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <Link href={`/matches/${matchId}`} className="w-10 h-10 flex items-center justify-center rounded-full bg-secondary text-foreground hover:bg-secondary/80 transition-colors shrink-0">
+              <ChevronLeft size={24} />
+            </Link>
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-full bg-muted overflow-hidden border border-border shrink-0">
+                {match.matched_user?.photo_url ? (
+                  <img src={match.matched_user.photo_url} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center bg-primary/20 text-primary font-bold font-['Syne']">
+                    {match.matched_user?.name?.[0] || "?"}
+                  </div>
+                )}
+              </div>
+              <div className="min-w-0">
+                <h2 className="font-bold text-base leading-tight truncate">{match.matched_user?.name}</h2>
+                <div className="text-xs text-muted-foreground flex items-center gap-1">
+                  <div className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" /> Matched
                 </div>
-              )}
-            </div>
-            <div>
-              <h2 className="font-bold text-base leading-tight">{match.matched_user?.name}</h2>
-              <div className="text-xs text-muted-foreground flex items-center gap-1">
-                <div className="w-1.5 h-1.5 rounded-full bg-green-500" /> Matched
               </div>
             </div>
           </div>
+
+          {!receiptsUnlocked && (
+            <button
+              onClick={handleUnlockReceipts}
+              disabled={isUnlockingReceipts}
+              title="Unlock read receipts"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-muted-foreground hover:text-foreground transition-colors text-xs font-medium shrink-0 disabled:opacity-50"
+            >
+              <Eye size={13} />
+              <span>{isUnlockingReceipts ? "..." : "Receipts"}</span>
+            </button>
+          )}
         </div>
       </header>
 
@@ -235,26 +302,43 @@ export default function ChatPage() {
           messages.map((msg, i) => {
             const mine = isMyMsg(msg.sender_id);
             const showUnsend = mine && canUnsend(msg);
+            const isLastOwnMessage = mine && !messages.slice(i + 1).some((m) => isMyMsg(m.sender_id));
+            const showReadIndicator = isLastOwnMessage && receiptsUnlocked && !msg.is_unsent;
+
             return (
-              <div key={msg.id} className={`flex items-end gap-1.5 ${mine ? "justify-end" : "justify-start"}`}>
-                {mine && showUnsend && (
-                  <button
-                    onClick={() => handleUnsend(msg.id)}
-                    title="Unsend"
-                    className="w-6 h-6 rounded-full flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-secondary transition-colors shrink-0 mb-1"
+              <div key={msg.id}>
+                <div className={`flex items-end gap-1.5 ${mine ? "justify-end" : "justify-start"}`}>
+                  {mine && showUnsend && (
+                    <button
+                      onClick={() => handleUnsend(msg.id)}
+                      title="Unsend"
+                      className="w-6 h-6 rounded-full flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-secondary transition-colors shrink-0 mb-1"
+                    >
+                      <Undo2 size={14} />
+                    </button>
+                  )}
+                  <div
+                    className={`max-w-[75%] px-4 py-2.5 text-[15px] leading-snug ${
+                      mine
+                        ? "bg-primary text-white rounded-2xl rounded-tr-sm"
+                        : "bg-secondary text-foreground rounded-2xl rounded-tl-sm"
+                    } ${msg.is_unsent ? "opacity-50 italic line-through" : ""}`}
                   >
-                    <Undo2 size={14} />
-                  </button>
-                )}
-                <div
-                  className={`max-w-[75%] px-4 py-2.5 text-[15px] leading-snug ${
-                    mine
-                      ? "bg-primary text-white rounded-2xl rounded-tr-sm"
-                      : "bg-secondary text-foreground rounded-2xl rounded-tl-sm"
-                  } ${msg.is_unsent ? "opacity-50 italic line-through" : ""}`}
-                >
-                  {msg.is_unsent ? "Message unsent" : msg.content}
+                    {msg.is_unsent ? "Message unsent" : msg.content}
+                  </div>
                 </div>
+                {showReadIndicator && (
+                  <div className="flex items-center justify-end gap-1 mt-1 pr-1 text-[11px] text-muted-foreground">
+                    {msg.is_read ? (
+                      <>
+                        <CheckCheck size={12} className="text-primary" />
+                        <span>Read</span>
+                      </>
+                    ) : (
+                      <span>Delivered</span>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })
