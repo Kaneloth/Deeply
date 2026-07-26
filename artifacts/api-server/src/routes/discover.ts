@@ -309,4 +309,267 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
   res.json({ results: results ?? [] });
 });
 
+/** GET /api/discover/categories — lightweight preview data for stat cards
+ *  on the Search page (count + a few preview photos per category). */
+router.get("/discover/categories", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+
+  const { data: alreadySwiped } = await supabase
+    .from("swipes")
+    .select("target_id")
+    .eq("swiper_id", userId);
+
+  const excludedIds = [userId, ...(alreadySwiped?.map((s) => s.target_id) ?? [])];
+  const excludeClause = `(${excludedIds.join(",")})`;
+
+  const { data: viewerProfile } = await supabase
+    .from("profiles")
+    .select("city, personality_tags")
+    .eq("id", userId)
+    .single();
+
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const categories: Array<{ key: string; label: string; count: number; preview_photos: string[] }> = [];
+
+  // New Here — joined in the last 7 days
+  {
+    const { data } = await supabase
+      .from("profiles")
+      .select("photo_url")
+      .not("id", "in", excludeClause)
+      .gte("created_at", sevenDaysAgo)
+      .limit(3);
+    const { count } = await supabase
+      .from("profiles")
+      .select("id", { count: "exact", head: true })
+      .not("id", "in", excludeClause)
+      .gte("created_at", sevenDaysAgo);
+    categories.push({
+      key: "new_here",
+      label: "New Here",
+      count: count ?? 0,
+      preview_photos: (data ?? []).map((p) => p.photo_url).filter(Boolean) as string[],
+    });
+  }
+
+  // Verified
+  {
+    const { data } = await supabase
+      .from("profiles")
+      .select("photo_url")
+      .not("id", "in", excludeClause)
+      .eq("is_verified", true)
+      .limit(3);
+    const { count } = await supabase
+      .from("profiles")
+      .select("id", { count: "exact", head: true })
+      .not("id", "in", excludeClause)
+      .eq("is_verified", true);
+    categories.push({
+      key: "verified",
+      label: "Verified",
+      count: count ?? 0,
+      preview_photos: (data ?? []).map((p) => p.photo_url).filter(Boolean) as string[],
+    });
+  }
+
+  // Has Audio Bio
+  {
+    const { data: audioUserRows } = await supabase.from("audio_prompts").select("user_id");
+    const audioUserIds = [...new Set((audioUserRows ?? []).map((r) => r.user_id))].filter(
+      (id) => !excludedIds.includes(id),
+    );
+    let preview: string[] = [];
+    if (audioUserIds.length > 0) {
+      const { data } = await supabase
+        .from("profiles")
+        .select("photo_url")
+        .in("id", audioUserIds.slice(0, 50))
+        .limit(3);
+      preview = (data ?? []).map((p) => p.photo_url).filter(Boolean) as string[];
+    }
+    categories.push({ key: "has_audio", label: "Audio Bios", count: audioUserIds.length, preview_photos: preview });
+  }
+
+  // Near You — same city as viewer
+  if (viewerProfile?.city) {
+    const { data } = await supabase
+      .from("profiles")
+      .select("photo_url")
+      .not("id", "in", excludeClause)
+      .ilike("city", viewerProfile.city)
+      .limit(3);
+    const { count } = await supabase
+      .from("profiles")
+      .select("id", { count: "exact", head: true })
+      .not("id", "in", excludeClause)
+      .ilike("city", viewerProfile.city);
+    categories.push({
+      key: "near_you",
+      label: "Near You",
+      count: count ?? 0,
+      preview_photos: (data ?? []).map((p) => p.photo_url).filter(Boolean) as string[],
+    });
+  }
+
+  // Matches Your Vibe — overlapping personality tags
+  if (viewerProfile?.personality_tags && viewerProfile.personality_tags.length > 0) {
+    const { data } = await supabase
+      .from("profiles")
+      .select("photo_url")
+      .not("id", "in", excludeClause)
+      .overlaps("personality_tags", viewerProfile.personality_tags)
+      .limit(3);
+    const { count } = await supabase
+      .from("profiles")
+      .select("id", { count: "exact", head: true })
+      .not("id", "in", excludeClause)
+      .overlaps("personality_tags", viewerProfile.personality_tags);
+    categories.push({
+      key: "matches_vibe",
+      label: "Matches Your Vibe",
+      count: count ?? 0,
+      preview_photos: (data ?? []).map((p) => p.photo_url).filter(Boolean) as string[],
+    });
+  }
+
+  // Popular — most invited (liked) in the last 7 days
+  {
+    const { data: recentLikes } = await supabase
+      .from("swipes")
+      .select("target_id")
+      .in("direction", ["like", "super_like"])
+      .gte("created_at", sevenDaysAgo);
+
+    const countMap = new Map<string, number>();
+    for (const l of recentLikes ?? []) {
+      if (excludedIds.includes(l.target_id)) continue;
+      countMap.set(l.target_id, (countMap.get(l.target_id) ?? 0) + 1);
+    }
+    const topIds = [...countMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([id]) => id);
+    let preview: string[] = [];
+    if (topIds.length > 0) {
+      const { data } = await supabase.from("profiles").select("id, photo_url").in("id", topIds);
+      preview = topIds
+        .map((id) => data?.find((p) => p.id === id)?.photo_url)
+        .filter(Boolean) as string[];
+    }
+    categories.push({ key: "popular", label: "Popular", count: countMap.size, preview_photos: preview });
+  }
+
+  res.json({ categories });
+});
+
+/** GET /api/discover/categories/:key — full profile results for a tapped
+ *  stat card. */
+router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const key = Array.isArray(req.params.key) ? req.params.key[0] : req.params.key;
+
+  const { data: alreadySwiped } = await supabase
+    .from("swipes")
+    .select("target_id")
+    .eq("swiper_id", userId);
+
+  const excludedIds = [userId, ...(alreadySwiped?.map((s) => s.target_id) ?? [])];
+  const excludeClause = `(${excludedIds.join(",")})`;
+  const SELECT_FIELDS = "id, name, age, bio, city, photo_url, personality_tags, integrity_score";
+
+  const { data: viewerProfile } = await supabase
+    .from("profiles")
+    .select("city, personality_tags")
+    .eq("id", userId)
+    .single();
+
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  let results: any[] = [];
+
+  switch (key) {
+    case "new_here": {
+      const { data } = await supabase
+        .from("profiles")
+        .select(SELECT_FIELDS)
+        .not("id", "in", excludeClause)
+        .gte("created_at", sevenDaysAgo)
+        .order("created_at", { ascending: false })
+        .limit(30);
+      results = data ?? [];
+      break;
+    }
+    case "verified": {
+      const { data } = await supabase
+        .from("profiles")
+        .select(SELECT_FIELDS)
+        .not("id", "in", excludeClause)
+        .eq("is_verified", true)
+        .limit(30);
+      results = data ?? [];
+      break;
+    }
+    case "has_audio": {
+      const { data: audioUserRows } = await supabase.from("audio_prompts").select("user_id");
+      const audioUserIds = [...new Set((audioUserRows ?? []).map((r) => r.user_id))].filter(
+        (id) => !excludedIds.includes(id),
+      );
+      if (audioUserIds.length > 0) {
+        const { data } = await supabase.from("profiles").select(SELECT_FIELDS).in("id", audioUserIds.slice(0, 30));
+        results = data ?? [];
+      }
+      break;
+    }
+    case "near_you": {
+      if (viewerProfile?.city) {
+        const { data } = await supabase
+          .from("profiles")
+          .select(SELECT_FIELDS)
+          .not("id", "in", excludeClause)
+          .ilike("city", viewerProfile.city)
+          .limit(30);
+        results = data ?? [];
+      }
+      break;
+    }
+    case "matches_vibe": {
+      if (viewerProfile?.personality_tags && viewerProfile.personality_tags.length > 0) {
+        const { data } = await supabase
+          .from("profiles")
+          .select(SELECT_FIELDS)
+          .not("id", "in", excludeClause)
+          .overlaps("personality_tags", viewerProfile.personality_tags)
+          .limit(30);
+        results = data ?? [];
+      }
+      break;
+    }
+    case "popular": {
+      const { data: recentLikes } = await supabase
+        .from("swipes")
+        .select("target_id")
+        .in("direction", ["like", "super_like"])
+        .gte("created_at", sevenDaysAgo);
+
+      const countMap = new Map<string, number>();
+      for (const l of recentLikes ?? []) {
+        if (excludedIds.includes(l.target_id)) continue;
+        countMap.set(l.target_id, (countMap.get(l.target_id) ?? 0) + 1);
+      }
+      const topIds = [...countMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([id]) => id);
+      if (topIds.length > 0) {
+        const { data } = await supabase.from("profiles").select(SELECT_FIELDS).in("id", topIds);
+        // Preserve popularity order
+        results = topIds.map((id) => (data ?? []).find((p) => p.id === id)).filter(Boolean);
+      }
+      break;
+    }
+    default: {
+      res.status(400).json({ error: "Unknown category" });
+      return;
+    }
+  }
+
+  res.json({ results });
+});
+
 export default router;

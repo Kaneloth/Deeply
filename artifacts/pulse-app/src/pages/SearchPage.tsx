@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Search as SearchIcon, Heart, X, SlidersHorizontal } from "lucide-react";
+import { Search as SearchIcon, Heart, X, SlidersHorizontal, Sparkles, ShieldCheck, Mic, MapPin, TrendingUp, ChevronLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const PERSONALITY_TAGS = [
@@ -23,6 +23,22 @@ interface Result {
   integrity_score: number;
 }
 
+interface Category {
+  key: string;
+  label: string;
+  count: number;
+  preview_photos: string[];
+}
+
+const CATEGORY_STYLE: Record<string, { icon: React.ReactNode; gradient: string }> = {
+  new_here: { icon: <Sparkles size={18} />, gradient: "from-violet-500/30 to-fuchsia-500/30" },
+  verified: { icon: <ShieldCheck size={18} />, gradient: "from-emerald-500/30 to-teal-500/30" },
+  has_audio: { icon: <Mic size={18} />, gradient: "from-amber-500/30 to-orange-500/30" },
+  near_you: { icon: <MapPin size={18} />, gradient: "from-sky-500/30 to-blue-500/30" },
+  matches_vibe: { icon: <Heart size={18} />, gradient: "from-primary/30 to-accent/30" },
+  popular: { icon: <TrendingUp size={18} />, gradient: "from-rose-500/30 to-pink-500/30" },
+};
+
 export default function SearchPage() {
   const { token } = useAuth();
   const { toast } = useToast();
@@ -38,12 +54,63 @@ export default function SearchPage() {
   const [isSearching, setIsSearching] = useState(false);
   const [actioningId, setActioningId] = useState<string | null>(null);
 
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [categoriesLoading, setCategoriesLoading] = useState(true);
+  const [activeCategory, setActiveCategory] = useState<Category | null>(null);
+
+  const fetchCategories = useCallback(async () => {
+    setCategoriesLoading(true);
+    try {
+      const res = await fetch("/api/discover/categories", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to load categories");
+      setCategories(body.categories ?? []);
+    } catch {
+      // Silent — categories are a nice-to-have, not core functionality.
+    } finally {
+      setCategoriesLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    fetchCategories();
+  }, [fetchCategories]);
+
+  const openCategory = async (category: Category) => {
+    setActiveCategory(category);
+    setIsSearching(true);
+    try {
+      const res = await fetch(`/api/discover/categories/${category.key}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to load results");
+      setResults(body.results ?? []);
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to load results.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const closeCategory = () => {
+    setActiveCategory(null);
+    setResults(null);
+  };
+
   const toggleTag = (tag: string) => {
     setSelectedTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
   };
 
   const handleSearch = async (e?: React.FormEvent) => {
     e?.preventDefault();
+    setActiveCategory(null);
     setIsSearching(true);
     try {
       const params = new URLSearchParams();
@@ -106,91 +173,153 @@ export default function SearchPage() {
         <h1 className="text-2xl font-['Syne'] font-bold tracking-tight">Search</h1>
       </header>
 
-      <form onSubmit={handleSearch} className="space-y-3 mb-6">
-        <div className="flex gap-2">
-          <div className="relative flex-1">
-            <SearchIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Search by name..."
-              className="bg-card border-card-border pl-10 h-12 rounded-xl"
-            />
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-12 w-12 rounded-xl shrink-0 border-card-border bg-card p-0"
-            onClick={() => setShowFilters((v) => !v)}
-          >
-            <SlidersHorizontal size={18} className={showFilters ? "text-primary" : "text-muted-foreground"} />
-          </Button>
-        </div>
-
-        {showFilters && (
-          <div className="bg-card border border-card-border rounded-2xl p-4 space-y-4">
-            <div className="flex gap-3">
-              <div className="flex-1">
-                <label className="text-xs font-medium text-muted-foreground">Min age</label>
-                <Input
-                  type="number"
-                  value={minAge}
-                  onChange={(e) => setMinAge(e.target.value)}
-                  placeholder="18"
-                  className="bg-background border-card-border h-10 mt-1"
-                />
-              </div>
-              <div className="flex-1">
-                <label className="text-xs font-medium text-muted-foreground">Max age</label>
-                <Input
-                  type="number"
-                  value={maxAge}
-                  onChange={(e) => setMaxAge(e.target.value)}
-                  placeholder="99"
-                  className="bg-background border-card-border h-10 mt-1"
-                />
-              </div>
+      {results === null && (
+        <div className="mb-6">
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 px-2">Explore</h2>
+          {categoriesLoading ? (
+            <div className="grid grid-cols-2 gap-3">
+              {[1, 2, 3, 4].map((i) => (
+                <Skeleton key={i} className="h-28 rounded-2xl" />
+              ))}
             </div>
+          ) : categories.length === 0 ? null : (
+            <div className="grid grid-cols-2 gap-3">
+              {categories.map((cat) => {
+                const style = CATEGORY_STYLE[cat.key] ?? { icon: <Sparkles size={18} />, gradient: "from-primary/20 to-accent/20" };
+                return (
+                  <button
+                    key={cat.key}
+                    onClick={() => openCategory(cat)}
+                    disabled={cat.count === 0}
+                    className={`relative h-28 rounded-2xl overflow-hidden border border-card-border text-left disabled:opacity-40 disabled:pointer-events-none bg-gradient-to-br ${style.gradient}`}
+                  >
+                    {/* Preview photo collage */}
+                    {cat.preview_photos.length > 0 && (
+                      <div className="absolute inset-0 flex">
+                        {cat.preview_photos.slice(0, 3).map((url, i) => (
+                          <div key={i} className="flex-1 relative">
+                            <img src={url} alt="" className="w-full h-full object-cover opacity-30" />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="absolute inset-0 bg-gradient-to-t from-background/90 via-background/40 to-background/10" />
+                    <div className="relative z-10 h-full flex flex-col justify-between p-3">
+                      <div className="w-8 h-8 rounded-full bg-background/70 backdrop-blur flex items-center justify-center text-foreground">
+                        {style.icon}
+                      </div>
+                      <div>
+                        <p className="font-['Syne'] font-bold text-sm text-foreground leading-tight">{cat.label}</p>
+                        <p className="text-xs text-muted-foreground">{cat.count} {cat.count === 1 ? "person" : "people"}</p>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">City</label>
+      {activeCategory && (
+        <div className="flex items-center gap-2 mb-4 px-2">
+          <button
+            onClick={closeCategory}
+            className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <h2 className="font-['Syne'] font-bold text-lg">{activeCategory.label}</h2>
+        </div>
+      )}
+
+      {!activeCategory && (
+        <form onSubmit={handleSearch} className="space-y-3 mb-6">
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <SearchIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
               <Input
-                value={city}
-                onChange={(e) => setCity(e.target.value)}
-                placeholder="e.g. Cape Town"
-                className="bg-background border-card-border h-10 mt-1"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Search by name..."
+                className="bg-card border-card-border pl-10 h-12 rounded-xl"
               />
             </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-12 w-12 rounded-xl shrink-0 border-card-border bg-card p-0"
+              onClick={() => setShowFilters((v) => !v)}
+            >
+              <SlidersHorizontal size={18} className={showFilters ? "text-primary" : "text-muted-foreground"} />
+            </Button>
+          </div>
 
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-2 block">Interests</label>
-              <div className="flex flex-wrap gap-2">
-                {PERSONALITY_TAGS.map((tag) => {
-                  const isSelected = selectedTags.includes(tag);
-                  return (
-                    <button
-                      key={tag}
-                      type="button"
-                      onClick={() => toggleTag(tag)}
-                      className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${
-                        isSelected
-                          ? "bg-primary border-primary text-primary-foreground"
-                          : "bg-background border-card-border text-muted-foreground hover:border-muted-foreground/50"
-                      }`}
-                    >
-                      {tag}
-                    </button>
-                  );
-                })}
+          {showFilters && (
+            <div className="bg-card border border-card-border rounded-2xl p-4 space-y-4">
+              <div className="flex gap-3">
+                <div className="flex-1">
+                  <label className="text-xs font-medium text-muted-foreground">Min age</label>
+                  <Input
+                    type="number"
+                    value={minAge}
+                    onChange={(e) => setMinAge(e.target.value)}
+                    placeholder="18"
+                    className="bg-background border-card-border h-10 mt-1"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="text-xs font-medium text-muted-foreground">Max age</label>
+                  <Input
+                    type="number"
+                    value={maxAge}
+                    onChange={(e) => setMaxAge(e.target.value)}
+                    placeholder="99"
+                    className="bg-background border-card-border h-10 mt-1"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">City</label>
+                <Input
+                  value={city}
+                  onChange={(e) => setCity(e.target.value)}
+                  placeholder="e.g. Cape Town"
+                  className="bg-background border-card-border h-10 mt-1"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-2 block">Interests</label>
+                <div className="flex flex-wrap gap-2">
+                  {PERSONALITY_TAGS.map((tag) => {
+                    const isSelected = selectedTags.includes(tag);
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => toggleTag(tag)}
+                        className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${
+                          isSelected
+                            ? "bg-primary border-primary text-primary-foreground"
+                            : "bg-background border-card-border text-muted-foreground hover:border-muted-foreground/50"
+                        }`}
+                      >
+                        {tag}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <Button type="submit" disabled={isSearching} className="w-full h-12 rounded-xl bg-gradient-accent border-0 text-white font-semibold">
-          {isSearching ? "Searching..." : "Search"}
-        </Button>
-      </form>
+          <Button type="submit" disabled={isSearching} className="w-full h-12 rounded-xl bg-gradient-accent border-0 text-white font-semibold">
+            {isSearching ? "Searching..." : "Search"}
+          </Button>
+        </form>
+      )}
 
       {results === null ? (
         <div className="flex flex-col items-center text-center px-4 mt-6 text-muted-foreground">
@@ -205,7 +334,7 @@ export default function SearchPage() {
         </div>
       ) : results.length === 0 ? (
         <div className="flex flex-col items-center text-center px-4 mt-6 text-muted-foreground">
-          <p className="text-sm">No profiles match your search.</p>
+          <p className="text-sm">{activeCategory ? "No one here right now." : "No profiles match your search."}</p>
         </div>
       ) : (
         <div className="space-y-3">
