@@ -33,11 +33,13 @@ function SwipeCard({
   isTop,
   isExiting,
   exitDirection,
+  stackIndex,
 }: {
   candidate: Candidate;
   isTop: boolean;
   isExiting: boolean;
   exitDirection: SwipeDirection | null;
+  stackIndex: number;
 }) {
   const [photoIndex, setPhotoIndex] = useState(0);
   const photos = candidate.photos.length > 0 ? candidate.photos : [];
@@ -57,6 +59,7 @@ function SwipeCard({
   return (
     <motion.div
       className="absolute inset-0"
+      style={{ zIndex: 10 - stackIndex }}
       initial={{ scale: 0.95, opacity: 0 }}
       animate={
         isExiting && exitDirection
@@ -375,6 +378,7 @@ export default function DiscoverPage() {
                 key={candidate.id}
                 candidate={candidate}
                 isTop={i === 0}
+                stackIndex={i}
                 isExiting={exiting?.id === candidate.id}
                 exitDirection={exiting?.id === candidate.id ? exiting.direction : null}
               />
