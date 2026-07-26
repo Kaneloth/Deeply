@@ -84,20 +84,29 @@ function SwipeCard({
         {/* Photo carousel */}
         <div className="relative flex-1 min-h-[400px] w-full bg-muted overflow-hidden">
           {photos.length > 1 && (
-            <div className="absolute top-3 left-3 right-3 z-20 flex gap-1 pointer-events-none">
-              {photos.map((_, idx) => (
-                <div key={idx} className="flex-1 h-1 rounded-full bg-white/30 overflow-hidden">
-                  <div className={`h-full bg-white transition-all duration-200 ${idx <= photoIndex ? "w-full" : "w-0"}`} />
-                </div>
-              ))}
-            </div>
+            <>
+              <div className="absolute top-3 left-3 right-3 z-20 flex gap-1 pointer-events-none">
+                {photos.map((_, idx) => (
+                  <div key={idx} className="flex-1 h-1.5 rounded-full bg-white/40 overflow-hidden">
+                    <div className={`h-full bg-white transition-all duration-200 ${idx <= photoIndex ? "w-full" : "w-0"}`} />
+                  </div>
+                ))}
+              </div>
+              <div className="absolute top-7 right-3 z-20 px-2 py-0.5 rounded-full bg-black/50 pointer-events-none">
+                <span className="text-white text-xs font-semibold">
+                  {photoIndex + 1} / {photos.length}
+                </span>
+              </div>
+            </>
           )}
 
           <motion.div
             ref={photoContainerRef}
             drag={isTop && photos.length > 1 ? "x" : false}
             dragConstraints={{ left: 0, right: 0 }}
-            dragElastic={0.15}
+            dragElastic={0.6}
+            dragMomentum={false}
+            style={{ touchAction: "pan-y" }}
             onDragEnd={isTop ? handlePhotoDragEnd : undefined}
             onTap={isTop && photos.length > 1 ? handlePhotoTap : undefined}
             className="w-full h-full"
