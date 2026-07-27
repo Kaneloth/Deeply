@@ -18,7 +18,7 @@ export function ProfileCard({ profile, active = true }: { profile: ProfileCardDa
     <div className="w-full h-full bg-card border border-card-border rounded-3xl overflow-hidden shadow-2xl relative flex flex-col">
       {/* Photo — fixed proportion so the details section below always gets
           real, scrollable space regardless of screen size. */}
-      <div className="relative h-[55%] min-h-[320px] shrink-0 w-full bg-muted overflow-hidden">
+      <div className="relative h-[55%] min-h-[180px] shrink-0 w-full bg-muted overflow-hidden">
         <PhotoCarousel photos={photos} name={profile.name} active={active} />
 
         <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-card to-transparent pointer-events-none" />

@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { requireAuth } from "../middlewares/auth";
 import { supabase } from "../lib/supabase";
+import { attachPhotoGalleries } from "../lib/photo-galleries";
 
 const router: IRouter = Router();
 
@@ -16,11 +17,12 @@ const MATCH_SELECT = `
   )
 `;
 
-function formatMatch(m: Record<string, any>, viewerId: string) {
+async function formatMatch(m: Record<string, any>, viewerId: string) {
   const matchedUser = m.user1_id === viewerId ? m.user2 : m.user1;
+  const [withPhotos] = matchedUser ? await attachPhotoGalleries([matchedUser]) : [null];
   return {
     id: m.id,
-    matched_user: matchedUser ?? null,
+    matched_user: withPhotos ?? null,
     message_count: m.message_count,
     created_at: m.created_at,
   };
@@ -36,7 +38,11 @@ router.get("/matches", requireAuth, async (req, res): Promise<void> => {
     .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
     .order("created_at", { ascending: false });
 
-  res.json((matches ?? []).map((m) => formatMatch(m as Record<string, any>, userId)));
+  const formatted = await Promise.all(
+    (matches ?? []).map((m) => formatMatch(m as Record<string, any>, userId)),
+  );
+
+  res.json(formatted);
 });
 
 /** GET /api/matches/:matchId */
@@ -58,7 +64,39 @@ router.get("/matches/:matchId", requireAuth, async (req, res): Promise<void> => 
     return;
   }
 
-  res.json(formatMatch(match as Record<string, any>, userId));
+  res.json(await formatMatch(match as Record<string, any>, userId));
+});
+
+/** DELETE /api/matches/:matchId — unmatch. Removes the match (and, via
+ *  cascade, its messages). The underlying swipe records are left in
+ *  place, which already keeps this person from reappearing in either
+ *  side's Discover/Invites queues. */
+router.delete("/matches/:matchId", requireAuth, async (req, res): Promise<void> => {
+  const matchId = Array.isArray(req.params.matchId)
+    ? req.params.matchId[0]
+    : req.params.matchId;
+  const userId = req.user!.id;
+
+  const { data: match } = await supabase
+    .from("matches")
+    .select("id")
+    .eq("id", matchId)
+    .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
+    .single();
+
+  if (!match) {
+    res.status(404).json({ error: "Match not found" });
+    return;
+  }
+
+  const { error } = await supabase.from("matches").delete().eq("id", matchId);
+
+  if (error) {
+    res.status(500).json({ error: `Failed to unmatch: ${error.message}` });
+    return;
+  }
+
+  res.sendStatus(204);
 });
 
 export default router;

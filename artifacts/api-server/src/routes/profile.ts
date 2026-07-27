@@ -344,10 +344,18 @@ router.delete("/profile/me/photos/:photoId", requireAuth, async (req, res): Prom
   }
 
   if (photo.storage_path) {
-    await supabase.storage.from("profile-photos").remove([photo.storage_path]);
+    const { error: removeError } = await supabase.storage.from("profile-photos").remove([photo.storage_path]);
+    if (removeError) {
+      res.status(500).json({ error: `Failed to delete file from storage: ${removeError.message}` });
+      return;
+    }
   }
 
-  await supabase.from("profile_photos").delete().eq("id", photoId);
+  const { error: deleteError } = await supabase.from("profile_photos").delete().eq("id", photoId);
+  if (deleteError) {
+    res.status(500).json({ error: `Failed to delete photo record: ${deleteError.message}` });
+    return;
+  }
 
   // Re-pack remaining positions to stay contiguous (0, 1, 2, ...).
   const { data: remaining } = await supabase

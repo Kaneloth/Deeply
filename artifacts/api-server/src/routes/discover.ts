@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { requireAuth } from "../middlewares/auth";
 import { supabase } from "../lib/supabase";
 import { spendSparks } from "../lib/sparks-helper";
+import { attachPhotoGalleries } from "../lib/photo-galleries";
 
 const router: IRouter = Router();
 
@@ -9,40 +10,6 @@ const SUPER_LIKE_COST = 20;
 const UNDO_COST = 10;
 const REVEAL_LIKES_COST = 30;
 const MESSAGE_REQUEST_COST = 30;
-
-/** Attaches a `photos: {url, media_type}[]` array (ordered) to each item
- *  in a list of profile-like objects with `id` and `photo_url`. Falls
- *  back to a single-element image array from photo_url for anyone who
- *  hasn't built a gallery yet. */
-async function attachPhotoGalleries<T extends { id: string; photo_url: string | null }>(
-  items: T[],
-): Promise<(T & { photos: { url: string; media_type: "image" | "video" }[] })[]> {
-  if (items.length === 0) return [];
-
-  const ids = items.map((i) => i.id);
-  const { data: galleryPhotos } = await supabase
-    .from("profile_photos")
-    .select("user_id, photo_url, media_type, position")
-    .in("user_id", ids)
-    .order("position", { ascending: true });
-
-  const photosByUser = new Map<string, { url: string; media_type: "image" | "video" }[]>();
-  for (const p of galleryPhotos ?? []) {
-    const list = photosByUser.get(p.user_id) ?? [];
-    list.push({ url: p.photo_url, media_type: p.media_type });
-    photosByUser.set(p.user_id, list);
-  }
-
-  return items.map((item) => {
-    const gallery = photosByUser.get(item.id);
-    const photos = gallery && gallery.length > 0
-      ? gallery
-      : item.photo_url
-        ? [{ url: item.photo_url, media_type: "image" as const }]
-        : [];
-    return { ...item, photos };
-  });
-}
 
 /** GET /api/discover/queue — return a batch of candidate profiles the user
  *  hasn't swiped on yet, ready to swipe through Tinder-style. */
