@@ -65,15 +65,14 @@ function ProfileDetailOverlay({
         <TopBar />
 
         <div className="flex-1 flex flex-col overflow-hidden px-4 pb-6 pt-4">
-          <button
-            onClick={onClose}
-            className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center text-foreground hover:bg-secondary/80 transition-colors mb-3 shrink-0"
-          >
-            <ChevronLeft size={20} />
-          </button>
-
-          <div className="flex-1 min-h-0">
+          <div className="flex-1 min-h-0 relative">
             <ProfileCard profile={profile} />
+            <button
+              onClick={onClose}
+              className="absolute top-3 left-3 z-20 w-8 h-8 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center text-white border border-white/10"
+            >
+              <ChevronLeft size={16} />
+            </button>
           </div>
 
           <div className="flex-none pt-4 flex items-center justify-center gap-4">

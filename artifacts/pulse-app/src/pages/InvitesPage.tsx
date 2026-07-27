@@ -40,17 +40,16 @@ function InviteDetailOverlay({
         <TopBar />
 
         <div className="flex-1 flex flex-col overflow-hidden px-4 pb-6 pt-4">
-          <button
-            onClick={onClose}
-            className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center text-foreground hover:bg-secondary/80 transition-colors mb-3 shrink-0"
-          >
-            <ChevronLeft size={20} />
-          </button>
-
           <div className="flex-1 min-h-0 relative">
             <ProfileCard profile={invite} />
+            <button
+              onClick={onClose}
+              className="absolute top-3 left-3 z-20 w-8 h-8 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center text-white border border-white/10"
+            >
+              <ChevronLeft size={16} />
+            </button>
             {invite.super_liked && (
-              <div className="absolute top-4 right-4 w-8 h-8 rounded-full bg-accent flex items-center justify-center shadow-lg z-10">
+              <div className="absolute top-3 right-3 w-8 h-8 rounded-full bg-accent flex items-center justify-center shadow-lg z-10">
                 <Star size={16} className="fill-current text-white" />
               </div>
             )}
