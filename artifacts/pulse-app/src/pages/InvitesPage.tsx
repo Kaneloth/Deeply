@@ -3,9 +3,9 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useSparks } from "@/contexts/SparksContext";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PhotoCarousel } from "@/components/PhotoCarousel";
+import { ProfileCard } from "@/components/ProfileCard";
 import { PageHeader } from "@/components/PageHeader";
-import { ChevronLeft, Star, Lock, Heart, X, MapPin } from "lucide-react";
+import { ChevronLeft, Star, Lock, Heart, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -32,54 +32,35 @@ function InviteDetailOverlay({
   onDecide?: (direction: "like" | "pass") => void;
   isActioning?: boolean;
 }) {
-  const photos = invite.photos.length > 0 ? invite.photos : [];
-
   return (
     <div className="fixed inset-0 z-[100] bg-background flex flex-col">
-      <div className="w-full max-w-[430px] mx-auto flex-1 flex flex-col overflow-hidden relative">
-        <button
-          onClick={onClose}
-          className="absolute top-12 left-4 z-30 w-10 h-10 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center text-white border border-white/10"
+      <div className="w-full max-w-[430px] mx-auto flex-1 flex flex-col overflow-hidden">
+        {/* Solid modal header — self-contained, never relies on
+            transparency over the photo below it. */}
+        <div
+          className="flex items-center justify-between px-4 pb-3 shrink-0"
+          style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
         >
-          <ChevronLeft size={24} />
-        </button>
+          <button
+            onClick={onClose}
+            className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center text-foreground hover:bg-secondary/80 transition-colors"
+          >
+            <ChevronLeft size={22} />
+          </button>
+          <span className="font-['Syne'] font-bold text-base">Invite</span>
+          <div className="w-10" />
+        </div>
 
-        <div className="relative h-[55%] min-h-[350px] w-full bg-muted overflow-hidden shrink-0">
-          <PhotoCarousel photos={photos} name={invite.name} />
-
+        <div className="flex-1 px-4 pb-4 min-h-0 relative">
+          <ProfileCard profile={invite} />
           {invite.super_liked && (
-            <div className="absolute top-12 right-3 z-20 w-8 h-8 rounded-full bg-accent flex items-center justify-center shadow-lg">
+            <div className="absolute top-4 right-8 w-8 h-8 rounded-full bg-accent flex items-center justify-center shadow-lg z-10">
               <Star size={16} className="fill-current text-white" />
             </div>
           )}
-
-          <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-background to-transparent pointer-events-none" />
-          <div className="absolute bottom-4 left-6 right-6 pointer-events-none">
-            <h2 className="text-3xl font-['Syne'] font-bold text-white flex items-end gap-2">
-              {invite.name} <span className="text-xl font-normal text-white/80">{invite.age}</span>
-            </h2>
-            {invite.city && (
-              <div className="flex items-center gap-1 text-white/70 text-sm mt-1">
-                <MapPin size={14} /> {invite.city}
-              </div>
-            )}
-          </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6">
-          {invite.personality_tags?.length > 0 && (
-            <div className="flex flex-wrap gap-2 mb-4">
-              {invite.personality_tags.map((tag) => (
-                <span key={tag} className="px-3 py-1.5 bg-secondary text-secondary-foreground rounded-full text-sm font-medium">
-                  {tag}
-                </span>
-              ))}
-            </div>
-          )}
-          {invite.bio && <p className="text-sm text-muted-foreground leading-relaxed">{invite.bio}</p>}
-        </div>
-
-        <div className="flex-none p-6 pt-3 flex items-center justify-center gap-6">
+        <div className="flex-none p-4 pt-0 flex items-center justify-center gap-6">
           {onDecide ? (
             <>
               <button

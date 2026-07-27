@@ -5,20 +5,13 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PhotoCarousel } from "@/components/PhotoCarousel";
+import { ProfileCard, type ProfileCardData } from "@/components/ProfileCard";
 import { PageHeader } from "@/components/PageHeader";
-import { X, Heart, MessageCircle, MapPin } from "lucide-react";
+import { X, Heart, MessageCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-interface Candidate {
-  id: string;
-  name: string;
-  age: number;
-  bio: string | null;
-  city: string | null;
+interface Candidate extends ProfileCardData {
   photo_url: string | null;
-  photos: { url: string; media_type: "image" | "video" }[];
-  personality_tags: string[];
   integrity_score: number;
 }
 
@@ -43,8 +36,6 @@ function SwipeCard({
   exitDirection: SwipeDirection | null;
   stackIndex: number;
 }) {
-  const photos = candidate.photos.length > 0 ? candidate.photos : [];
-
   return (
     <motion.div
       className="absolute inset-0"
@@ -57,41 +48,7 @@ function SwipeCard({
       }
       transition={{ duration: 0.3, ease: "easeOut" }}
     >
-      <div className="w-full h-full bg-card border border-card-border rounded-3xl overflow-hidden shadow-2xl relative flex flex-col">
-        {/* Photo carousel */}
-        <div className="relative flex-1 min-h-[400px] w-full bg-muted overflow-hidden">
-          <PhotoCarousel photos={photos} name={candidate.name} active={isTop} />
-
-          <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-card to-transparent pointer-events-none" />
-
-          <div className="absolute bottom-4 left-6 right-6 pointer-events-none z-10">
-            <h2 className="text-3xl font-['Syne'] font-bold text-white flex items-end gap-2">
-              {candidate.name} <span className="text-xl font-normal text-white/80">{candidate.age}</span>
-            </h2>
-            {candidate.city && (
-              <div className="flex items-center gap-1 text-white/70 text-sm mt-1">
-                <MapPin size={14} /> {candidate.city}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Details */}
-        {(candidate.bio || candidate.personality_tags?.length > 0) && (
-          <div className="p-5 shrink-0 max-h-[35%] overflow-y-auto">
-            {candidate.personality_tags?.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-3">
-                {candidate.personality_tags.map((tag) => (
-                  <span key={tag} className="px-3 py-1 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            )}
-            {candidate.bio && <p className="text-sm text-muted-foreground">{candidate.bio}</p>}
-          </div>
-        )}
-      </div>
+      <ProfileCard profile={candidate} active={isTop} />
     </motion.div>
   );
 }
@@ -272,7 +229,7 @@ export default function DiscoverPage() {
   const visibleCards = candidates.slice(0, 3);
 
   return (
-    <div className="flex flex-col min-h-full px-4 pb-6 pt-6">
+    <div className="flex flex-col h-full overflow-hidden px-4 pb-6 pt-6">
       <PageHeader
         title="Discover"
         action={
@@ -288,7 +245,7 @@ export default function DiscoverPage() {
         }
       />
 
-      <div className="flex-1 relative min-h-[500px]">
+      <div className="flex-1 relative min-h-0">
         {visibleCards.length === 0 ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-6">
             <div className="w-20 h-20 rounded-full bg-card border border-card-border flex items-center justify-center mb-6">
