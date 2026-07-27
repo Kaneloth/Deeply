@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ProfileCard, type ProfileCardData } from "@/components/ProfileCard";
-import { PageHeader } from "@/components/PageHeader";
 import { X, Heart, MessageCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -230,20 +229,17 @@ export default function DiscoverPage() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden px-4 pb-6 pt-6">
-      <PageHeader
-        title="Discover"
-        action={
-          invitesCount > 0 ? (
-            <Link
-              href="/invites"
-              className="flex items-center gap-1.5 bg-card/80 backdrop-blur border border-card-border px-3 py-1.5 rounded-full text-sm font-semibold text-primary hover:border-primary/50 transition-colors"
-            >
-              <Heart size={14} className="fill-current" />
-              <span>{invitesCount} invite{invitesCount === 1 ? "" : "s"}</span>
-            </Link>
-          ) : undefined
-        }
-      />
+      {invitesCount > 0 && (
+        <div className="flex justify-end mb-3 px-2">
+          <Link
+            href="/invites"
+            className="flex items-center gap-1.5 bg-card/80 backdrop-blur border border-card-border px-3 py-1.5 rounded-full text-sm font-semibold text-primary hover:border-primary/50 transition-colors"
+          >
+            <Heart size={14} className="fill-current" />
+            <span>{invitesCount} invite{invitesCount === 1 ? "" : "s"}</span>
+          </Link>
+        </div>
+      )}
 
       <div className="flex-1 relative min-h-0">
         {visibleCards.length === 0 ? (

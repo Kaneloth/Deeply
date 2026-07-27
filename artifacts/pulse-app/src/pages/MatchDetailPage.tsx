@@ -92,30 +92,29 @@ export default function MatchDetailPage() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden px-4 pb-6 pt-6">
-      <div className="flex items-center gap-3 mb-6 px-2">
-        <Link href="/matches" className="w-10 h-10 flex items-center justify-center rounded-full bg-secondary text-foreground hover:bg-secondary/80 transition-colors">
-          <ChevronLeft size={22} />
-        </Link>
-        <h1 className="text-2xl font-['Syne'] font-bold tracking-tight">Match</h1>
-      </div>
+      <button
+        onClick={() => setLocation("/matches")}
+        className="w-10 h-10 flex items-center justify-center rounded-full bg-secondary text-foreground hover:bg-secondary/80 transition-colors mb-4"
+      >
+        <ChevronLeft size={20} />
+      </button>
 
       <div className="flex-1 relative min-h-0">
         <ProfileCard profile={profile} />
       </div>
 
-      <div className="flex items-center justify-center gap-3 mt-6">
+      <div className="flex items-center justify-center gap-4 mt-6">
         <button
           onClick={() => setShowUnmatchConfirm(true)}
-          className="w-16 h-16 rounded-full bg-card border border-card-border flex items-center justify-center text-muted-foreground hover:border-destructive hover:text-destructive transition-colors shadow-lg active:scale-95"
+          className="w-14 h-14 rounded-full bg-card border border-card-border flex items-center justify-center text-muted-foreground hover:border-destructive hover:text-destructive transition-colors shadow-lg active:scale-95"
         >
-          <UserX size={24} />
+          <UserX size={22} />
         </button>
         <Link
           href={`/matches/${matchId}/chat`}
-          className="flex-1 h-16 rounded-full bg-gradient-accent border-0 text-white font-bold text-lg shadow-[0_8px_20px_rgba(225,29,72,0.3)] flex items-center justify-center gap-2 hover:scale-[1.02] transition-transform"
+          className="w-14 h-14 rounded-full bg-gradient-accent border-0 text-white shadow-[0_8px_20px_rgba(225,29,72,0.3)] flex items-center justify-center active:scale-95 transition-transform"
         >
-          <MessageCircle size={20} />
-          Open Chat
+          <MessageCircle size={22} />
         </Link>
       </div>
 

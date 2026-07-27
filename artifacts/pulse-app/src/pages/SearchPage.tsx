@@ -7,6 +7,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ProfileCard } from "@/components/ProfileCard";
 import { PageHeader } from "@/components/PageHeader";
+import { TopBar } from "@/components/TopBar";
+import { BottomNav } from "@/components/BottomNav";
 import { Search as SearchIcon, Heart, X, MessageCircle, SlidersHorizontal, Sparkles, ShieldCheck, Mic, MapPin, TrendingUp, ChevronLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -59,50 +61,47 @@ function ProfileDetailOverlay({
 }) {
   return (
     <div className="fixed inset-0 z-[100] bg-background flex flex-col">
-      <div className="w-full max-w-[430px] mx-auto flex-1 flex flex-col overflow-hidden">
-        {/* Solid modal header — self-contained, never relies on
-            transparency over the photo below it. */}
-        <div
-          className="flex items-center justify-between px-4 pb-3 shrink-0"
-          style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
-        >
+      <div className="w-full max-w-[430px] mx-auto h-full flex flex-col overflow-hidden">
+        <TopBar />
+
+        <div className="flex-1 flex flex-col overflow-hidden px-4 pb-6 pt-4">
           <button
             onClick={onClose}
-            className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center text-foreground hover:bg-secondary/80 transition-colors"
+            className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center text-foreground hover:bg-secondary/80 transition-colors mb-3 shrink-0"
           >
-            <ChevronLeft size={22} />
+            <ChevronLeft size={20} />
           </button>
-          <span className="font-['Syne'] font-bold text-base">Profile</span>
-          <div className="w-10" />
+
+          <div className="flex-1 min-h-0">
+            <ProfileCard profile={profile} />
+          </div>
+
+          <div className="flex-none pt-4 flex items-center justify-center gap-4">
+            <button
+              onClick={() => onSwipe("pass")}
+              disabled={isActioning}
+              className="w-14 h-14 rounded-full bg-card border border-card-border flex items-center justify-center text-muted-foreground hover:border-destructive hover:text-destructive transition-colors shadow-lg active:scale-95"
+            >
+              <X size={24} />
+            </button>
+            <button
+              onClick={onMessage}
+              disabled={isActioning}
+              className="w-11 h-11 rounded-full bg-card border border-card-border flex items-center justify-center text-accent hover:border-accent transition-colors shadow-lg active:scale-95"
+            >
+              <MessageCircle size={18} />
+            </button>
+            <button
+              onClick={() => onSwipe("like")}
+              disabled={isActioning}
+              className="w-14 h-14 rounded-full bg-gradient-accent flex items-center justify-center text-white shadow-[0_8px_20px_rgba(225,29,72,0.3)] active:scale-95 transition-transform"
+            >
+              <Heart size={24} className="fill-current" />
+            </button>
+          </div>
         </div>
 
-        <div className="flex-1 px-4 pb-4 min-h-0">
-          <ProfileCard profile={profile} />
-        </div>
-
-        <div className="flex-none p-4 pt-0 flex items-center justify-center gap-4">
-          <button
-            onClick={() => onSwipe("pass")}
-            disabled={isActioning}
-            className="w-16 h-16 rounded-full bg-card border border-card-border flex items-center justify-center text-muted-foreground hover:border-destructive hover:text-destructive transition-colors shadow-lg active:scale-95"
-          >
-            <X size={28} />
-          </button>
-          <button
-            onClick={onMessage}
-            disabled={isActioning}
-            className="w-12 h-12 rounded-full bg-card border border-card-border flex items-center justify-center text-accent hover:border-accent transition-colors shadow-lg active:scale-95"
-          >
-            <MessageCircle size={20} />
-          </button>
-          <button
-            onClick={() => onSwipe("like")}
-            disabled={isActioning}
-            className="w-16 h-16 rounded-full bg-gradient-accent flex items-center justify-center text-white shadow-[0_8px_20px_rgba(225,29,72,0.3)] active:scale-95 transition-transform"
-          >
-            <Heart size={28} className="fill-current" />
-          </button>
-        </div>
+        <BottomNav />
       </div>
     </div>
   );
