@@ -19,6 +19,7 @@ import {
   GENDER_OPTIONS,
   LOOKING_FOR_OPTIONS,
   NUM_KIDS_OPTIONS,
+  FAMILY_PLANS_OPTIONS,
   SMOKING_OPTIONS,
   DRINKING_OPTIONS,
   LOVE_LANGUAGE_OPTIONS,
@@ -94,6 +95,7 @@ export default function ProfilePage() {
   const [intentions, setIntentions] = useState<string[]>([]);
   const [interests, setInterests] = useState<string[]>([]);
   const [numKids, setNumKids] = useState("");
+  const [familyPlans, setFamilyPlans] = useState("");
   const [smokingStatus, setSmokingStatus] = useState("");
   const [drinkingStatus, setDrinkingStatus] = useState("");
   const [languagesSpoken, setLanguagesSpoken] = useState<string[]>([]);
@@ -560,6 +562,7 @@ export default function ProfilePage() {
       setIntentions(profile.dating_intentions || []);
       setInterests(profile.personality_tags || []);
       setNumKids(profile.num_kids || "");
+      setFamilyPlans(profile.family_plans || "");
       setSmokingStatus(profile.smoking_status || "");
       setDrinkingStatus(profile.drinking_status || "");
       setLanguagesSpoken(profile.languages_spoken || []);
@@ -581,6 +584,7 @@ export default function ProfilePage() {
     JSON.stringify(intentions) !== JSON.stringify(profile.dating_intentions || []) ||
     JSON.stringify(interests) !== JSON.stringify(profile.personality_tags || []) ||
     numKids !== (profile.num_kids || "") ||
+    familyPlans !== (profile.family_plans || "") ||
     smokingStatus !== (profile.smoking_status || "") ||
     drinkingStatus !== (profile.drinking_status || "") ||
     JSON.stringify(languagesSpoken) !== JSON.stringify(profile.languages_spoken || []) ||
@@ -605,6 +609,7 @@ export default function ProfilePage() {
         dating_intentions: intentions,
         personality_tags: interests,
         num_kids: numKids,
+        family_plans: familyPlans,
         smoking_status: smokingStatus,
         drinking_status: drinkingStatus,
         languages_spoken: languagesSpoken,
@@ -929,6 +934,7 @@ export default function ProfilePage() {
         </div>
 
         <Dropdown label="Kids" value={numKids} onChange={setNumKids} options={NUM_KIDS_OPTIONS} />
+        <Dropdown label="Family plans" value={familyPlans} onChange={setFamilyPlans} options={FAMILY_PLANS_OPTIONS} />
         <Dropdown label="Smoking" value={smokingStatus} onChange={setSmokingStatus} options={SMOKING_OPTIONS} />
         <Dropdown label="Drinking" value={drinkingStatus} onChange={setDrinkingStatus} options={DRINKING_OPTIONS} />
         <Dropdown label="Love language" value={loveLanguage} onChange={setLoveLanguage} options={LOVE_LANGUAGE_OPTIONS} />

@@ -63,7 +63,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     birthday, gender, looking_for_gender, distance_km,
     relationship_type, dating_intentions, onboarding_completed,
     num_kids, smoking_status, drinking_status, languages_spoken,
-    languages_other, love_language, education,
+    languages_other, love_language, education, family_plans,
   } = req.body as {
     name?: string;
     age?: number;
@@ -85,6 +85,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     languages_other?: string;
     love_language?: string;
     education?: string;
+    family_plans?: string;
   };
   const updates: Record<string, unknown> = {};
   if (name !== undefined) updates.name = name;
@@ -107,6 +108,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   if (languages_other !== undefined) updates.languages_other = languages_other;
   if (love_language !== undefined) updates.love_language = love_language;
   if (education !== undefined) updates.education = education;
+  if (family_plans !== undefined) updates.family_plans = family_plans;
   const { data: profile, error } = await supabase
     .from("profiles")
     .update(updates)

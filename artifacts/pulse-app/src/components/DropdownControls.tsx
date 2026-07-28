@@ -48,7 +48,7 @@ export function Dropdown({
                 <X size={16} />
               </button>
             </div>
-            <div className="space-y-2 overflow-y-auto">
+            <div className="space-y-2 overflow-y-auto flex-1 min-h-0">
               {options.map((opt) => (
                 <button
                   key={opt.value}
@@ -125,7 +125,7 @@ export function MultiSelectDropdown({
                 <X size={16} />
               </button>
             </div>
-            <div className="overflow-y-auto flex-1 space-y-2 mb-4">
+            <div className="overflow-y-auto flex-1 min-h-0 space-y-2 mb-4">
               {options.map((opt) => {
                 const isSelected = selected.includes(opt);
                 const disabled = !isSelected && !!max && selected.length >= max;

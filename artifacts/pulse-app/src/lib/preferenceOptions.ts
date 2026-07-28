@@ -44,6 +44,13 @@ export const NUM_KIDS_OPTIONS: { value: string; label: string }[] = [
   { value: "three_plus", label: "3+ kids" },
 ];
 
+export const FAMILY_PLANS_OPTIONS: { value: string; label: string }[] = [
+  { value: "want_kids", label: "Want kids" },
+  { value: "dont_want_kids", label: "Don't want kids" },
+  { value: "open_to_kids", label: "Open to kids" },
+  { value: "not_sure", label: "Not sure yet" },
+];
+
 export const SMOKING_OPTIONS: { value: string; label: string }[] = [
   { value: "never", label: "Never" },
   { value: "occasionally", label: "Occasionally" },
