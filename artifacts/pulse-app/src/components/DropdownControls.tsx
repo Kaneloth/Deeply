@@ -38,7 +38,7 @@ export function Dropdown({
       {open && (
         <div className="fixed inset-x-0 top-0 bottom-20 z-[100] bg-background/80 backdrop-blur-sm flex items-end" onClick={() => setOpen(false)}>
           <div
-            className="w-full max-w-[430px] mx-auto bg-card border-t border-card-border rounded-t-3xl p-6 max-h-[65vh] flex flex-col"
+            className="w-[calc(100%-2rem)] max-w-[398px] mx-auto bg-card border border-card-border rounded-3xl p-6 mb-4 max-h-[60vh] flex flex-col shadow-2xl"
             style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -115,7 +115,7 @@ export function MultiSelectDropdown({
       {open && (
         <div className="fixed inset-x-0 top-0 bottom-20 z-[100] bg-background/80 backdrop-blur-sm flex items-end" onClick={() => setOpen(false)}>
           <div
-            className="w-full max-w-[430px] mx-auto bg-card border-t border-card-border rounded-t-3xl p-6 max-h-[65vh] flex flex-col"
+            className="w-[calc(100%-2rem)] max-w-[398px] mx-auto bg-card border border-card-border rounded-3xl p-6 mb-4 max-h-[60vh] flex flex-col shadow-2xl"
             style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}
             onClick={(e) => e.stopPropagation()}
           >
