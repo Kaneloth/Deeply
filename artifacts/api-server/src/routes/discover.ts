@@ -115,7 +115,7 @@ router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
       res.status(409).json({ error: "You've already swiped on this profile" });
       return;
     }
-    res.status(500).json({ error: "Failed to record swipe" });
+    res.status(500).json({ error: `Failed to record swipe: ${insertError.message}` });
     return;
   }
 
@@ -785,6 +785,49 @@ router.get("/discover/invites/sent", requireAuth, async (req, res): Promise<void
   const enrichedWithPhotos = await attachPhotoGalleries(enriched);
 
   res.json({ sent: enrichedWithPhotos });
+});
+
+/** DELETE /api/discover/invites/sent/:targetId — withdraw an invite you
+ *  sent that hasn't been matched yet. Removes the underlying swipe, which
+ *  also lets that profile reappear in your Discover/Search queue again. */
+router.delete("/discover/invites/sent/:targetId", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const targetId = Array.isArray(req.params.targetId) ? req.params.targetId[0] : req.params.targetId;
+
+  const [lo, hi] = [userId, targetId].sort();
+  const { data: existingMatch } = await supabase
+    .from("matches")
+    .select("id")
+    .eq("user1_id", lo)
+    .eq("user2_id", hi)
+    .maybeSingle();
+
+  if (existingMatch) {
+    res.status(400).json({ error: "You've already matched — unmatch from the Matches tab instead" });
+    return;
+  }
+
+  const { data: swipe } = await supabase
+    .from("swipes")
+    .select("id")
+    .eq("swiper_id", userId)
+    .eq("target_id", targetId)
+    .in("direction", ["like", "super_like"])
+    .maybeSingle();
+
+  if (!swipe) {
+    res.status(404).json({ error: "Invite not found" });
+    return;
+  }
+
+  const { error } = await supabase.from("swipes").delete().eq("id", swipe.id);
+
+  if (error) {
+    res.status(500).json({ error: `Failed to withdraw invite: ${error.message}` });
+    return;
+  }
+
+  res.sendStatus(204);
 });
 
 export default router;

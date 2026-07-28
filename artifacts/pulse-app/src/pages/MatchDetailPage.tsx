@@ -4,7 +4,7 @@ import { useParams, useLocation, Link } from "wouter";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { ProfileCard, type ProfileCardData } from "@/components/ProfileCard";
-import { MessageCircle, UserX } from "lucide-react";
+import { ChevronLeft, MessageCircle, UserX } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface Match {
@@ -94,6 +94,12 @@ export default function MatchDetailPage() {
     <div className="flex flex-col h-full overflow-hidden px-4 pb-2 pt-6">
       <div className="flex-1 relative min-h-0">
         <ProfileCard profile={profile} />
+        <Link
+          href="/matches"
+          className="absolute top-3 left-3 z-20 w-8 h-8 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center text-white border border-white/10"
+        >
+          <ChevronLeft size={16} />
+        </Link>
       </div>
 
       <div className="flex items-center justify-center gap-3 mt-3">

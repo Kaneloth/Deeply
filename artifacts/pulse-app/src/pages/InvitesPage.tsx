@@ -27,11 +27,13 @@ function InviteDetailOverlay({
   invite,
   onClose,
   onDecide,
+  onWithdraw,
   isActioning,
 }: {
   invite: Invite;
   onClose: () => void;
   onDecide?: (direction: "like" | "pass") => void;
+  onWithdraw?: () => void;
   isActioning?: boolean;
 }) {
   return (
@@ -75,6 +77,15 @@ function InviteDetailOverlay({
                   Accept
                 </button>
               </>
+            ) : onWithdraw ? (
+              <button
+                onClick={onWithdraw}
+                disabled={isActioning}
+                className="flex-1 h-11 rounded-full bg-card border border-card-border flex items-center justify-center gap-1.5 text-muted-foreground hover:border-destructive hover:text-destructive transition-colors font-semibold text-sm"
+              >
+                <X size={16} />
+                {isActioning ? "Withdrawing..." : "Withdraw Invite"}
+              </button>
             ) : (
               <p className="text-sm text-muted-foreground">Waiting for them to respond</p>
             )}
@@ -236,6 +247,32 @@ export default function InvitesPage() {
       toast({
         title: "Error",
         description: err instanceof Error ? err.message : "Failed to record decision.",
+        variant: "destructive",
+      });
+    } finally {
+      setAcceptingId(null);
+    }
+  };
+
+  const handleWithdraw = async (invite: Invite) => {
+    setAcceptingId(invite.id);
+    try {
+      const res = await fetch(`/api/discover/invites/sent/${invite.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to withdraw invite");
+      }
+
+      setSent((prev) => (prev ? prev.filter((i) => i.id !== invite.id) : prev));
+      setSelectedInvite((prev) => (prev?.id === invite.id ? null : prev));
+      toast({ title: "Invite withdrawn" });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to withdraw invite.",
         variant: "destructive",
       });
     } finally {
@@ -409,6 +446,7 @@ export default function InvitesPage() {
           invite={selectedInvite}
           onClose={() => setSelectedInvite(null)}
           onDecide={mode === "received" ? (direction) => handleDecide(selectedInvite, direction) : undefined}
+          onWithdraw={mode === "sent" ? () => handleWithdraw(selectedInvite) : undefined}
           isActioning={acceptingId === selectedInvite.id}
         />
       )}
