@@ -164,15 +164,17 @@ export function RadiusSlider({
   label = "Distance preference",
   valueKm,
   onChange,
-  min = 1,
-  max = 100,
-  unlimitedAt = 100,
+  min = 5,
+  max = 150,
+  step = 5,
+  unlimitedAt = 150,
 }: {
   label?: string;
   valueKm: number;
   onChange: (km: number) => void;
   min?: number;
   max?: number;
+  step?: number;
   unlimitedAt?: number;
 }) {
   const displayValue = valueKm >= unlimitedAt ? "Anywhere" : `Within ${valueKm} km`;
@@ -186,6 +188,7 @@ export function RadiusSlider({
           type="range"
           min={min}
           max={max}
+          step={step}
           value={Math.min(valueKm, max)}
           onChange={(e) => onChange(Number(e.target.value))}
           className="w-full accent-primary"

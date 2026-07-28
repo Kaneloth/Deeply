@@ -82,6 +82,16 @@ export const EDUCATION_OPTIONS: { value: string; label: string }[] = [
   { value: "doctorate", label: "Doctorate" },
 ];
 
+export const AUDIO_PROMPT_QUESTIONS = [
+  "What's your favorite travel memory?",
+  "What does a perfect Sunday look like to you?",
+  "What's something you're truly passionate about?",
+  "What's the best advice you've ever received?",
+  "Describe your ideal first date.",
+  "What makes you laugh?",
+  "What's a hidden talent you have?",
+  "What's something you're currently learning?",
+];
 // South African official languages, plus other major world languages
 // (the app is expanding beyond South Africa), plus a free-text Other.
 export const LANGUAGES = [

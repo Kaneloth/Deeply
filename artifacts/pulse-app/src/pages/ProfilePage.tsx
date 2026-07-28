@@ -7,11 +7,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
-import { CheckCircle2, AlertCircle, Rocket, Plus, X, ImageIcon, Camera, Video } from "lucide-react";
+import { CheckCircle2, AlertCircle, Rocket, Plus, X, ImageIcon, Camera, Video, Mic, Play, Pause } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { PageHeader } from "@/components/PageHeader";
 import { ChipGrid } from "@/components/SelectorControls";
 import { Dropdown, MultiSelectDropdown, RadiusSlider } from "@/components/DropdownControls";
+import { AudioRecorderControl } from "@/components/AudioRecorderControl";
 import {
   INTERESTS,
   DATING_INTENTIONS,
@@ -25,6 +26,7 @@ import {
   LOVE_LANGUAGE_OPTIONS,
   EDUCATION_OPTIONS,
   LANGUAGES,
+  AUDIO_PROMPT_QUESTIONS,
 } from "@/lib/preferenceOptions";
 
 interface BoostStatus {
@@ -141,6 +143,122 @@ export default function ProfilePage() {
   useEffect(() => {
     fetchPhotos();
   }, [fetchPhotos]);
+
+  interface AudioPrompt {
+    id: string;
+    prompt_question: string;
+    audio_url: string;
+    duration_seconds: number | null;
+  }
+
+  const MAX_AUDIO_PROMPTS = 2;
+
+  const [prompts, setPrompts] = useState<AudioPrompt[]>([]);
+  const [isLoadingPrompts, setIsLoadingPrompts] = useState(true);
+  const [showAddPromptSheet, setShowAddPromptSheet] = useState(false);
+  const [selectedNewPromptQuestion, setSelectedNewPromptQuestion] = useState<string | null>(null);
+  const [isSavingPrompt, setIsSavingPrompt] = useState(false);
+  const [deletingPromptId, setDeletingPromptId] = useState<string | null>(null);
+  const [playingPromptId, setPlayingPromptId] = useState<string | null>(null);
+  const promptAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const fetchPrompts = useCallback(async () => {
+    setIsLoadingPrompts(true);
+    try {
+      const res = await fetch("/api/prompts", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const body = await res.json();
+      setPrompts(body ?? []);
+    } catch {
+      // Silent — non-critical.
+    } finally {
+      setIsLoadingPrompts(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    fetchPrompts();
+  }, [fetchPrompts]);
+
+  const togglePlayPrompt = (prompt: AudioPrompt) => {
+    if (playingPromptId === prompt.id) {
+      promptAudioRef.current?.pause();
+      setPlayingPromptId(null);
+      return;
+    }
+    promptAudioRef.current?.pause();
+    const audio = new Audio(prompt.audio_url);
+    audio.onended = () => setPlayingPromptId(null);
+    audio.play();
+    promptAudioRef.current = audio;
+    setPlayingPromptId(prompt.id);
+  };
+
+  const saveNewPrompt = async (blob: Blob) => {
+    if (!selectedNewPromptQuestion) return;
+    setIsSavingPrompt(true);
+    try {
+      const formData = new FormData();
+      formData.append("audio", blob, "prompt.webm");
+      const uploadRes = await fetch("/api/prompts/audio-upload", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      const uploadBody = await uploadRes.json();
+      if (!uploadRes.ok) throw new Error(uploadBody.error ?? "Upload failed");
+
+      const saveRes = await fetch("/api/prompts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ prompt_question: selectedNewPromptQuestion, audio_url: uploadBody.audio_url }),
+      });
+      if (!saveRes.ok) {
+        const body = await saveRes.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to save prompt");
+      }
+      toast({ title: "Audio prompt added" });
+      setShowAddPromptSheet(false);
+      setSelectedNewPromptQuestion(null);
+      fetchPrompts();
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to save audio prompt.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingPrompt(false);
+    }
+  };
+
+  const handleDeletePrompt = async (promptId: string) => {
+    setDeletingPromptId(promptId);
+    try {
+      const res = await fetch(`/api/prompts/${promptId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to delete prompt");
+      }
+      setPrompts((prev) => prev.filter((p) => p.id !== promptId));
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to delete prompt.",
+        variant: "destructive",
+      });
+    } finally {
+      setDeletingPromptId(null);
+    }
+  };
 
   const compressImage = (file: File, maxDimension = 1600, targetSize = 2 * 1024 * 1024): Promise<File> =>
     new Promise((resolve, reject) => {
@@ -864,6 +982,118 @@ export default function ProfilePage() {
                   Cancel
                 </button>
               </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Audio Prompts */}
+      <div className="bg-card border border-card-border rounded-2xl p-5 mb-8">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="font-['Syne'] font-bold text-base">Audio Prompts</h3>
+            <p className="text-xs text-muted-foreground">Your voice helps people connect with you</p>
+          </div>
+          <Mic size={18} className="text-muted-foreground shrink-0" />
+        </div>
+
+        {isLoadingPrompts ? (
+          <Skeleton className="h-16 w-full rounded-xl" />
+        ) : (
+          <div className="space-y-3">
+            {prompts.map((prompt) => (
+              <div key={prompt.id} className="flex items-center gap-3 bg-background border border-card-border rounded-xl p-3">
+                <button
+                  onClick={() => togglePlayPrompt(prompt)}
+                  className="w-10 h-10 rounded-full bg-gradient-accent flex items-center justify-center text-white shrink-0"
+                >
+                  {playingPromptId === prompt.id ? <Pause size={16} /> : <Play size={16} />}
+                </button>
+                <p className="text-sm flex-1 min-w-0 truncate">{prompt.prompt_question}</p>
+                <button
+                  onClick={() => handleDeletePrompt(prompt.id)}
+                  disabled={deletingPromptId === prompt.id}
+                  className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors shrink-0 disabled:opacity-50"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ))}
+
+            {prompts.length < MAX_AUDIO_PROMPTS && (
+              <button
+                onClick={() => setShowAddPromptSheet(true)}
+                className="w-full h-14 rounded-xl border-2 border-dashed border-card-border flex items-center justify-center gap-2 text-muted-foreground hover:border-primary/50 hover:text-primary transition-colors"
+              >
+                <Plus size={18} />
+                <span className="text-sm font-medium">Add an audio prompt</span>
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      <AnimatePresence>
+        {showAddPromptSheet && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-x-0 top-0 bottom-20 z-[100] bg-background/80 backdrop-blur-sm flex items-end"
+            onClick={() => {
+              setShowAddPromptSheet(false);
+              setSelectedNewPromptQuestion(null);
+            }}
+          >
+            <motion.div
+              initial={{ y: 100 }}
+              animate={{ y: 0 }}
+              exit={{ y: 100 }}
+              transition={{ type: "spring", damping: 24 }}
+              className="w-[calc(100%-2rem)] max-w-[398px] mx-auto bg-card border border-card-border rounded-3xl p-6 mb-4 max-h-[70vh] flex flex-col shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4 shrink-0">
+                <h3 className="font-['Syne'] font-bold text-lg">
+                  {selectedNewPromptQuestion ? "Record Your Answer" : "Choose a Prompt"}
+                </h3>
+                <button
+                  onClick={() => {
+                    setShowAddPromptSheet(false);
+                    setSelectedNewPromptQuestion(null);
+                  }}
+                  className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center shrink-0"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {!selectedNewPromptQuestion ? (
+                <div className="space-y-2 overflow-y-auto flex-1 min-h-0">
+                  {AUDIO_PROMPT_QUESTIONS.filter((q) => !prompts.some((p) => p.prompt_question === q)).map((q) => (
+                    <button
+                      key={q}
+                      onClick={() => setSelectedNewPromptQuestion(q)}
+                      className="w-full text-left px-4 py-3 rounded-xl bg-background border border-card-border text-sm hover:border-primary/50 transition-colors"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="overflow-y-auto flex-1 min-h-0">
+                  <p className="text-sm font-medium bg-background border border-card-border rounded-xl p-4 mb-2">
+                    {selectedNewPromptQuestion}
+                  </p>
+                  <button
+                    onClick={() => setSelectedNewPromptQuestion(null)}
+                    className="text-xs text-muted-foreground underline mb-2"
+                  >
+                    Choose a different question
+                  </button>
+                  <AudioRecorderControl onSave={saveNewPrompt} isSaving={isSavingPrompt} saveLabel="Save This Prompt" />
+                </div>
+              )}
             </motion.div>
           </motion.div>
         )}

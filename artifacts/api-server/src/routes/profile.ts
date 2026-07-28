@@ -301,6 +301,33 @@ router.post("/prompts", requireAuth, async (req, res): Promise<void> => {
   res.status(201).json(prompt);
 });
 
+/** DELETE /api/prompts/:promptId — remove one of my audio prompts */
+router.delete("/prompts/:promptId", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const promptId = Array.isArray(req.params.promptId) ? req.params.promptId[0] : req.params.promptId;
+
+  const { data: prompt } = await supabase
+    .from("audio_prompts")
+    .select("id")
+    .eq("id", promptId)
+    .eq("user_id", userId)
+    .single();
+
+  if (!prompt) {
+    res.status(404).json({ error: "Prompt not found" });
+    return;
+  }
+
+  const { error } = await supabase.from("audio_prompts").delete().eq("id", promptId);
+
+  if (error) {
+    res.status(500).json({ error: `Failed to delete prompt: ${error.message}` });
+    return;
+  }
+
+  res.sendStatus(204);
+});
+
 /** GET /api/profile/me/photos — list own gallery, ordered */
 router.get("/profile/me/photos", requireAuth, async (req, res): Promise<void> => {
   const { data: photos } = await supabase
