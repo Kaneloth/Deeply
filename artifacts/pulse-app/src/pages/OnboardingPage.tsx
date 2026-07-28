@@ -6,7 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
-import { Image as ImageIcon, Bell, Check } from "lucide-react";
+import { Image as ImageIcon, Bell, Check, ChevronLeft, Play, Pause } from "lucide-react";
 import { RadioList, ChipGrid } from "@/components/SelectorControls";
 import { RadiusSlider } from "@/components/DropdownControls";
 import { AudioRecorderControl } from "@/components/AudioRecorderControl";
@@ -31,12 +31,14 @@ const TOTAL_STEPS = 18;
 function StepShell({
   children,
   onContinue,
+  onBack,
   continueLabel = "Continue",
   continueDisabled = false,
   step,
 }: {
   children: React.ReactNode;
   onContinue: () => void;
+  onBack?: () => void;
   continueLabel?: string;
   continueDisabled?: boolean;
   step: number;
@@ -50,6 +52,14 @@ function StepShell({
       transition={{ duration: 0.25 }}
       className="flex-1 flex flex-col"
     >
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center text-foreground mb-4 shrink-0"
+        >
+          <ChevronLeft size={18} />
+        </button>
+      )}
       <div className="flex-1 overflow-y-auto">{children}</div>
       <Button
         onClick={onContinue}
@@ -99,6 +109,14 @@ export default function OnboardingPage() {
   const [selectedPromptQuestion, setSelectedPromptQuestion] = useState<string | null>(null);
   const [isSavingAudio, setIsSavingAudio] = useState(false);
   const [audioSaved, setAudioSaved] = useState(false);
+  const [savedAudioUrl, setSavedAudioUrl] = useState<string | null>(null);
+  const [isPlayingSaved, setIsPlayingSaved] = useState(false);
+  const savedAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const [notifyMessages, setNotifyMessages] = useState(true);
+  const [notifyMatches, setNotifyMatches] = useState(true);
+  const [notifyLikes, setNotifyLikes] = useState(true);
+  const [notifySparks, setNotifySparks] = useState(true);
 
   const toggleIntention = (v: string) => {
     setIntentions((prev) => (prev.includes(v) ? prev.filter((i) => i !== v) : prev.length < 3 ? [...prev, v] : prev));
@@ -111,6 +129,7 @@ export default function OnboardingPage() {
   };
 
   const goNext = () => setStep((s) => Math.min(s + 1, TOTAL_STEPS - 1));
+  const goBack = () => setStep((s) => Math.max(s - 1, 0));
 
   const handlePhotoSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -166,6 +185,8 @@ export default function OnboardingPage() {
         const body = await saveRes.json().catch(() => ({}));
         throw new Error(body.error ?? "Failed to save prompt");
       }
+      const savedPrompt = await saveRes.json();
+      setSavedAudioUrl(savedPrompt.audio_url ?? uploadBody.audio_url);
       setAudioSaved(true);
       toast({ title: "Audio prompt saved" });
     } catch (err) {
@@ -179,6 +200,21 @@ export default function OnboardingPage() {
     }
   };
 
+  const toggleSavedPlayback = () => {
+    if (!savedAudioUrl) return;
+    if (isPlayingSaved) {
+      savedAudioRef.current?.pause();
+      setIsPlayingSaved(false);
+      return;
+    }
+    if (!savedAudioRef.current) {
+      savedAudioRef.current = new Audio(savedAudioUrl);
+      savedAudioRef.current.onended = () => setIsPlayingSaved(false);
+    }
+    savedAudioRef.current.play();
+    setIsPlayingSaved(true);
+  };
+
   const requestNotifications = async () => {
     try {
       if ("Notification" in window) {
@@ -187,6 +223,10 @@ export default function OnboardingPage() {
     } catch {
       // Non-fatal — just continue either way.
     }
+    goNext();
+  };
+
+  const declineNotifications = () => {
     goNext();
   };
 
@@ -218,6 +258,10 @@ export default function OnboardingPage() {
           education,
           languages_spoken: languagesSpoken,
           languages_other: languagesOther,
+          notify_messages: notifyMessages,
+          notify_matches: notifyMatches,
+          notify_likes: notifyLikes,
+          notify_sparks: notifySparks,
           onboarding_completed: true,
         }),
       });
@@ -267,6 +311,7 @@ export default function OnboardingPage() {
         {step === 1 && (
           <StepShell
             step={step}
+            onBack={goBack}
             onContinue={goNext}
             continueDisabled={!name.trim() || !gender || !birthday || !lookingForGender}
           >
@@ -293,7 +338,7 @@ export default function OnboardingPage() {
         )}
 
         {step === 2 && (
-          <StepShell step={step} onContinue={goNext} continueDisabled={!city.trim()}>
+          <StepShell step={step} onBack={goBack} onContinue={goNext} continueDisabled={!city.trim()}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-6">Where are you?</h2>
             <div className="space-y-6">
               <div className="space-y-2">
@@ -306,14 +351,14 @@ export default function OnboardingPage() {
         )}
 
         {step === 3 && (
-          <StepShell step={step} onContinue={goNext} continueDisabled={!relationshipType}>
+          <StepShell step={step} onBack={goBack} onContinue={goNext} continueDisabled={!relationshipType}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-6">What type of relationship are you looking for?</h2>
             <RadioList value={relationshipType} onChange={setRelationshipType} options={RELATIONSHIP_TYPES} />
           </StepShell>
         )}
 
         {step === 4 && (
-          <StepShell step={step} onContinue={goNext} continueDisabled={intentions.length === 0}>
+          <StepShell step={step} onBack={goBack} onContinue={goNext} continueDisabled={intentions.length === 0}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-2">What's most important to you in a connection?</h2>
             <p className="text-sm text-muted-foreground mb-6">Select up to 3.</p>
             <ChipGrid options={DATING_INTENTIONS} selected={intentions} onToggle={toggleIntention} max={3} />
@@ -321,7 +366,7 @@ export default function OnboardingPage() {
         )}
 
         {step === 5 && (
-          <StepShell step={step} onContinue={goNext} continueDisabled={interests.length === 0}>
+          <StepShell step={step} onBack={goBack} onContinue={goNext} continueDisabled={interests.length === 0}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-2">What do you love?</h2>
             <p className="text-sm text-muted-foreground mb-6">Select up to 10 interests.</p>
             <ChipGrid options={INTERESTS} selected={interests} onToggle={toggleInterest} max={10} />
@@ -329,7 +374,7 @@ export default function OnboardingPage() {
         )}
 
         {step === 6 && (
-          <StepShell step={step} onContinue={goNext} continueDisabled={!bio.trim()}>
+          <StepShell step={step} onBack={goBack} onContinue={goNext} continueDisabled={!bio.trim()}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-2">Write a short bio.</h2>
             <p className="text-sm text-muted-foreground mb-6">Tell people who you are — and what you're looking for.</p>
             <Textarea
@@ -343,49 +388,49 @@ export default function OnboardingPage() {
         )}
 
         {step === 7 && (
-          <StepShell step={step} onContinue={goNext} continueLabel={numKids ? "Continue" : "Skip for now"}>
+          <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={numKids ? "Continue" : "Skip for now"}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-6">Do you have kids?</h2>
             <RadioList value={numKids} onChange={setNumKids} options={NUM_KIDS_OPTIONS} />
           </StepShell>
         )}
 
         {step === 8 && (
-          <StepShell step={step} onContinue={goNext} continueLabel={familyPlans ? "Continue" : "Skip for now"}>
+          <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={familyPlans ? "Continue" : "Skip for now"}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-6">What are your family plans?</h2>
             <RadioList value={familyPlans} onChange={setFamilyPlans} options={FAMILY_PLANS_OPTIONS} />
           </StepShell>
         )}
 
         {step === 9 && (
-          <StepShell step={step} onContinue={goNext} continueLabel={smokingStatus ? "Continue" : "Skip for now"}>
+          <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={smokingStatus ? "Continue" : "Skip for now"}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-6">Do you smoke?</h2>
             <RadioList value={smokingStatus} onChange={setSmokingStatus} options={SMOKING_OPTIONS} />
           </StepShell>
         )}
 
         {step === 10 && (
-          <StepShell step={step} onContinue={goNext} continueLabel={drinkingStatus ? "Continue" : "Skip for now"}>
+          <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={drinkingStatus ? "Continue" : "Skip for now"}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-6">Do you drink?</h2>
             <RadioList value={drinkingStatus} onChange={setDrinkingStatus} options={DRINKING_OPTIONS} />
           </StepShell>
         )}
 
         {step === 11 && (
-          <StepShell step={step} onContinue={goNext} continueLabel={loveLanguage ? "Continue" : "Skip for now"}>
+          <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={loveLanguage ? "Continue" : "Skip for now"}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-6">What's your love language?</h2>
             <RadioList value={loveLanguage} onChange={setLoveLanguage} options={LOVE_LANGUAGE_OPTIONS} />
           </StepShell>
         )}
 
         {step === 12 && (
-          <StepShell step={step} onContinue={goNext} continueLabel={education ? "Continue" : "Skip for now"}>
+          <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={education ? "Continue" : "Skip for now"}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-6">Highest level of education?</h2>
             <RadioList value={education} onChange={setEducation} options={EDUCATION_OPTIONS} />
           </StepShell>
         )}
 
         {step === 13 && (
-          <StepShell step={step} onContinue={goNext} continueLabel={languagesSpoken.length > 0 ? "Continue" : "Skip for now"}>
+          <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={languagesSpoken.length > 0 ? "Continue" : "Skip for now"}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-2">What languages do you speak?</h2>
             <p className="text-sm text-muted-foreground mb-6">Select up to 5.</p>
             <ChipGrid options={LANGUAGES} selected={languagesSpoken} onToggle={toggleLanguage} max={5} />
@@ -404,7 +449,7 @@ export default function OnboardingPage() {
         )}
 
         {step === 14 && (
-          <StepShell step={step} onContinue={goNext} continueLabel={photoCount > 0 ? "Continue" : "Skip for now"}>
+          <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={photoCount > 0 ? "Continue" : "Skip for now"}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-2">📸 Photos & Video</h2>
             <p className="text-sm text-muted-foreground mb-6">
               Add up to 8 photos and a 5-second clip from your Profile page any time. Adding at least one now helps people recognize you right away.
@@ -436,7 +481,7 @@ export default function OnboardingPage() {
         )}
 
         {step === 15 && (
-          <StepShell step={step} onContinue={goNext} continueLabel={audioSaved ? "Continue" : "Skip for now"}>
+          <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={audioSaved ? "Continue" : "Skip for now"}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-2">🎙️ Record an audio prompt.</h2>
             <p className="text-sm text-muted-foreground mb-6">Your voice helps people connect with you on a deeper level.</p>
 
@@ -460,6 +505,7 @@ export default function OnboardingPage() {
                     onClick={() => {
                       setSelectedPromptQuestion(null);
                       setAudioSaved(false);
+                      setSavedAudioUrl(null);
                     }}
                     className="text-xs text-muted-foreground mt-2 underline"
                   >
@@ -470,7 +516,15 @@ export default function OnboardingPage() {
                 {!audioSaved ? (
                   <AudioRecorderControl onSave={saveAudioPrompt} isSaving={isSavingAudio} />
                 ) : (
-                  <p className="text-sm text-primary text-center py-4">✓ Saved</p>
+                  <div className="flex items-center gap-3 bg-card border border-card-border rounded-xl p-3">
+                    <button
+                      onClick={toggleSavedPlayback}
+                      className="w-10 h-10 rounded-full bg-gradient-accent flex items-center justify-center text-white shrink-0"
+                    >
+                      {isPlayingSaved ? <Pause size={16} /> : <Play size={16} />}
+                    </button>
+                    <p className="text-sm text-primary font-medium">✓ Saved — tap to listen</p>
+                  </div>
                 )}
               </div>
             )}
@@ -478,19 +532,38 @@ export default function OnboardingPage() {
         )}
 
         {step === 16 && (
-          <StepShell step={step} onContinue={requestNotifications} continueLabel="Allow Notifications">
-            <div className="flex-1 flex flex-col items-center justify-center text-center">
+          <StepShell step={step} onBack={goBack} onContinue={requestNotifications} continueLabel="Allow Notifications">
+            <div className="flex flex-col items-center text-center mb-6">
               <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-6">
                 <Bell size={28} className="text-primary" />
               </div>
-              <h2 className="text-2xl font-['Syne'] font-bold mb-6">Stay connected.</h2>
-              <div className="space-y-3 text-left w-full max-w-xs">
-                <p className="text-sm text-muted-foreground">💬 Someone messages you</p>
-                <p className="text-sm text-muted-foreground">❤️ You get a new match</p>
-                <p className="text-sm text-muted-foreground">🔥 Someone likes your profile</p>
-                <p className="text-sm text-muted-foreground">🎁 Your free Sparks are granted</p>
-              </div>
+              <h2 className="text-2xl font-['Syne'] font-bold mb-2">Stay connected.</h2>
+              <p className="text-sm text-muted-foreground">Choose what you'd like to hear about.</p>
             </div>
+            <div className="space-y-3">
+              {[
+                { key: "messages", label: "💬 Someone messages you", value: notifyMessages, set: setNotifyMessages },
+                { key: "matches", label: "❤️ You get a new match", value: notifyMatches, set: setNotifyMatches },
+                { key: "likes", label: "🔥 Someone likes your profile", value: notifyLikes, set: setNotifyLikes },
+                { key: "sparks", label: "🎁 Your free Sparks are granted", value: notifySparks, set: setNotifySparks },
+              ].map((item) => (
+                <button
+                  key={item.key}
+                  onClick={() => item.set(!item.value)}
+                  className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-colors ${
+                    item.value ? "bg-primary/10 border-primary" : "bg-card border-card-border"
+                  }`}
+                >
+                  <span className="text-sm">{item.label}</span>
+                  <div className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${item.value ? "bg-primary border-primary" : "border-muted-foreground"}`}>
+                    {item.value && <Check size={12} className="text-primary-foreground" />}
+                  </div>
+                </button>
+              ))}
+            </div>
+            <button onClick={declineNotifications} className="text-xs text-muted-foreground underline mt-4 w-full text-center">
+              Not now
+            </button>
           </StepShell>
         )}
 

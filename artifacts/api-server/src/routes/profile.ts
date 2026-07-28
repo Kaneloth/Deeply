@@ -64,6 +64,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     relationship_type, dating_intentions, onboarding_completed,
     num_kids, smoking_status, drinking_status, languages_spoken,
     languages_other, love_language, education, family_plans,
+    notify_messages, notify_matches, notify_likes, notify_sparks,
   } = req.body as {
     name?: string;
     age?: number;
@@ -86,6 +87,10 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     love_language?: string;
     education?: string;
     family_plans?: string;
+    notify_messages?: boolean;
+    notify_matches?: boolean;
+    notify_likes?: boolean;
+    notify_sparks?: boolean;
   };
   const updates: Record<string, unknown> = {};
   if (name !== undefined) updates.name = name;
@@ -109,6 +114,10 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   if (love_language !== undefined) updates.love_language = love_language;
   if (education !== undefined) updates.education = education;
   if (family_plans !== undefined) updates.family_plans = family_plans;
+  if (notify_messages !== undefined) updates.notify_messages = notify_messages;
+  if (notify_matches !== undefined) updates.notify_matches = notify_matches;
+  if (notify_likes !== undefined) updates.notify_likes = notify_likes;
+  if (notify_sparks !== undefined) updates.notify_sparks = notify_sparks;
   const { data: profile, error } = await supabase
     .from("profiles")
     .update(updates)
