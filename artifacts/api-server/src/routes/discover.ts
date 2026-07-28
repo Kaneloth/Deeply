@@ -28,7 +28,7 @@ router.get("/discover/queue", requireAuth, async (req, res): Promise<void> => {
   // boosts before trimming down to the final page size.
   const { data: candidates, error } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, boosted_until")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, boosted_until, num_kids, family_plans, smoking_status, drinking_status")
     .not("id", "in", `(${excludedIds.join(",")})`)
     .limit(60);
 
@@ -177,7 +177,7 @@ router.post("/discover/undo", requireAuth, async (req, res): Promise<void> => {
 
   const { data: restoredProfile } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, num_kids, family_plans, smoking_status, drinking_status")
     .eq("id", lastSwipe.target_id)
     .single();
 
@@ -250,7 +250,7 @@ router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => 
 
   const { data: revealedProfiles } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, num_kids, family_plans, smoking_status, drinking_status")
     .in("id", revealedPendingIds);
 
   const superLikerIds = new Set(
@@ -328,7 +328,7 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
 
   const { data: inviters } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, num_kids, family_plans, smoking_status, drinking_status")
     .in("id", pendingInviterIds);
 
   const superLikerIds = new Set(
@@ -362,7 +362,7 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
 
   let query = supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, num_kids, family_plans, smoking_status, drinking_status")
     .not("id", "in", `(${excludedIds.join(",")})`);
 
   if (name) {
@@ -561,7 +561,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
 
   const excludedIds = [userId, ...(alreadySwiped?.map((s) => s.target_id) ?? [])];
   const excludeClause = `(${excludedIds.join(",")})`;
-  const SELECT_FIELDS = "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score";
+  const SELECT_FIELDS = "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, num_kids, family_plans, smoking_status, drinking_status";
 
   const { data: viewerProfile } = await supabase
     .from("profiles")
@@ -776,7 +776,7 @@ router.get("/discover/invites/sent", requireAuth, async (req, res): Promise<void
 
   const { data: sentProfiles } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, num_kids, family_plans, smoking_status, drinking_status")
     .in("id", pendingSentIds);
 
   const superSentIds = new Set(

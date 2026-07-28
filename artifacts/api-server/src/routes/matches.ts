@@ -10,11 +10,13 @@ const MATCH_SELECT = `
   *,
   user1:profiles!matches_user1_id_fkey(
     id, name, age, birthday, bio, city, photo_url,
-    integrity_score, personality_tags, is_verified, created_at
+    integrity_score, personality_tags, is_verified, created_at,
+    num_kids, family_plans, smoking_status, drinking_status
   ),
   user2:profiles!matches_user2_id_fkey(
     id, name, age, birthday, bio, city, photo_url,
-    integrity_score, personality_tags, is_verified, created_at
+    integrity_score, personality_tags, is_verified, created_at,
+    num_kids, family_plans, smoking_status, drinking_status
   )
 `;
 
