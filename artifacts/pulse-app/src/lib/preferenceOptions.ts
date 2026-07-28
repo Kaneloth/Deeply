@@ -36,3 +36,52 @@ export const LOOKING_FOR_OPTIONS: { value: string; label: string }[] = [
   { value: "non_binary", label: "Non-binary" },
   { value: "everyone", label: "Everyone" },
 ];
+
+export const NUM_KIDS_OPTIONS: { value: string; label: string }[] = [
+  { value: "none", label: "No kids" },
+  { value: "one", label: "1 kid" },
+  { value: "two", label: "2 kids" },
+  { value: "three_plus", label: "3+ kids" },
+  { value: "prefer_not_to_say", label: "Prefer not to say" },
+];
+
+export const SMOKING_OPTIONS: { value: string; label: string }[] = [
+  { value: "never", label: "Never" },
+  { value: "occasionally", label: "Occasionally" },
+  { value: "regularly", label: "Regularly" },
+  { value: "trying_to_quit", label: "Trying to quit" },
+  { value: "prefer_not_to_say", label: "Prefer not to say" },
+];
+
+export const DRINKING_OPTIONS: { value: string; label: string }[] = [
+  { value: "never", label: "Never" },
+  { value: "socially", label: "Socially" },
+  { value: "regularly", label: "Regularly" },
+  { value: "prefer_not_to_say", label: "Prefer not to say" },
+];
+
+export const LOVE_LANGUAGE_OPTIONS: { value: string; label: string }[] = [
+  { value: "words_of_affirmation", label: "Words of Affirmation" },
+  { value: "acts_of_service", label: "Acts of Service" },
+  { value: "receiving_gifts", label: "Receiving Gifts" },
+  { value: "quality_time", label: "Quality Time" },
+  { value: "physical_touch", label: "Physical Touch" },
+];
+
+export const EDUCATION_OPTIONS: { value: string; label: string }[] = [
+  { value: "high_school", label: "High School" },
+  { value: "trade_vocational", label: "Trade / Vocational" },
+  { value: "diploma", label: "Diploma" },
+  { value: "bachelors", label: "Bachelor's Degree" },
+  { value: "honours", label: "Honours" },
+  { value: "masters", label: "Master's Degree" },
+  { value: "doctorate", label: "Doctorate" },
+  { value: "prefer_not_to_say", label: "Prefer not to say" },
+];
+
+// All 12 official languages of South Africa, plus an Other option.
+export const LANGUAGES = [
+  "Afrikaans", "English", "isiNdebele", "isiXhosa", "isiZulu", "Sepedi",
+  "Sesotho", "Setswana", "siSwati", "Tshivenda", "Xitsonga",
+  "South African Sign Language", "Other",
+];

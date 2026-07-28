@@ -10,14 +10,20 @@ import { useToast } from "@/hooks/use-toast";
 import { CheckCircle2, AlertCircle, Rocket, Plus, X, ImageIcon, Camera, Video } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { PageHeader } from "@/components/PageHeader";
-import { RadioList, ChipGrid } from "@/components/SelectorControls";
+import { ChipGrid } from "@/components/SelectorControls";
+import { Dropdown, MultiSelectDropdown, RadiusSlider } from "@/components/DropdownControls";
 import {
   INTERESTS,
   DATING_INTENTIONS,
   RELATIONSHIP_TYPES,
-  DISTANCE_OPTIONS,
   GENDER_OPTIONS,
   LOOKING_FOR_OPTIONS,
+  NUM_KIDS_OPTIONS,
+  SMOKING_OPTIONS,
+  DRINKING_OPTIONS,
+  LOVE_LANGUAGE_OPTIONS,
+  EDUCATION_OPTIONS,
+  LANGUAGES,
 } from "@/lib/preferenceOptions";
 
 interface BoostStatus {
@@ -87,6 +93,13 @@ export default function ProfilePage() {
   const [relationshipType, setRelationshipType] = useState("");
   const [intentions, setIntentions] = useState<string[]>([]);
   const [interests, setInterests] = useState<string[]>([]);
+  const [numKids, setNumKids] = useState("");
+  const [smokingStatus, setSmokingStatus] = useState("");
+  const [drinkingStatus, setDrinkingStatus] = useState("");
+  const [languagesSpoken, setLanguagesSpoken] = useState<string[]>([]);
+  const [languagesOther, setLanguagesOther] = useState("");
+  const [loveLanguage, setLoveLanguage] = useState("");
+  const [education, setEducation] = useState("");
 
   const toggleIntention = (v: string) => {
     setIntentions((prev) => (prev.includes(v) ? prev.filter((i) => i !== v) : prev.length < 3 ? [...prev, v] : prev));
@@ -546,6 +559,13 @@ export default function ProfilePage() {
       setRelationshipType(profile.relationship_type || "");
       setIntentions(profile.dating_intentions || []);
       setInterests(profile.personality_tags || []);
+      setNumKids(profile.num_kids || "");
+      setSmokingStatus(profile.smoking_status || "");
+      setDrinkingStatus(profile.drinking_status || "");
+      setLanguagesSpoken(profile.languages_spoken || []);
+      setLanguagesOther(profile.languages_other || "");
+      setLoveLanguage(profile.love_language || "");
+      setEducation(profile.education || "");
     }
   }, [profile]);
 
@@ -559,7 +579,14 @@ export default function ProfilePage() {
     distanceKm !== (profile.distance_km ?? 25) ||
     relationshipType !== (profile.relationship_type || "") ||
     JSON.stringify(intentions) !== JSON.stringify(profile.dating_intentions || []) ||
-    JSON.stringify(interests) !== JSON.stringify(profile.personality_tags || [])
+    JSON.stringify(interests) !== JSON.stringify(profile.personality_tags || []) ||
+    numKids !== (profile.num_kids || "") ||
+    smokingStatus !== (profile.smoking_status || "") ||
+    drinkingStatus !== (profile.drinking_status || "") ||
+    JSON.stringify(languagesSpoken) !== JSON.stringify(profile.languages_spoken || []) ||
+    languagesOther !== (profile.languages_other || "") ||
+    loveLanguage !== (profile.love_language || "") ||
+    education !== (profile.education || "")
   );
 
   const handleSave = () => {
@@ -577,6 +604,13 @@ export default function ProfilePage() {
         relationship_type: relationshipType,
         dating_intentions: intentions,
         personality_tags: interests,
+        num_kids: numKids,
+        smoking_status: smokingStatus,
+        drinking_status: drinkingStatus,
+        languages_spoken: languagesSpoken,
+        languages_other: languagesOther,
+        love_language: loveLanguage,
+        education,
       }
     }, {
       onSuccess: () => {
@@ -874,30 +908,11 @@ export default function ProfilePage() {
       )}
 
       {activeTab === "preferences" && (
-      <div className="space-y-8">
-        <div className="space-y-3">
-          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">I am a</h3>
-          <RadioList value={gender} onChange={setGender} options={GENDER_OPTIONS} />
-        </div>
-
-        <div className="space-y-3">
-          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">Looking for</h3>
-          <RadioList value={lookingForGender} onChange={setLookingForGender} options={LOOKING_FOR_OPTIONS} />
-        </div>
-
-        <div className="space-y-3">
-          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">Distance preference</h3>
-          <RadioList
-            value={String(distanceKm)}
-            onChange={(v) => setDistanceKm(Number(v))}
-            options={DISTANCE_OPTIONS.map((d) => ({ value: String(d), label: d === 999 ? "Anywhere" : `Within ${d} km` }))}
-          />
-        </div>
-
-        <div className="space-y-3">
-          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">Relationship type</h3>
-          <RadioList value={relationshipType} onChange={setRelationshipType} options={RELATIONSHIP_TYPES} />
-        </div>
+      <div className="space-y-6">
+        <Dropdown label="I am a" value={gender} onChange={setGender} options={GENDER_OPTIONS} />
+        <Dropdown label="Looking for" value={lookingForGender} onChange={setLookingForGender} options={LOOKING_FOR_OPTIONS} />
+        <RadiusSlider valueKm={distanceKm} onChange={setDistanceKm} />
+        <Dropdown label="Relationship type" value={relationshipType} onChange={setRelationshipType} options={RELATIONSHIP_TYPES} />
 
         <div className="space-y-3">
           <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">
@@ -912,15 +927,30 @@ export default function ProfilePage() {
           </h3>
           <ChipGrid options={INTERESTS} selected={interests} onToggle={toggleInterest} max={10} />
         </div>
+
+        <Dropdown label="Kids" value={numKids} onChange={setNumKids} options={NUM_KIDS_OPTIONS} />
+        <Dropdown label="Smoking" value={smokingStatus} onChange={setSmokingStatus} options={SMOKING_OPTIONS} />
+        <Dropdown label="Drinking" value={drinkingStatus} onChange={setDrinkingStatus} options={DRINKING_OPTIONS} />
+        <Dropdown label="Love language" value={loveLanguage} onChange={setLoveLanguage} options={LOVE_LANGUAGE_OPTIONS} />
+        <Dropdown label="Education" value={education} onChange={setEducation} options={EDUCATION_OPTIONS} />
+
+        <MultiSelectDropdown label="Languages spoken" options={LANGUAGES} selected={languagesSpoken} onChange={setLanguagesSpoken} />
+        {languagesSpoken.includes("Other") && (
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">Other language(s)</label>
+            <Input
+              value={languagesOther}
+              onChange={(e) => setLanguagesOther(e.target.value)}
+              placeholder="e.g. Portuguese, Mandarin"
+              className="bg-card border-card-border h-12 rounded-xl text-base"
+            />
+          </div>
+        )}
       </div>
       )}
 
       {hasChanges && (
-        <motion.div 
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          className="fixed bottom-24 left-0 right-0 max-w-[430px] mx-auto px-6 z-40"
-        >
+        <div className="mt-8 pb-2">
           <Button 
             className="w-full h-14 rounded-2xl bg-foreground text-background hover:bg-foreground/90 font-bold text-lg shadow-2xl"
             onClick={handleSave}
@@ -928,7 +958,7 @@ export default function ProfilePage() {
           >
             {updateProfile.isPending ? "Saving..." : "Save Changes"}
           </Button>
-        </motion.div>
+        </div>
       )}
     </div>
   );

@@ -62,6 +62,8 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     name, age, bio, city, photo_url, personality_tags,
     birthday, gender, looking_for_gender, distance_km,
     relationship_type, dating_intentions, onboarding_completed,
+    num_kids, smoking_status, drinking_status, languages_spoken,
+    languages_other, love_language, education,
   } = req.body as {
     name?: string;
     age?: number;
@@ -76,6 +78,13 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     relationship_type?: string;
     dating_intentions?: string[];
     onboarding_completed?: boolean;
+    num_kids?: string;
+    smoking_status?: string;
+    drinking_status?: string;
+    languages_spoken?: string[];
+    languages_other?: string;
+    love_language?: string;
+    education?: string;
   };
   const updates: Record<string, unknown> = {};
   if (name !== undefined) updates.name = name;
@@ -91,6 +100,13 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   if (relationship_type !== undefined) updates.relationship_type = relationship_type;
   if (dating_intentions !== undefined) updates.dating_intentions = dating_intentions;
   if (onboarding_completed !== undefined) updates.onboarding_completed = onboarding_completed;
+  if (num_kids !== undefined) updates.num_kids = num_kids;
+  if (smoking_status !== undefined) updates.smoking_status = smoking_status;
+  if (drinking_status !== undefined) updates.drinking_status = drinking_status;
+  if (languages_spoken !== undefined) updates.languages_spoken = languages_spoken;
+  if (languages_other !== undefined) updates.languages_other = languages_other;
+  if (love_language !== undefined) updates.love_language = love_language;
+  if (education !== undefined) updates.education = education;
   const { data: profile, error } = await supabase
     .from("profiles")
     .update(updates)
