@@ -91,23 +91,25 @@ export default function MatchDetailPage() {
   const profile = match.matched_user;
 
   return (
-    <div className="flex flex-col h-full overflow-hidden px-4 pb-6 pt-6">
+    <div className="flex flex-col h-full overflow-hidden px-4 pb-2 pt-6">
       <div className="flex-1 relative min-h-0">
         <ProfileCard profile={profile} />
       </div>
 
-      <div className="flex items-center justify-center gap-4 mt-6">
+      <div className="flex items-center justify-center gap-3 mt-3">
         <button
           onClick={() => setShowUnmatchConfirm(true)}
-          className="w-14 h-14 rounded-full bg-card border border-card-border flex items-center justify-center text-muted-foreground hover:border-destructive hover:text-destructive transition-colors shadow-lg active:scale-95"
+          className="h-11 px-4 rounded-full bg-card border border-card-border flex items-center justify-center gap-1.5 text-muted-foreground hover:border-destructive hover:text-destructive transition-colors font-semibold text-sm"
         >
-          <UserX size={22} />
+          <UserX size={16} />
+          Unmatch
         </button>
         <Link
           href={`/matches/${matchId}/chat`}
-          className="w-14 h-14 rounded-full bg-gradient-accent border-0 text-white shadow-[0_8px_20px_rgba(225,29,72,0.3)] flex items-center justify-center active:scale-95 transition-transform"
+          className="flex-1 h-11 rounded-full bg-gradient-accent border-0 text-white shadow-[0_8px_20px_rgba(225,29,72,0.3)] flex items-center justify-center gap-1.5 font-semibold text-sm active:scale-95 transition-transform"
         >
-          <MessageCircle size={22} />
+          <MessageCircle size={16} />
+          Open Chat
         </Link>
       </div>
 

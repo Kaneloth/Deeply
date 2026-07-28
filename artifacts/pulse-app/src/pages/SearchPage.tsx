@@ -64,7 +64,7 @@ function ProfileDetailOverlay({
       <div className="w-full max-w-[430px] mx-auto h-full flex flex-col overflow-hidden">
         <TopBar />
 
-        <div className="flex-1 flex flex-col overflow-hidden px-4 pb-6 pt-4">
+        <div className="flex-1 flex flex-col overflow-hidden px-4 pb-20 pt-4">
           <div className="flex-1 min-h-0 relative">
             <ProfileCard profile={profile} />
             <button
@@ -75,27 +75,27 @@ function ProfileDetailOverlay({
             </button>
           </div>
 
-          <div className="flex-none pt-4 flex items-center justify-center gap-4">
+          <div className="flex-none pt-3 flex items-center justify-center gap-3">
             <button
               onClick={() => onSwipe("pass")}
               disabled={isActioning}
-              className="w-14 h-14 rounded-full bg-card border border-card-border flex items-center justify-center text-muted-foreground hover:border-destructive hover:text-destructive transition-colors shadow-lg active:scale-95"
+              className="w-12 h-12 rounded-full bg-card border border-card-border flex items-center justify-center text-muted-foreground hover:border-destructive hover:text-destructive transition-colors shadow-lg active:scale-95"
             >
-              <X size={24} />
+              <X size={20} />
             </button>
             <button
               onClick={onMessage}
               disabled={isActioning}
-              className="w-11 h-11 rounded-full bg-card border border-card-border flex items-center justify-center text-accent hover:border-accent transition-colors shadow-lg active:scale-95"
+              className="w-9 h-9 rounded-full bg-card border border-card-border flex items-center justify-center text-accent hover:border-accent transition-colors shadow-lg active:scale-95"
             >
-              <MessageCircle size={18} />
+              <MessageCircle size={16} />
             </button>
             <button
               onClick={() => onSwipe("like")}
               disabled={isActioning}
-              className="w-14 h-14 rounded-full bg-gradient-accent flex items-center justify-center text-white shadow-[0_8px_20px_rgba(225,29,72,0.3)] active:scale-95 transition-transform"
+              className="w-12 h-12 rounded-full bg-gradient-accent flex items-center justify-center text-white shadow-[0_8px_20px_rgba(225,29,72,0.3)] active:scale-95 transition-transform"
             >
-              <Heart size={24} className="fill-current" />
+              <Heart size={20} className="fill-current" />
             </button>
           </div>
         </div>

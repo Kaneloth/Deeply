@@ -228,7 +228,7 @@ export default function DiscoverPage() {
   const visibleCards = candidates.slice(0, 3);
 
   return (
-    <div className="flex flex-col h-full overflow-hidden px-4 pb-6 pt-6">
+    <div className="flex flex-col h-full overflow-hidden px-4 pb-2 pt-6">
       {invitesCount > 0 && (
         <div className="flex justify-end mb-3 px-2">
           <Link
@@ -272,13 +272,13 @@ export default function DiscoverPage() {
       </div>
 
       {visibleCards.length > 0 && (
-        <div className="flex items-center justify-center gap-4 mt-6">
+        <div className="flex items-center justify-center gap-3 mt-3">
           <button
             onClick={() => handleDecision("pass")}
             disabled={isSwiping}
-            className="w-16 h-16 rounded-full bg-card border border-card-border flex items-center justify-center text-muted-foreground hover:border-destructive hover:text-destructive transition-colors shadow-lg active:scale-95"
+            className="w-12 h-12 rounded-full bg-card border border-card-border flex items-center justify-center text-muted-foreground hover:border-destructive hover:text-destructive transition-colors shadow-lg active:scale-95"
           >
-            <X size={28} />
+            <X size={20} />
           </button>
           <button
             onClick={() => {
@@ -286,16 +286,16 @@ export default function DiscoverPage() {
               if (top) setComposeFor(top);
             }}
             disabled={isSwiping}
-            className="w-12 h-12 rounded-full bg-card border border-card-border flex items-center justify-center text-accent hover:border-accent transition-colors shadow-lg active:scale-95"
+            className="w-9 h-9 rounded-full bg-card border border-card-border flex items-center justify-center text-accent hover:border-accent transition-colors shadow-lg active:scale-95"
           >
-            <MessageCircle size={20} />
+            <MessageCircle size={16} />
           </button>
           <button
             onClick={() => handleDecision("like")}
             disabled={isSwiping}
-            className="w-16 h-16 rounded-full bg-gradient-accent flex items-center justify-center text-white shadow-[0_8px_20px_rgba(225,29,72,0.3)] active:scale-95 transition-transform"
+            className="w-12 h-12 rounded-full bg-gradient-accent flex items-center justify-center text-white shadow-[0_8px_20px_rgba(225,29,72,0.3)] active:scale-95 transition-transform"
           >
-            <Heart size={28} className="fill-current" />
+            <Heart size={20} className="fill-current" />
           </button>
         </div>
       )}

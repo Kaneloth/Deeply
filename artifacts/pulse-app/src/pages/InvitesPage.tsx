@@ -39,7 +39,7 @@ function InviteDetailOverlay({
       <div className="w-full max-w-[430px] mx-auto h-full flex flex-col overflow-hidden">
         <TopBar />
 
-        <div className="flex-1 flex flex-col overflow-hidden px-4 pb-6 pt-4">
+        <div className="flex-1 flex flex-col overflow-hidden px-4 pb-20 pt-4">
           <div className="flex-1 min-h-0 relative">
             <ProfileCard profile={invite} />
             <button
@@ -55,22 +55,24 @@ function InviteDetailOverlay({
             )}
           </div>
 
-          <div className="flex-none pt-4 flex items-center justify-center gap-4">
+          <div className="flex-none pt-3 flex items-center justify-center gap-3">
             {onDecide ? (
               <>
                 <button
                   onClick={() => onDecide("pass")}
                   disabled={isActioning}
-                  className="w-14 h-14 rounded-full bg-card border border-card-border flex items-center justify-center text-muted-foreground hover:border-destructive hover:text-destructive transition-colors shadow-lg active:scale-95"
+                  className="flex-1 h-11 rounded-full bg-card border border-card-border flex items-center justify-center gap-1.5 text-muted-foreground hover:border-destructive hover:text-destructive transition-colors font-semibold text-sm"
                 >
-                  <X size={24} />
+                  <X size={16} />
+                  Decline
                 </button>
                 <button
                   onClick={() => onDecide("like")}
                   disabled={isActioning}
-                  className="w-14 h-14 rounded-full bg-gradient-accent flex items-center justify-center text-white shadow-[0_8px_20px_rgba(225,29,72,0.3)] active:scale-95 transition-transform"
+                  className="flex-1 h-11 rounded-full bg-gradient-accent text-white flex items-center justify-center gap-1.5 font-semibold text-sm shadow-[0_8px_20px_rgba(225,29,72,0.3)]"
                 >
-                  <Heart size={24} className="fill-current" />
+                  <Heart size={16} className="fill-current" />
+                  Accept
                 </button>
               </>
             ) : (
