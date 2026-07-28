@@ -6,29 +6,27 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
-import { Mic, Square, Play, Pause, Image as ImageIcon, Bell, X, Check } from "lucide-react";
+import { Image as ImageIcon, Bell, Check } from "lucide-react";
 import { RadioList, ChipGrid } from "@/components/SelectorControls";
+import { RadiusSlider } from "@/components/DropdownControls";
+import { AudioRecorderControl } from "@/components/AudioRecorderControl";
 import {
   INTERESTS,
   DATING_INTENTIONS,
   RELATIONSHIP_TYPES,
-  DISTANCE_OPTIONS,
   GENDER_OPTIONS,
   LOOKING_FOR_OPTIONS,
+  NUM_KIDS_OPTIONS,
+  FAMILY_PLANS_OPTIONS,
+  SMOKING_OPTIONS,
+  DRINKING_OPTIONS,
+  LOVE_LANGUAGE_OPTIONS,
+  EDUCATION_OPTIONS,
+  LANGUAGES,
+  AUDIO_PROMPT_QUESTIONS,
 } from "@/lib/preferenceOptions";
 
-const AUDIO_PROMPTS = [
-  "What's your favorite travel memory?",
-  "What does a perfect Sunday look like to you?",
-  "What's something you're truly passionate about?",
-  "What's the best advice you've ever received?",
-  "Describe your ideal first date.",
-  "What makes you laugh?",
-  "What's a hidden talent you have?",
-  "What's something you're currently learning?",
-];
-
-const TOTAL_STEPS = 11;
+const TOTAL_STEPS = 18;
 
 function StepShell({
   children,
@@ -85,26 +83,31 @@ export default function OnboardingPage() {
   const [interests, setInterests] = useState<string[]>([]);
   const [bio, setBio] = useState("");
 
+  const [numKids, setNumKids] = useState("");
+  const [familyPlans, setFamilyPlans] = useState("");
+  const [smokingStatus, setSmokingStatus] = useState("");
+  const [drinkingStatus, setDrinkingStatus] = useState("");
+  const [loveLanguage, setLoveLanguage] = useState("");
+  const [education, setEducation] = useState("");
+  const [languagesSpoken, setLanguagesSpoken] = useState<string[]>([]);
+  const [languagesOther, setLanguagesOther] = useState("");
+
   const [photoCount, setPhotoCount] = useState(0);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   const [selectedPromptQuestion, setSelectedPromptQuestion] = useState<string | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
-  const [isPlayingPreview, setIsPlayingPreview] = useState(false);
   const [isSavingAudio, setIsSavingAudio] = useState(false);
   const [audioSaved, setAudioSaved] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const recordedChunksRef = useRef<Blob[]>([]);
-  const audioPreviewRef = useRef<HTMLAudioElement | null>(null);
 
   const toggleIntention = (v: string) => {
     setIntentions((prev) => (prev.includes(v) ? prev.filter((i) => i !== v) : prev.length < 3 ? [...prev, v] : prev));
   };
-
   const toggleInterest = (v: string) => {
     setInterests((prev) => (prev.includes(v) ? prev.filter((i) => i !== v) : prev.length < 10 ? [...prev, v] : prev));
+  };
+  const toggleLanguage = (v: string) => {
+    setLanguagesSpoken((prev) => (prev.includes(v) ? prev.filter((i) => i !== v) : prev.length < 5 ? [...prev, v] : prev));
   };
 
   const goNext = () => setStep((s) => Math.min(s + 1, TOTAL_STEPS - 1));
@@ -137,66 +140,12 @@ export default function OnboardingPage() {
     }
   };
 
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      recordedChunksRef.current = [];
-      const recorder = new MediaRecorder(stream);
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) recordedChunksRef.current.push(e.data);
-      };
-      recorder.onstop = () => {
-        const blob = new Blob(recordedChunksRef.current, { type: "audio/webm" });
-        setRecordedBlob(blob);
-        stream.getTracks().forEach((t) => t.stop());
-      };
-      recorder.start();
-      mediaRecorderRef.current = recorder;
-      setIsRecording(true);
-      setRecordedBlob(null);
-      setAudioSaved(false);
-
-      setTimeout(() => {
-        if (mediaRecorderRef.current?.state === "recording") {
-          mediaRecorderRef.current.stop();
-          setIsRecording(false);
-        }
-      }, 30000);
-    } catch {
-      toast({
-        title: "Microphone unavailable",
-        description: "We couldn't access your microphone. You can add an audio prompt later from your Profile page.",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const stopRecording = () => {
-    mediaRecorderRef.current?.stop();
-    setIsRecording(false);
-  };
-
-  const togglePreview = () => {
-    if (!recordedBlob) return;
-    if (!audioPreviewRef.current) {
-      audioPreviewRef.current = new Audio(URL.createObjectURL(recordedBlob));
-      audioPreviewRef.current.onended = () => setIsPlayingPreview(false);
-    }
-    if (isPlayingPreview) {
-      audioPreviewRef.current.pause();
-      setIsPlayingPreview(false);
-    } else {
-      audioPreviewRef.current.play();
-      setIsPlayingPreview(true);
-    }
-  };
-
-  const saveAudioPrompt = async () => {
-    if (!recordedBlob || !selectedPromptQuestion) return;
+  const saveAudioPrompt = async (blob: Blob) => {
+    if (!selectedPromptQuestion) return;
     setIsSavingAudio(true);
     try {
       const formData = new FormData();
-      formData.append("audio", recordedBlob, "prompt.webm");
+      formData.append("audio", blob, "prompt.webm");
       const uploadRes = await fetch("/api/prompts/audio-upload", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
@@ -261,6 +210,14 @@ export default function OnboardingPage() {
           dating_intentions: intentions,
           personality_tags: interests,
           bio,
+          num_kids: numKids,
+          family_plans: familyPlans,
+          smoking_status: smokingStatus,
+          drinking_status: drinkingStatus,
+          love_language: loveLanguage,
+          education,
+          languages_spoken: languagesSpoken,
+          languages_other: languagesOther,
           onboarding_completed: true,
         }),
       });
@@ -298,7 +255,7 @@ export default function OnboardingPage() {
                 <span className="text-3xl">⚡</span>
               </div>
               <h1 className="text-3xl font-['Syne'] font-bold text-foreground tracking-tight">
-                Deep connections begin with a <span className="text-transparent bg-clip-text bg-gradient-accent">spark.</span>
+                Deep connections begin with a <span className="text-primary">spark.</span>
               </h1>
               <p className="text-muted-foreground mt-4 max-w-xs">
                 Find people who share your values — without the noise.
@@ -343,14 +300,7 @@ export default function OnboardingPage() {
                 <label className="text-sm font-medium">City</label>
                 <Input value={city} onChange={(e) => setCity(e.target.value)} placeholder="e.g. Johannesburg" className="bg-card border-card-border h-12 rounded-xl" />
               </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Distance preference</label>
-                <RadioList
-                  value={String(distanceKm)}
-                  onChange={(v) => setDistanceKm(Number(v))}
-                  options={DISTANCE_OPTIONS.map((d) => ({ value: String(d), label: d === 999 ? "Anywhere" : `Within ${d} km` }))}
-                />
-              </div>
+              <RadiusSlider valueKm={distanceKm} onChange={setDistanceKm} />
             </div>
           </StepShell>
         )}
@@ -393,6 +343,67 @@ export default function OnboardingPage() {
         )}
 
         {step === 7 && (
+          <StepShell step={step} onContinue={goNext} continueLabel={numKids ? "Continue" : "Skip for now"}>
+            <h2 className="text-2xl font-['Syne'] font-bold mb-6">Do you have kids?</h2>
+            <RadioList value={numKids} onChange={setNumKids} options={NUM_KIDS_OPTIONS} />
+          </StepShell>
+        )}
+
+        {step === 8 && (
+          <StepShell step={step} onContinue={goNext} continueLabel={familyPlans ? "Continue" : "Skip for now"}>
+            <h2 className="text-2xl font-['Syne'] font-bold mb-6">What are your family plans?</h2>
+            <RadioList value={familyPlans} onChange={setFamilyPlans} options={FAMILY_PLANS_OPTIONS} />
+          </StepShell>
+        )}
+
+        {step === 9 && (
+          <StepShell step={step} onContinue={goNext} continueLabel={smokingStatus ? "Continue" : "Skip for now"}>
+            <h2 className="text-2xl font-['Syne'] font-bold mb-6">Do you smoke?</h2>
+            <RadioList value={smokingStatus} onChange={setSmokingStatus} options={SMOKING_OPTIONS} />
+          </StepShell>
+        )}
+
+        {step === 10 && (
+          <StepShell step={step} onContinue={goNext} continueLabel={drinkingStatus ? "Continue" : "Skip for now"}>
+            <h2 className="text-2xl font-['Syne'] font-bold mb-6">Do you drink?</h2>
+            <RadioList value={drinkingStatus} onChange={setDrinkingStatus} options={DRINKING_OPTIONS} />
+          </StepShell>
+        )}
+
+        {step === 11 && (
+          <StepShell step={step} onContinue={goNext} continueLabel={loveLanguage ? "Continue" : "Skip for now"}>
+            <h2 className="text-2xl font-['Syne'] font-bold mb-6">What's your love language?</h2>
+            <RadioList value={loveLanguage} onChange={setLoveLanguage} options={LOVE_LANGUAGE_OPTIONS} />
+          </StepShell>
+        )}
+
+        {step === 12 && (
+          <StepShell step={step} onContinue={goNext} continueLabel={education ? "Continue" : "Skip for now"}>
+            <h2 className="text-2xl font-['Syne'] font-bold mb-6">Highest level of education?</h2>
+            <RadioList value={education} onChange={setEducation} options={EDUCATION_OPTIONS} />
+          </StepShell>
+        )}
+
+        {step === 13 && (
+          <StepShell step={step} onContinue={goNext} continueLabel={languagesSpoken.length > 0 ? "Continue" : "Skip for now"}>
+            <h2 className="text-2xl font-['Syne'] font-bold mb-2">What languages do you speak?</h2>
+            <p className="text-sm text-muted-foreground mb-6">Select up to 5.</p>
+            <ChipGrid options={LANGUAGES} selected={languagesSpoken} onToggle={toggleLanguage} max={5} />
+            {languagesSpoken.includes("Other") && (
+              <div className="space-y-2 mt-4">
+                <label className="text-sm font-medium">Other language(s)</label>
+                <Input
+                  value={languagesOther}
+                  onChange={(e) => setLanguagesOther(e.target.value)}
+                  placeholder="e.g. Portuguese, Mandarin"
+                  className="bg-card border-card-border h-12 rounded-xl"
+                />
+              </div>
+            )}
+          </StepShell>
+        )}
+
+        {step === 14 && (
           <StepShell step={step} onContinue={goNext} continueLabel={photoCount > 0 ? "Continue" : "Skip for now"}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-2">📸 Photos & Video</h2>
             <p className="text-sm text-muted-foreground mb-6">
@@ -424,14 +435,14 @@ export default function OnboardingPage() {
           </StepShell>
         )}
 
-        {step === 8 && (
+        {step === 15 && (
           <StepShell step={step} onContinue={goNext} continueLabel={audioSaved ? "Continue" : "Skip for now"}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-2">🎙️ Record an audio prompt.</h2>
             <p className="text-sm text-muted-foreground mb-6">Your voice helps people connect with you on a deeper level.</p>
 
             {!selectedPromptQuestion ? (
               <div className="space-y-2">
-                {AUDIO_PROMPTS.map((q) => (
+                {AUDIO_PROMPT_QUESTIONS.map((q) => (
                   <button
                     key={q}
                     onClick={() => setSelectedPromptQuestion(q)}
@@ -442,13 +453,12 @@ export default function OnboardingPage() {
                 ))}
               </div>
             ) : (
-              <div className="space-y-5">
+              <div className="space-y-3">
                 <div className="bg-card border border-card-border rounded-xl p-4">
                   <p className="text-sm font-medium">{selectedPromptQuestion}</p>
                   <button
                     onClick={() => {
                       setSelectedPromptQuestion(null);
-                      setRecordedBlob(null);
                       setAudioSaved(false);
                     }}
                     className="text-xs text-muted-foreground mt-2 underline"
@@ -457,46 +467,17 @@ export default function OnboardingPage() {
                   </button>
                 </div>
 
-                <div className="flex flex-col items-center gap-4 py-6">
-                  {!recordedBlob ? (
-                    <button
-                      onClick={isRecording ? stopRecording : startRecording}
-                      className={`w-20 h-20 rounded-full flex items-center justify-center transition-colors ${
-                        isRecording ? "bg-destructive" : "bg-gradient-accent"
-                      }`}
-                    >
-                      {isRecording ? <Square size={26} className="text-white fill-current" /> : <Mic size={28} className="text-white" />}
-                    </button>
-                  ) : (
-                    <div className="flex items-center gap-4">
-                      <button onClick={togglePreview} className="w-14 h-14 rounded-full bg-secondary flex items-center justify-center">
-                        {isPlayingPreview ? <Pause size={20} /> : <Play size={20} />}
-                      </button>
-                      <button
-                        onClick={() => setRecordedBlob(null)}
-                        className="w-14 h-14 rounded-full bg-card border border-card-border flex items-center justify-center text-muted-foreground"
-                      >
-                        <X size={18} />
-                      </button>
-                    </div>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    {isRecording ? "Recording... (up to 30s)" : recordedBlob ? "Preview your recording, or discard and retry" : "Tap to record"}
-                  </p>
-                </div>
-
-                {recordedBlob && !audioSaved && (
-                  <Button onClick={saveAudioPrompt} disabled={isSavingAudio} className="w-full h-12 rounded-xl bg-gradient-accent border-0">
-                    {isSavingAudio ? "Saving..." : "Save This Prompt"}
-                  </Button>
+                {!audioSaved ? (
+                  <AudioRecorderControl onSave={saveAudioPrompt} isSaving={isSavingAudio} />
+                ) : (
+                  <p className="text-sm text-primary text-center py-4">✓ Saved</p>
                 )}
-                {audioSaved && <p className="text-sm text-primary text-center">✓ Saved</p>}
               </div>
             )}
           </StepShell>
         )}
 
-        {step === 9 && (
+        {step === 16 && (
           <StepShell step={step} onContinue={requestNotifications} continueLabel="Allow Notifications">
             <div className="flex-1 flex flex-col items-center justify-center text-center">
               <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-6">
@@ -513,7 +494,7 @@ export default function OnboardingPage() {
           </StepShell>
         )}
 
-        {step === 10 && (
+        {step === 17 && (
           <motion.div key={step} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex-1 flex flex-col">
             <div className="flex-1 flex flex-col items-center justify-center text-center">
               <div className="text-5xl mb-6">🎉</div>
