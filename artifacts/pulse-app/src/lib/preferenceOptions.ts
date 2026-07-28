@@ -42,7 +42,6 @@ export const NUM_KIDS_OPTIONS: { value: string; label: string }[] = [
   { value: "one", label: "1 kid" },
   { value: "two", label: "2 kids" },
   { value: "three_plus", label: "3+ kids" },
-  { value: "prefer_not_to_say", label: "Prefer not to say" },
 ];
 
 export const SMOKING_OPTIONS: { value: string; label: string }[] = [
@@ -50,14 +49,12 @@ export const SMOKING_OPTIONS: { value: string; label: string }[] = [
   { value: "occasionally", label: "Occasionally" },
   { value: "regularly", label: "Regularly" },
   { value: "trying_to_quit", label: "Trying to quit" },
-  { value: "prefer_not_to_say", label: "Prefer not to say" },
 ];
 
 export const DRINKING_OPTIONS: { value: string; label: string }[] = [
   { value: "never", label: "Never" },
   { value: "socially", label: "Socially" },
   { value: "regularly", label: "Regularly" },
-  { value: "prefer_not_to_say", label: "Prefer not to say" },
 ];
 
 export const LOVE_LANGUAGE_OPTIONS: { value: string; label: string }[] = [
@@ -76,12 +73,16 @@ export const EDUCATION_OPTIONS: { value: string; label: string }[] = [
   { value: "honours", label: "Honours" },
   { value: "masters", label: "Master's Degree" },
   { value: "doctorate", label: "Doctorate" },
-  { value: "prefer_not_to_say", label: "Prefer not to say" },
 ];
 
-// All 12 official languages of South Africa, plus an Other option.
+// South African official languages, plus other major world languages
+// (the app is expanding beyond South Africa), plus a free-text Other.
 export const LANGUAGES = [
   "Afrikaans", "English", "isiNdebele", "isiXhosa", "isiZulu", "Sepedi",
   "Sesotho", "Setswana", "siSwati", "Tshivenda", "Xitsonga",
-  "South African Sign Language", "Other",
+  "South African Sign Language",
+  "Kiswahili", "French", "Arabic", "Shona", "Spanish", "Persian",
+  "Portuguese", "Hausa", "Amharic", "Yoruba", "Igbo", "Somali",
+  "Mandarin", "Hindi", "German",
+  "Other",
 ];

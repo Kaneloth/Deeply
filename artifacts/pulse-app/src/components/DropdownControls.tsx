@@ -38,11 +38,17 @@ export function Dropdown({
       {open && (
         <div className="fixed inset-0 z-[100] bg-background/80 backdrop-blur-sm flex items-end" onClick={() => setOpen(false)}>
           <div
-            className="w-full max-w-[430px] mx-auto bg-card border-t border-card-border rounded-t-3xl p-6 pb-10 max-h-[70vh] overflow-y-auto"
+            className="w-full max-w-[430px] mx-auto bg-card border-t border-card-border rounded-t-3xl p-6 max-h-[75vh] flex flex-col"
+            style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 24px)" }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="font-['Syne'] font-bold text-lg mb-4">{label}</h3>
-            <div className="space-y-2">
+            <div className="flex items-center justify-between mb-4 shrink-0">
+              <h3 className="font-['Syne'] font-bold text-lg">{label}</h3>
+              <button onClick={() => setOpen(false)} className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center shrink-0">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="space-y-2 overflow-y-auto">
               {options.map((opt) => (
                 <button
                   key={opt.value}
@@ -109,7 +115,8 @@ export function MultiSelectDropdown({
       {open && (
         <div className="fixed inset-0 z-[100] bg-background/80 backdrop-blur-sm flex items-end" onClick={() => setOpen(false)}>
           <div
-            className="w-full max-w-[430px] mx-auto bg-card border-t border-card-border rounded-t-3xl p-6 pb-6 max-h-[75vh] flex flex-col"
+            className="w-full max-w-[430px] mx-auto bg-card border-t border-card-border rounded-t-3xl p-6 max-h-[75vh] flex flex-col"
+            style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 24px)" }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-4 shrink-0">
