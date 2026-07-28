@@ -36,10 +36,10 @@ export function Dropdown({
       </button>
 
       {open && (
-        <div className="fixed inset-0 z-[100] bg-background/80 backdrop-blur-sm flex items-end" onClick={() => setOpen(false)}>
+        <div className="fixed inset-x-0 top-0 bottom-20 z-[100] bg-background/80 backdrop-blur-sm flex items-end" onClick={() => setOpen(false)}>
           <div
-            className="w-full max-w-[430px] mx-auto bg-card border-t border-card-border rounded-t-3xl p-6 max-h-[75vh] flex flex-col"
-            style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 24px)" }}
+            className="w-full max-w-[430px] mx-auto bg-card border-t border-card-border rounded-t-3xl p-6 max-h-[65vh] flex flex-col"
+            style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-4 shrink-0">
@@ -113,10 +113,10 @@ export function MultiSelectDropdown({
       </button>
 
       {open && (
-        <div className="fixed inset-0 z-[100] bg-background/80 backdrop-blur-sm flex items-end" onClick={() => setOpen(false)}>
+        <div className="fixed inset-x-0 top-0 bottom-20 z-[100] bg-background/80 backdrop-blur-sm flex items-end" onClick={() => setOpen(false)}>
           <div
-            className="w-full max-w-[430px] mx-auto bg-card border-t border-card-border rounded-t-3xl p-6 max-h-[75vh] flex flex-col"
-            style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 24px)" }}
+            className="w-full max-w-[430px] mx-auto bg-card border-t border-card-border rounded-t-3xl p-6 max-h-[65vh] flex flex-col"
+            style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-4 shrink-0">
