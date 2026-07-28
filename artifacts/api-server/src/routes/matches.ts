@@ -2,17 +2,18 @@ import { Router, type IRouter } from "express";
 import { requireAuth } from "../middlewares/auth";
 import { supabase } from "../lib/supabase";
 import { attachPhotoGalleries } from "../lib/photo-galleries";
+import { withComputedAge } from "../lib/age";
 
 const router: IRouter = Router();
 
 const MATCH_SELECT = `
   *,
   user1:profiles!matches_user1_id_fkey(
-    id, name, age, bio, city, photo_url,
+    id, name, age, birthday, bio, city, photo_url,
     integrity_score, personality_tags, is_verified, created_at
   ),
   user2:profiles!matches_user2_id_fkey(
-    id, name, age, bio, city, photo_url,
+    id, name, age, birthday, bio, city, photo_url,
     integrity_score, personality_tags, is_verified, created_at
   )
 `;
@@ -22,7 +23,7 @@ async function formatMatch(m: Record<string, any>, viewerId: string) {
   const [withPhotos] = matchedUser ? await attachPhotoGalleries([matchedUser]) : [null];
   return {
     id: m.id,
-    matched_user: withPhotos ?? null,
+    matched_user: withPhotos ? withComputedAge(withPhotos) : null,
     message_count: m.message_count,
     created_at: m.created_at,
   };

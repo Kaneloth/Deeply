@@ -10,6 +10,15 @@ import { useToast } from "@/hooks/use-toast";
 import { CheckCircle2, AlertCircle, Rocket, Plus, X, ImageIcon, Camera, Video } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { PageHeader } from "@/components/PageHeader";
+import { RadioList, ChipGrid } from "@/components/SelectorControls";
+import {
+  INTERESTS,
+  DATING_INTENTIONS,
+  RELATIONSHIP_TYPES,
+  DISTANCE_OPTIONS,
+  GENDER_OPTIONS,
+  LOOKING_FOR_OPTIONS,
+} from "@/lib/preferenceOptions";
 
 interface BoostStatus {
   is_active: boolean;
@@ -63,12 +72,28 @@ export default function ProfilePage() {
   const { refresh: refreshSparksBadge } = useSparks();
   const { toast } = useToast();
 
+  const [activeTab, setActiveTab] = useState<"profile" | "preferences">("profile");
+
   const [formData, setFormData] = useState({
     name: "",
-    age: "",
+    birthday: "",
     city: "",
     bio: ""
   });
+
+  const [gender, setGender] = useState("");
+  const [lookingForGender, setLookingForGender] = useState("");
+  const [distanceKm, setDistanceKm] = useState(25);
+  const [relationshipType, setRelationshipType] = useState("");
+  const [intentions, setIntentions] = useState<string[]>([]);
+  const [interests, setInterests] = useState<string[]>([]);
+
+  const toggleIntention = (v: string) => {
+    setIntentions((prev) => (prev.includes(v) ? prev.filter((i) => i !== v) : prev.length < 3 ? [...prev, v] : prev));
+  };
+  const toggleInterest = (v: string) => {
+    setInterests((prev) => (prev.includes(v) ? prev.filter((i) => i !== v) : prev.length < 10 ? [...prev, v] : prev));
+  };
 
   const [boostStatus, setBoostStatus] = useState<BoostStatus | null>(null);
   const [isBoosting, setIsBoosting] = useState(false);
@@ -511,18 +536,30 @@ export default function ProfilePage() {
     if (profile) {
       setFormData({
         name: profile.name || "",
-        age: profile.age?.toString() || "",
+        birthday: profile.birthday || "",
         city: profile.city || "",
         bio: profile.bio || ""
       });
+      setGender(profile.gender || "");
+      setLookingForGender(profile.looking_for_gender || "");
+      setDistanceKm(profile.distance_km ?? 25);
+      setRelationshipType(profile.relationship_type || "");
+      setIntentions(profile.dating_intentions || []);
+      setInterests(profile.personality_tags || []);
     }
   }, [profile]);
 
   const hasChanges = profile && (
     formData.name !== profile.name ||
-    formData.age !== (profile.age?.toString() || "") ||
+    formData.birthday !== (profile.birthday || "") ||
     formData.city !== (profile.city || "") ||
-    formData.bio !== (profile.bio || "")
+    formData.bio !== (profile.bio || "") ||
+    gender !== (profile.gender || "") ||
+    lookingForGender !== (profile.looking_for_gender || "") ||
+    distanceKm !== (profile.distance_km ?? 25) ||
+    relationshipType !== (profile.relationship_type || "") ||
+    JSON.stringify(intentions) !== JSON.stringify(profile.dating_intentions || []) ||
+    JSON.stringify(interests) !== JSON.stringify(profile.personality_tags || [])
   );
 
   const handleSave = () => {
@@ -531,9 +568,15 @@ export default function ProfilePage() {
     updateProfile.mutate({
       data: {
         name: formData.name,
-        age: parseInt(formData.age, 10),
+        birthday: formData.birthday,
         city: formData.city,
-        bio: formData.bio
+        bio: formData.bio,
+        gender,
+        looking_for_gender: lookingForGender,
+        distance_km: distanceKm,
+        relationship_type: relationshipType,
+        dating_intentions: intentions,
+        personality_tags: interests,
       }
     }, {
       onSuccess: () => {
@@ -550,6 +593,27 @@ export default function ProfilePage() {
     <div className="min-h-full px-6 pb-6 pt-6 bg-background">
       <PageHeader title="Profile" />
 
+      <div className="flex gap-2 mb-6">
+        <button
+          onClick={() => setActiveTab("profile")}
+          className={`flex-1 h-10 rounded-xl text-sm font-semibold transition-colors ${
+            activeTab === "profile" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
+          }`}
+        >
+          Profile
+        </button>
+        <button
+          onClick={() => setActiveTab("preferences")}
+          className={`flex-1 h-10 rounded-xl text-sm font-semibold transition-colors ${
+            activeTab === "preferences" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
+          }`}
+        >
+          Preferences
+        </button>
+      </div>
+
+      {activeTab === "profile" && (
+      <>
       <div className="flex flex-col items-center mb-10">
         <div className="relative">
           <div className="w-28 h-28 rounded-full border-4 border-background bg-muted overflow-hidden shadow-2xl relative z-10">
@@ -767,24 +831,25 @@ export default function ProfilePage() {
       </AnimatePresence>
 
       <div className="space-y-6">
-        <div className="grid grid-cols-4 gap-4">
-          <div className="col-span-3 space-y-2">
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">Name</label>
-            <Input 
-              value={formData.name}
-              onChange={e => setFormData(prev => ({...prev, name: e.target.value}))}
-              className="bg-card border-card-border h-12 rounded-xl text-base" 
-            />
-          </div>
-          <div className="col-span-1 space-y-2">
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">Age</label>
-            <Input 
-              type="number"
-              value={formData.age}
-              onChange={e => setFormData(prev => ({...prev, age: e.target.value}))}
-              className="bg-card border-card-border h-12 rounded-xl text-base text-center" 
-            />
-          </div>
+        <div className="space-y-2">
+          <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">Name</label>
+          <Input 
+            value={formData.name}
+            onChange={e => setFormData(prev => ({...prev, name: e.target.value}))}
+            className="bg-card border-card-border h-12 rounded-xl text-base" 
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">
+            Birthday {profile?.age != null && <span className="normal-case text-muted-foreground/70">(age {profile.age})</span>}
+          </label>
+          <Input 
+            type="date"
+            value={formData.birthday}
+            onChange={e => setFormData(prev => ({...prev, birthday: e.target.value}))}
+            className="bg-card border-card-border h-12 rounded-xl text-base" 
+          />
         </div>
 
         <div className="space-y-2">
@@ -804,20 +869,51 @@ export default function ProfilePage() {
             className="bg-card border-card-border min-h-[120px] resize-none rounded-xl p-4 text-base leading-relaxed" 
           />
         </div>
-
-        {profile?.personality_tags && profile.personality_tags.length > 0 && (
-          <div className="space-y-2 pt-2">
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">Tags (Edit in Onboarding)</label>
-            <div className="flex flex-wrap gap-2">
-              {profile.personality_tags.map(tag => (
-                <span key={tag} className="px-3 py-1.5 bg-secondary text-secondary-foreground text-xs font-medium rounded-full opacity-70">
-                  {tag}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
+      </>
+      )}
+
+      {activeTab === "preferences" && (
+      <div className="space-y-8">
+        <div className="space-y-3">
+          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">I am a</h3>
+          <RadioList value={gender} onChange={setGender} options={GENDER_OPTIONS} />
+        </div>
+
+        <div className="space-y-3">
+          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">Looking for</h3>
+          <RadioList value={lookingForGender} onChange={setLookingForGender} options={LOOKING_FOR_OPTIONS} />
+        </div>
+
+        <div className="space-y-3">
+          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">Distance preference</h3>
+          <RadioList
+            value={String(distanceKm)}
+            onChange={(v) => setDistanceKm(Number(v))}
+            options={DISTANCE_OPTIONS.map((d) => ({ value: String(d), label: d === 999 ? "Anywhere" : `Within ${d} km` }))}
+          />
+        </div>
+
+        <div className="space-y-3">
+          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">Relationship type</h3>
+          <RadioList value={relationshipType} onChange={setRelationshipType} options={RELATIONSHIP_TYPES} />
+        </div>
+
+        <div className="space-y-3">
+          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">
+            What matters most to you (up to 3)
+          </h3>
+          <ChipGrid options={DATING_INTENTIONS} selected={intentions} onToggle={toggleIntention} max={3} />
+        </div>
+
+        <div className="space-y-3">
+          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">
+            Interests (up to 10)
+          </h3>
+          <ChipGrid options={INTERESTS} selected={interests} onToggle={toggleInterest} max={10} />
+        </div>
+      </div>
+      )}
 
       {hasChanges && (
         <motion.div 

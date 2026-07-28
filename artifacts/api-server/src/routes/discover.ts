@@ -3,6 +3,7 @@ import { requireAuth } from "../middlewares/auth";
 import { supabase } from "../lib/supabase";
 import { spendSparks } from "../lib/sparks-helper";
 import { attachPhotoGalleries } from "../lib/photo-galleries";
+import { withComputedAge, withComputedAges } from "../lib/age";
 
 const router: IRouter = Router();
 
@@ -27,7 +28,7 @@ router.get("/discover/queue", requireAuth, async (req, res): Promise<void> => {
   // boosts before trimming down to the final page size.
   const { data: candidates, error } = await supabase
     .from("profiles")
-    .select("id, name, age, bio, city, photo_url, personality_tags, integrity_score, boosted_until")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, boosted_until")
     .not("id", "in", `(${excludedIds.join(",")})`)
     .limit(60);
 
@@ -74,7 +75,7 @@ router.get("/discover/queue", requireAuth, async (req, res): Promise<void> => {
 
   const withPhotos = await attachPhotoGalleries(enriched);
 
-  res.json({ candidates: withPhotos });
+  res.json({ candidates: withComputedAges(withPhotos) });
 });
 
 /** POST /api/discover/swipe — record a like / pass / super_like and report
@@ -176,13 +177,13 @@ router.post("/discover/undo", requireAuth, async (req, res): Promise<void> => {
 
   const { data: restoredProfile } = await supabase
     .from("profiles")
-    .select("id, name, age, bio, city, photo_url, personality_tags, integrity_score")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score")
     .eq("id", lastSwipe.target_id)
     .single();
 
   const [restoredWithPhotos] = restoredProfile ? await attachPhotoGalleries([restoredProfile]) : [null];
 
-  res.json({ restoredProfile: restoredWithPhotos ?? null, balance: spend.balance });
+  res.json({ restoredProfile: restoredWithPhotos ? withComputedAge(restoredWithPhotos) : null, balance: spend.balance });
 });
 
 /** GET /api/discover/invites — FREE. Returns people who already invited
@@ -249,7 +250,7 @@ router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => 
 
   const { data: revealedProfiles } = await supabase
     .from("profiles")
-    .select("id, name, age, bio, city, photo_url, personality_tags, integrity_score")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score")
     .in("id", revealedPendingIds);
 
   const superLikerIds = new Set(
@@ -258,7 +259,7 @@ router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => 
   const enriched = (revealedProfiles ?? []).map((p) => ({ ...p, super_liked: superLikerIds.has(p.id) }));
   const enrichedWithPhotos = await attachPhotoGalleries(enriched);
 
-  res.json({ revealed: enrichedWithPhotos, new_count: newCount });
+  res.json({ revealed: withComputedAges(enrichedWithPhotos), new_count: newCount });
 });
 
 /** POST /api/discover/invites/reveal — PAID (30 Sparks), but ONLY if
@@ -327,7 +328,7 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
 
   const { data: inviters } = await supabase
     .from("profiles")
-    .select("id, name, age, bio, city, photo_url, personality_tags, integrity_score")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score")
     .in("id", pendingInviterIds);
 
   const superLikerIds = new Set(
@@ -337,7 +338,7 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
   const enriched = (inviters ?? []).map((l) => ({ ...l, super_liked: superLikerIds.has(l.id) }));
   const enrichedWithPhotos = await attachPhotoGalleries(enriched);
 
-  res.json({ invites: enrichedWithPhotos, balance });
+  res.json({ invites: withComputedAges(enrichedWithPhotos), balance });
 });
 
 /** GET /api/discover/search — filter/search the same unswiped candidate
@@ -361,7 +362,7 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
 
   let query = supabase
     .from("profiles")
-    .select("id, name, age, bio, city, photo_url, personality_tags, integrity_score")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score")
     .not("id", "in", `(${excludedIds.join(",")})`);
 
   if (name) {
@@ -392,7 +393,7 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
 
   const withPhotos = await attachPhotoGalleries(results ?? []);
 
-  res.json({ results: withPhotos });
+  res.json({ results: withComputedAges(withPhotos) });
 });
 
 /** GET /api/discover/categories — lightweight preview data for stat cards
@@ -560,7 +561,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
 
   const excludedIds = [userId, ...(alreadySwiped?.map((s) => s.target_id) ?? [])];
   const excludeClause = `(${excludedIds.join(",")})`;
-  const SELECT_FIELDS = "id, name, age, bio, city, photo_url, personality_tags, integrity_score";
+  const SELECT_FIELDS = "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score";
 
   const { data: viewerProfile } = await supabase
     .from("profiles")
@@ -657,7 +658,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
 
   const withPhotos = await attachPhotoGalleries(results);
 
-  res.json({ results: withPhotos });
+  res.json({ results: withComputedAges(withPhotos) });
 });
 
 /** POST /api/discover/message-request — send an opening message to
@@ -775,7 +776,7 @@ router.get("/discover/invites/sent", requireAuth, async (req, res): Promise<void
 
   const { data: sentProfiles } = await supabase
     .from("profiles")
-    .select("id, name, age, bio, city, photo_url, personality_tags, integrity_score")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score")
     .in("id", pendingSentIds);
 
   const superSentIds = new Set(
@@ -784,7 +785,7 @@ router.get("/discover/invites/sent", requireAuth, async (req, res): Promise<void
   const enriched = (sentProfiles ?? []).map((p) => ({ ...p, super_liked: superSentIds.has(p.id) }));
   const enrichedWithPhotos = await attachPhotoGalleries(enriched);
 
-  res.json({ sent: enrichedWithPhotos });
+  res.json({ sent: withComputedAges(enrichedWithPhotos) });
 });
 
 /** DELETE /api/discover/invites/sent/:targetId — withdraw an invite you

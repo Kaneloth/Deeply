@@ -4,6 +4,7 @@ import { randomUUID } from "crypto";
 import { requireAuth } from "../middlewares/auth";
 import { supabase } from "../lib/supabase";
 import { spendSparks } from "../lib/sparks-helper";
+import { withComputedAge } from "../lib/age";
 
 const router: IRouter = Router();
 
@@ -52,18 +53,29 @@ router.get("/profile/me", requireAuth, async (req, res): Promise<void> => {
     res.status(404).json({ error: "Profile not found" });
     return;
   }
-  res.json(profile);
+  res.json(withComputedAge(profile));
 });
 
 /** PUT /api/profile/me */
 router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
-  const { name, age, bio, city, photo_url, personality_tags } = req.body as {
+  const {
+    name, age, bio, city, photo_url, personality_tags,
+    birthday, gender, looking_for_gender, distance_km,
+    relationship_type, dating_intentions, onboarding_completed,
+  } = req.body as {
     name?: string;
     age?: number;
     bio?: string;
     city?: string;
     photo_url?: string;
     personality_tags?: string[];
+    birthday?: string;
+    gender?: string;
+    looking_for_gender?: string;
+    distance_km?: number;
+    relationship_type?: string;
+    dating_intentions?: string[];
+    onboarding_completed?: boolean;
   };
   const updates: Record<string, unknown> = {};
   if (name !== undefined) updates.name = name;
@@ -72,6 +84,13 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   if (city !== undefined) updates.city = city;
   if (photo_url !== undefined) updates.photo_url = photo_url;
   if (personality_tags !== undefined) updates.personality_tags = personality_tags;
+  if (birthday !== undefined) updates.birthday = birthday;
+  if (gender !== undefined) updates.gender = gender;
+  if (looking_for_gender !== undefined) updates.looking_for_gender = looking_for_gender;
+  if (distance_km !== undefined) updates.distance_km = distance_km;
+  if (relationship_type !== undefined) updates.relationship_type = relationship_type;
+  if (dating_intentions !== undefined) updates.dating_intentions = dating_intentions;
+  if (onboarding_completed !== undefined) updates.onboarding_completed = onboarding_completed;
   const { data: profile, error } = await supabase
     .from("profiles")
     .update(updates)
@@ -82,7 +101,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     res.status(400).json({ error: error?.message ?? "Update failed" });
     return;
   }
-  res.json(profile);
+  res.json(withComputedAge(profile));
 });
 
 /** GET /api/profile/boost/status — is a boost currently active, and when
@@ -159,8 +178,72 @@ router.get("/profile/:userId", requireAuth, async (req, res): Promise<void> => {
     res.status(404).json({ error: "User not found" });
     return;
   }
-  res.json(profile);
+  res.json(withComputedAge(profile));
 });
+
+const audioUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB, ~30s of compressed audio
+  fileFilter: (_req, file, cb) => {
+    const allowed = ["audio/webm", "audio/mp4", "audio/mpeg", "audio/ogg", "audio/wav"];
+    if (!allowed.includes(file.mimetype)) {
+      cb(new Error("Unsupported audio format"));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
+const AUDIO_EXT_BY_MIME: Record<string, string> = {
+  "audio/webm": "webm",
+  "audio/mp4": "m4a",
+  "audio/mpeg": "mp3",
+  "audio/ogg": "ogg",
+  "audio/wav": "wav",
+};
+
+/** POST /api/prompts/audio-upload — uploads a recorded audio clip to
+ *  storage and returns its public URL, ready to pass into POST /prompts
+ *  as `audio_url`. */
+router.post(
+  "/prompts/audio-upload",
+  requireAuth,
+  (req, res, next) => {
+    audioUpload.single("audio")(req, res, (err) => {
+      if (err) {
+        res.status(400).json({ error: err.message ?? "Upload failed" });
+        return;
+      }
+      next();
+    });
+  },
+  async (req, res): Promise<void> => {
+    const userId = req.user!.id;
+
+    if (!req.file) {
+      res.status(400).json({ error: "No audio file provided" });
+      return;
+    }
+
+    const ext = AUDIO_EXT_BY_MIME[req.file.mimetype] ?? "webm";
+    const storagePath = `${userId}/${randomUUID()}.${ext}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("audio-prompts")
+      .upload(storagePath, req.file.buffer, { contentType: req.file.mimetype });
+
+    if (uploadError) {
+      res.status(500).json({ error: `Storage upload failed: ${uploadError.message}` });
+      return;
+    }
+
+    const {
+      data: { publicUrl },
+    } = supabase.storage.from("audio-prompts").getPublicUrl(storagePath);
+
+    res.status(201).json({ audio_url: publicUrl });
+  },
+);
 
 /** GET /api/prompts — get my audio prompts */
 router.get("/prompts", requireAuth, async (req, res): Promise<void> => {
