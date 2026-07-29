@@ -151,7 +151,11 @@ export default function DiscoverPage() {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ targetId: target.id, direction }),
+      body: JSON.stringify({
+        targetId: target.id,
+        direction,
+        clientTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      }),
     }).then(async (res) => {
       if (res.status === 402) {
         const body = await res.json();
@@ -169,8 +173,11 @@ export default function DiscoverPage() {
 
     try {
       const body = await apiCall;
-      if (direction === "super_like") {
+      if (direction === "super_like" || body.sparksCharged) {
         refreshSparksBadge();
+      }
+      if (direction === "like" && body.sparksCharged) {
+        toast({ title: "5 Sparks used", description: "You've used today's 15 free invites." });
       }
       if (body.matched) {
         setMatchName(target.name);

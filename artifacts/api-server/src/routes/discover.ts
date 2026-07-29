@@ -5,6 +5,7 @@ import { spendSparks } from "../lib/sparks-helper";
 import { attachPhotoGalleries } from "../lib/photo-galleries";
 import { attachAudioPrompts } from "../lib/audio-prompts-helper";
 import { withComputedAge, withComputedAges } from "../lib/age";
+import { consumeFreeInviteOrCharge } from "../lib/invites-quota";
 
 const router: IRouter = Router();
 
@@ -64,9 +65,11 @@ router.get("/discover/queue", requireAuth, async (req, res): Promise<void> => {
  *  back whether it created a mutual match. Super Like costs Sparks. */
 router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
-  const { targetId, direction } = req.body as {
+  const { targetId, direction, clientTimezone, skipInviteQuota } = req.body as {
     targetId?: string;
     direction?: "like" | "pass" | "super_like";
+    clientTimezone?: string;
+    skipInviteQuota?: boolean;
   };
 
   if (!targetId || !direction || !["like", "pass", "super_like"].includes(direction)) {
@@ -85,6 +88,20 @@ router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
       res.status(402).json({ error: `Insufficient Sparks (need ${SUPER_LIKE_COST})`, balance: spend.balance });
       return;
     }
+  }
+
+  // Regular "like" invites draw from the daily free quota (15/day,
+  // resetting at local midnight) before falling back to a Sparks charge.
+  // Accepting an already-received invite is exempt — that's completing an
+  // existing match opportunity, not sending a fresh cold invite.
+  let inviteBalanceAfter: number | null = null;
+  if (direction === "like" && !skipInviteQuota) {
+    const quota = await consumeFreeInviteOrCharge(userId, clientTimezone);
+    if (!quota.success) {
+      res.status(402).json({ error: "Insufficient Sparks for an extra invite today", balance: quota.balance });
+      return;
+    }
+    inviteBalanceAfter = quota.balance;
   }
 
   const { error: insertError } = await supabase.from("swipes").insert({
@@ -115,7 +132,7 @@ router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
     .eq("user2_id", hi)
     .maybeSingle();
 
-  res.json({ matched: !!match, matchId: match?.id ?? null });
+  res.json({ matched: !!match, matchId: match?.id ?? null, sparksCharged: inviteBalanceAfter !== null });
 });
 
 /** POST /api/discover/undo — undo the user's most recent swipe (10 Sparks).
@@ -804,6 +821,12 @@ router.delete("/discover/invites/sent/:targetId", requireAuth, async (req, res):
     return;
   }
 
+  const spend = await spendSparks(userId, UNDO_COST, "Withdraw invite");
+  if (!spend.success) {
+    res.status(402).json({ error: `Insufficient Sparks (need ${UNDO_COST})`, balance: spend.balance });
+    return;
+  }
+
   const { error } = await supabase.from("swipes").delete().eq("id", swipe.id);
 
   if (error) {
@@ -811,7 +834,7 @@ router.delete("/discover/invites/sent/:targetId", requireAuth, async (req, res):
     return;
   }
 
-  res.sendStatus(204);
+  res.json({ balance: spend.balance });
 });
 
 export default router;

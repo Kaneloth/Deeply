@@ -84,7 +84,7 @@ function InviteDetailOverlay({
                 className="flex-1 h-11 rounded-full bg-card border border-card-border flex items-center justify-center gap-1.5 text-muted-foreground hover:border-destructive hover:text-destructive transition-colors font-semibold text-sm"
               >
                 <X size={16} />
-                {isActioning ? "Withdrawing..." : "Withdraw Invite"}
+                {isActioning ? "Withdrawing..." : "Withdraw Invite (5 Sparks)"}
               </button>
             ) : (
               <p className="text-sm text-muted-foreground">Waiting for them to respond</p>
@@ -232,7 +232,7 @@ export default function InvitesPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ targetId: invite.id, direction }),
+        body: JSON.stringify({ targetId: invite.id, direction, skipInviteQuota: true }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to record decision");
@@ -261,6 +261,16 @@ export default function InvitesPage() {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
+
+      if (res.status === 402) {
+        toast({
+          title: "You're out of Sparks",
+          description: "Recharge now or wait for your next monthly grant to withdraw this invite.",
+          variant: "destructive",
+        });
+        return;
+      }
+
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "Failed to withdraw invite");
@@ -269,6 +279,7 @@ export default function InvitesPage() {
       setSent((prev) => (prev ? prev.filter((i) => i.id !== invite.id) : prev));
       setSelectedInvite((prev) => (prev?.id === invite.id ? null : prev));
       toast({ title: "Invite withdrawn" });
+      refreshSparksBadge();
     } catch (err) {
       toast({
         title: "Error",

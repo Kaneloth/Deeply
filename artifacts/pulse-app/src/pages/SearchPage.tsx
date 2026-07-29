@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useSparks } from "@/contexts/SparksContext";
 import { useLocation } from "wouter";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -108,6 +109,7 @@ function ProfileDetailOverlay({
 
 export default function SearchPage() {
   const { token } = useAuth();
+  const { refresh: refreshSparksBadge } = useSparks();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
 
@@ -218,13 +220,32 @@ export default function SearchPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ targetId, direction }),
+        body: JSON.stringify({
+          targetId,
+          direction,
+          clientTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        }),
       });
+
+      if (res.status === 402) {
+        toast({
+          title: "You're out of Sparks",
+          description: "Recharge now or wait for your next monthly grant to send more invites today.",
+          variant: "destructive",
+        });
+        return;
+      }
+
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to record swipe");
 
       setResults((prev) => (prev ? prev.filter((r) => r.id !== targetId) : prev));
       setSelectedProfile((prev) => (prev?.id === targetId ? null : prev));
+
+      if (direction === "like" && body.sparksCharged) {
+        toast({ title: "5 Sparks used", description: "You've used today's 15 free invites." });
+        refreshSparksBadge();
+      }
 
       if (body.matched) {
         toast({ title: "It's a Match!", description: "Head to Matches to say hi." });
