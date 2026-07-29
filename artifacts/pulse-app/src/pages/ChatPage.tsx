@@ -5,8 +5,10 @@ import { useSparks } from "@/contexts/SparksContext";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, Send, Undo2, Eye, CheckCheck } from "lucide-react";
+import { ChevronLeft, Send, Undo2, Eye, CheckCheck, Smile, ImagePlus, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { EmojiPicker } from "@/components/EmojiPicker";
+import { MediaPicker } from "@/components/MediaPicker";
 
 interface MatchedUser {
   id: string;
@@ -21,15 +23,26 @@ interface Match {
   created_at: string;
 }
 
+interface Reaction {
+  emoji: string;
+  count: number;
+  reactedByMe: boolean;
+}
+
 interface Message {
   id: string;
   match_id: string;
   sender_id: string;
   content: string;
+  message_type: "text" | "sticker" | "gif";
+  media_url: string | null;
   is_read: boolean;
   is_unsent: boolean;
   sent_at: string;
+  reactions: Reaction[];
 }
+
+const QUICK_REACT_EMOJIS = ["❤️", "😂", "😮", "😢", "👍", "🔥"];
 
 export default function ChatPage() {
   const params = useParams();
@@ -42,6 +55,9 @@ export default function ChatPage() {
   const [matchLoading, setMatchLoading] = useState(true);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showMediaPicker, setShowMediaPicker] = useState(false);
+  const [reactingToMessageId, setReactingToMessageId] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [receiptsUnlocked, setReceiptsUnlocked] = useState(false);
   const [isUnlockingReceipts, setIsUnlockingReceipts] = useState(false);
@@ -191,6 +207,81 @@ export default function ChatPage() {
     }
   };
 
+  const sendMediaMessage = async (messageType: "sticker" | "gif", content: string, mediaUrl?: string) => {
+    if (!matchId || isSending) return;
+    setIsSending(true);
+    setShowMediaPicker(false);
+    try {
+      const res = await fetch(`/api/matches/${matchId}/messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ content, message_type: messageType, media_url: mediaUrl }),
+      });
+
+      if (res.status === 402) {
+        toast({
+          title: "You're out of Sparks",
+          description: "Recharge now or wait for your next monthly grant to keep messaging.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to send");
+      await fetchMessages();
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to send.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const handleReact = async (messageId: string, emoji: string) => {
+    setReactingToMessageId(null);
+    // Optimistic update so it feels instant.
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id !== messageId) return m;
+        const existing = m.reactions.find((r) => r.emoji === emoji);
+        let reactions: Reaction[];
+        if (existing) {
+          reactions = existing.reactedByMe
+            ? m.reactions
+                .map((r) => (r.emoji === emoji ? { ...r, count: r.count - 1, reactedByMe: false } : r))
+                .filter((r) => r.count > 0)
+            : m.reactions.map((r) => (r.emoji === emoji ? { ...r, count: r.count + 1, reactedByMe: true } : r));
+        } else {
+          reactions = [...m.reactions, { emoji, count: 1, reactedByMe: true }];
+        }
+        return { ...m, reactions };
+      }),
+    );
+
+    try {
+      const res = await fetch(`/api/messages/${messageId}/react`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ emoji }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to react");
+      setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, reactions: body.reactions } : m)));
+    } catch {
+      await fetchMessages(); // reconcile with server state on failure
+    }
+  };
+
   const handleUnsend = async (messageId: string) => {
     try {
       const res = await fetch(`/api/messages/${messageId}/unsend`, {
@@ -306,9 +397,10 @@ export default function ChatPage() {
             const showUnsend = mine && canUnsend(msg);
             const isLastOwnMessage = mine && !messages.slice(i + 1).some((m) => isMyMsg(m.sender_id));
             const showReadIndicator = isLastOwnMessage && receiptsUnlocked && !msg.is_unsent;
+            const isMedia = msg.message_type === "sticker" || msg.message_type === "gif";
 
             return (
-              <div key={msg.id}>
+              <div key={msg.id} className="group">
                 <div className={`flex items-end gap-1.5 ${mine ? "justify-end" : "justify-start"}`}>
                   {mine && showUnsend && (
                     <button
@@ -319,16 +411,79 @@ export default function ChatPage() {
                       <Undo2 size={14} />
                     </button>
                   )}
-                  <div
-                    className={`max-w-[75%] px-4 py-2.5 text-[15px] leading-snug ${
-                      mine
-                        ? "bg-primary text-white rounded-2xl rounded-tr-sm"
-                        : "bg-secondary text-foreground rounded-2xl rounded-tl-sm"
-                    } ${msg.is_unsent ? "opacity-50 italic line-through" : ""}`}
-                  >
-                    {msg.is_unsent ? "Message unsent" : msg.content}
-                  </div>
+
+                  {!mine && !msg.is_unsent && (
+                    <button
+                      onClick={() => setReactingToMessageId(reactingToMessageId === msg.id ? null : msg.id)}
+                      className="w-6 h-6 rounded-full flex items-center justify-center text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-secondary transition-opacity shrink-0 mb-1"
+                    >
+                      <Smile size={14} />
+                    </button>
+                  )}
+
+                  {msg.is_unsent ? (
+                    <div className="max-w-[75%] px-4 py-2.5 text-[15px] leading-snug bg-secondary text-foreground rounded-2xl opacity-50 italic line-through">
+                      Message unsent
+                    </div>
+                  ) : msg.message_type === "sticker" ? (
+                    <div className="text-6xl leading-none">{msg.content}</div>
+                  ) : msg.message_type === "gif" ? (
+                    <div className="max-w-[65%] rounded-2xl overflow-hidden">
+                      <img src={msg.media_url ?? ""} alt="GIF" className="w-full h-auto" />
+                    </div>
+                  ) : (
+                    <div
+                      className={`max-w-[75%] px-4 py-2.5 text-[15px] leading-snug ${
+                        mine
+                          ? "bg-primary text-white rounded-2xl rounded-tr-sm"
+                          : "bg-secondary text-foreground rounded-2xl rounded-tl-sm"
+                      }`}
+                    >
+                      {msg.content}
+                    </div>
+                  )}
+
+                  {mine && !msg.is_unsent && (
+                    <button
+                      onClick={() => setReactingToMessageId(reactingToMessageId === msg.id ? null : msg.id)}
+                      className="w-6 h-6 rounded-full flex items-center justify-center text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-secondary transition-opacity shrink-0 mb-1"
+                    >
+                      <Smile size={14} />
+                    </button>
+                  )}
                 </div>
+
+                {reactingToMessageId === msg.id && (
+                  <div className={`flex gap-1 mt-1.5 ${mine ? "justify-end pr-8" : "justify-start pl-8"}`}>
+                    {QUICK_REACT_EMOJIS.map((emoji) => (
+                      <button
+                        key={emoji}
+                        onClick={() => handleReact(msg.id, emoji)}
+                        className="w-8 h-8 rounded-full bg-card border border-card-border flex items-center justify-center text-base hover:scale-110 transition-transform"
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {msg.reactions.length > 0 && (
+                  <div className={`flex flex-wrap gap-1 mt-1.5 ${mine ? "justify-end" : "justify-start"} ${isMedia ? "" : ""}`}>
+                    {msg.reactions.map((r) => (
+                      <button
+                        key={r.emoji}
+                        onClick={() => handleReact(msg.id, r.emoji)}
+                        className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border transition-colors ${
+                          r.reactedByMe ? "bg-primary/15 border-primary text-primary" : "bg-secondary border-card-border text-muted-foreground"
+                        }`}
+                      >
+                        <span>{r.emoji}</span>
+                        {r.count > 1 && <span>{r.count}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 {showReadIndicator && (
                   <div className="flex items-center justify-end gap-1 mt-1 pr-1 text-[11px] text-muted-foreground">
                     {msg.is_read ? (
@@ -352,6 +507,26 @@ export default function ChatPage() {
           own large offset on top of that. */}
       <div className="flex-none bg-background border-t border-border px-4 py-3">
         <form onSubmit={handleSend} className="flex gap-2 items-end">
+          <button
+            type="button"
+            onClick={() => {
+              setShowEmojiPicker((v) => !v);
+              setShowMediaPicker(false);
+            }}
+            className="h-12 w-11 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors shrink-0"
+          >
+            <Smile size={22} />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setShowMediaPicker((v) => !v);
+              setShowEmojiPicker(false);
+            }}
+            className="h-12 w-11 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors shrink-0"
+          >
+            <ImagePlus size={22} />
+          </button>
           <Input
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -368,6 +543,37 @@ export default function ChatPage() {
             <Send size={20} className="ml-1" />
           </Button>
         </form>
+
+        {showEmojiPicker && (
+          <div className="mt-2 h-56 bg-card border border-card-border rounded-2xl pt-3 overflow-hidden">
+            <div className="flex items-center justify-between px-3 pb-1">
+              <span className="text-xs font-medium text-muted-foreground">Emoji</span>
+              <button onClick={() => setShowEmojiPicker(false)} className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center">
+                <X size={12} />
+              </button>
+            </div>
+            <EmojiPicker
+              onSelect={(emoji) => {
+                setInput((prev) => prev + emoji);
+              }}
+            />
+          </div>
+        )}
+
+        {showMediaPicker && (
+          <div className="mt-2 h-64 bg-card border border-card-border rounded-2xl pt-3 overflow-hidden">
+            <div className="flex items-center justify-between px-3 pb-1">
+              <span className="text-xs font-medium text-muted-foreground">Stickers & GIFs</span>
+              <button onClick={() => setShowMediaPicker(false)} className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center">
+                <X size={12} />
+              </button>
+            </div>
+            <MediaPicker
+              onSelectSticker={(emoji) => sendMediaMessage("sticker", emoji)}
+              onSelectGif={(url) => sendMediaMessage("gif", "GIF", url)}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
