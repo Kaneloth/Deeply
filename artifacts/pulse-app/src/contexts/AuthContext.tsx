@@ -25,6 +25,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(localStorage.getItem(ACCESS_TOKEN_KEY));
   const [, setLocation] = useLocation();
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Ensures concurrent 401s all wait on the SAME refresh attempt instead of
+  // firing multiple parallel refreshes (which would race against Supabase's
+  // single-use/rotating refresh tokens and likely break one of them).
+  const refreshPromiseRef = useRef<Promise<string | null> | null>(null);
+  // The real, unpatched fetch — used internally so our own refresh/retry
+  // calls never recursively re-enter the interceptor below.
+  const originalFetchRef = useRef<typeof window.fetch>(window.fetch.bind(window));
 
   const clearRefreshTimer = () => {
     if (refreshTimer.current) {
@@ -61,26 +68,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     scheduleRefresh(expiresAt);
   };
 
-  const doRefresh = async () => {
-    const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
-    if (!refreshToken) {
-      logout();
-      return;
-    }
-    try {
-      const res = await fetch("/api/auth/refresh", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refresh_token: refreshToken }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? "Refresh failed");
-      applySession(body.access_token, body.refresh_token, body.expires_in);
-    } catch {
-      // Refresh token is invalid/expired too — nothing to do but log out
-      // and let the user sign in again.
-      logout();
-    }
+  // Returns the fresh access token on success, or null if refresh failed
+  // (in which case logout() has already been triggered).
+  const doRefresh = async (): Promise<string | null> => {
+    if (refreshPromiseRef.current) return refreshPromiseRef.current;
+
+    const promise = (async (): Promise<string | null> => {
+      const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
+      if (!refreshToken) {
+        logout();
+        return null;
+      }
+      try {
+        const res = await originalFetchRef.current("/api/auth/refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? "Refresh failed");
+        applySession(body.access_token, body.refresh_token, body.expires_in);
+        return body.access_token as string;
+      } catch {
+        // Refresh token is invalid/expired too — nothing to do but log out
+        // and let the user sign in again.
+        logout();
+        return null;
+      } finally {
+        refreshPromiseRef.current = null;
+      }
+    })();
+
+    refreshPromiseRef.current = promise;
+    return promise;
   };
 
   const login = (accessToken: string, refreshToken: string, expiresIn: number) => {
@@ -103,6 +123,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     return () => clearRefreshTimer();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Reactive fallback — this is what actually saves us when the PROACTIVE
+  // scheduled refresh above misses its window, which happens often on
+  // mobile: browsers throttle or fully pause setTimeout while a tab is
+  // backgrounded or the screen is locked. We patch window.fetch so that
+  // ANY 401 response to a request carrying one of our own Bearer tokens
+  // triggers a one-time refresh-and-retry, instead of failing forever.
+  useEffect(() => {
+    const original = originalFetchRef.current;
+
+    window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const response = await original(input, init);
+
+      if (response.status !== 401) return response;
+      if ((init as { __isRetry?: boolean } | undefined)?.__isRetry) return response;
+
+      const headers = init?.headers;
+      const authValue =
+        headers instanceof Headers
+          ? headers.get("Authorization")
+          : Array.isArray(headers)
+            ? headers.find(([k]) => k.toLowerCase() === "authorization")?.[1]
+            : (headers as Record<string, string> | undefined)?.["Authorization"];
+
+      // Only intercept requests carrying one of OUR tokens — avoids
+      // touching unrelated fetches (other origins, unauthenticated calls).
+      if (!authValue?.startsWith("Bearer ")) return response;
+
+      const newToken = await doRefresh();
+      if (!newToken) return response;
+
+      const retryHeaders = new Headers(init?.headers);
+      retryHeaders.set("Authorization", `Bearer ${newToken}`);
+      return original(input, { ...init, headers: retryHeaders, __isRetry: true } as RequestInit);
+    }) as typeof window.fetch;
+
+    return () => {
+      window.fetch = original;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
