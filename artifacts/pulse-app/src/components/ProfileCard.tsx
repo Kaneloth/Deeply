@@ -1,5 +1,13 @@
-import { MapPin, Baby, Users, Cigarette, Wine } from "lucide-react";
+import { useState, useRef } from "react";
+import { MapPin, Baby, Users, Cigarette, Wine, Mic, Play, Pause } from "lucide-react";
 import { PhotoCarousel, type CarouselPhoto } from "@/components/PhotoCarousel";
+
+export interface AudioPromptData {
+  id: string;
+  prompt_question: string;
+  audio_url: string;
+  duration_seconds: number | null;
+}
 
 export interface ProfileCardData {
   id: string;
@@ -14,6 +22,7 @@ export interface ProfileCardData {
   family_plans?: string | null;
   smoking_status?: string | null;
   drinking_status?: string | null;
+  audio_prompts?: AudioPromptData[];
 }
 
 const NUM_KIDS_LABELS: Record<string, string> = {
@@ -45,13 +54,31 @@ const DRINKING_LABELS: Record<string, string> = {
 
 export function ProfileCard({ profile, active = true }: { profile: ProfileCardData; active?: boolean }) {
   const photos = profile.photos.length > 0 ? profile.photos : [];
+  const [playingPromptId, setPlayingPromptId] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const togglePlayPrompt = (prompt: AudioPromptData) => {
+    if (playingPromptId === prompt.id) {
+      audioRef.current?.pause();
+      setPlayingPromptId(null);
+      return;
+    }
+    audioRef.current?.pause();
+    const audio = new Audio(prompt.audio_url);
+    audio.onended = () => setPlayingPromptId(null);
+    audio.play();
+    audioRef.current = audio;
+    setPlayingPromptId(prompt.id);
+  };
+
   const hasDetails =
     profile.personality_tags?.length > 0 ||
     !!profile.bio ||
     !!profile.num_kids ||
     !!profile.family_plans ||
     !!profile.smoking_status ||
-    !!profile.drinking_status;
+    !!profile.drinking_status ||
+    (profile.audio_prompts?.length ?? 0) > 0;
 
   return (
     <div className="w-full h-full bg-card border border-card-border rounded-3xl overflow-hidden shadow-2xl relative">
@@ -91,6 +118,27 @@ export function ProfileCard({ profile, active = true }: { profile: ProfileCardDa
             the photo. */}
         {hasDetails && (
           <div className="w-full bg-card px-5 py-4">
+            {profile.audio_prompts && profile.audio_prompts.length > 0 && (
+              <div className="space-y-2 mb-3">
+                {profile.audio_prompts.map((prompt) => (
+                  <button
+                    key={prompt.id}
+                    onClick={() => togglePlayPrompt(prompt)}
+                    className="w-full flex items-center gap-3 bg-secondary/60 border border-card-border rounded-xl p-3 text-left"
+                  >
+                    <div className="w-9 h-9 rounded-full bg-gradient-accent flex items-center justify-center text-white shrink-0">
+                      {playingPromptId === prompt.id ? <Pause size={15} /> : <Play size={15} />}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wide">
+                        <Mic size={10} /> Audio prompt
+                      </div>
+                      <p className="text-sm font-medium truncate">{prompt.prompt_question}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
             {(profile.num_kids || profile.family_plans || profile.smoking_status || profile.drinking_status) && (
               <div className="flex flex-wrap gap-2 mb-3">
                 {profile.num_kids && NUM_KIDS_LABELS[profile.num_kids] && (

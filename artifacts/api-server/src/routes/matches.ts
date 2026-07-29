@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { requireAuth } from "../middlewares/auth";
 import { supabase } from "../lib/supabase";
 import { attachPhotoGalleries } from "../lib/photo-galleries";
+import { attachAudioPrompts } from "../lib/audio-prompts-helper";
 import { withComputedAge } from "../lib/age";
 
 const router: IRouter = Router();
@@ -23,9 +24,10 @@ const MATCH_SELECT = `
 async function formatMatch(m: Record<string, any>, viewerId: string) {
   const matchedUser = m.user1_id === viewerId ? m.user2 : m.user1;
   const [withPhotos] = matchedUser ? await attachPhotoGalleries([matchedUser]) : [null];
+  const [withAudio] = withPhotos ? await attachAudioPrompts([withPhotos]) : [null];
   return {
     id: m.id,
-    matched_user: withPhotos ? withComputedAge(withPhotos) : null,
+    matched_user: withAudio ? withComputedAge(withAudio) : null,
     message_count: m.message_count,
     created_at: m.created_at,
   };

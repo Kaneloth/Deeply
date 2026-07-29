@@ -3,6 +3,7 @@ import { requireAuth } from "../middlewares/auth";
 import { supabase } from "../lib/supabase";
 import { spendSparks } from "../lib/sparks-helper";
 import { attachPhotoGalleries } from "../lib/photo-galleries";
+import { attachAudioPrompts } from "../lib/audio-prompts-helper";
 import { withComputedAge, withComputedAges } from "../lib/age";
 
 const router: IRouter = Router();
@@ -53,29 +54,10 @@ router.get("/discover/queue", requireAuth, async (req, res): Promise<void> => {
 
   const strippedCandidates = prioritized.map(({ boosted_until, ...profileFields }) => profileFields);
 
-  const candidateIds = strippedCandidates.map((c) => c.id);
-  const { data: prompts } = await supabase
-    .from("audio_prompts")
-    .select("*")
-    .in("user_id", candidateIds);
+  const withPhotos = await attachPhotoGalleries(strippedCandidates);
+  const withAudio = await attachAudioPrompts(withPhotos);
 
-  const promptsByUser = new Map<string, typeof prompts>();
-  for (const prompt of prompts ?? []) {
-    const list = promptsByUser.get(prompt.user_id) ?? [];
-    if (list.length < 2) {
-      list.push(prompt);
-      promptsByUser.set(prompt.user_id, list);
-    }
-  }
-
-  const enriched = strippedCandidates.map((c) => ({
-    ...c,
-    audio_prompts: promptsByUser.get(c.id) ?? [],
-  }));
-
-  const withPhotos = await attachPhotoGalleries(enriched);
-
-  res.json({ candidates: withComputedAges(withPhotos) });
+  res.json({ candidates: withComputedAges(withAudio) });
 });
 
 /** POST /api/discover/swipe — record a like / pass / super_like and report
@@ -182,8 +164,9 @@ router.post("/discover/undo", requireAuth, async (req, res): Promise<void> => {
     .single();
 
   const [restoredWithPhotos] = restoredProfile ? await attachPhotoGalleries([restoredProfile]) : [null];
+  const [restoredWithAudio] = restoredWithPhotos ? await attachAudioPrompts([restoredWithPhotos]) : [null];
 
-  res.json({ restoredProfile: restoredWithPhotos ? withComputedAge(restoredWithPhotos) : null, balance: spend.balance });
+  res.json({ restoredProfile: restoredWithAudio ? withComputedAge(restoredWithAudio) : null, balance: spend.balance });
 });
 
 /** GET /api/discover/invites — FREE. Returns people who already invited
@@ -259,7 +242,7 @@ router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => 
   const enriched = (revealedProfiles ?? []).map((p) => ({ ...p, super_liked: superLikerIds.has(p.id) }));
   const enrichedWithPhotos = await attachPhotoGalleries(enriched);
 
-  res.json({ revealed: withComputedAges(enrichedWithPhotos), new_count: newCount });
+  res.json({ revealed: withComputedAges(await attachAudioPrompts(enrichedWithPhotos)), new_count: newCount });
 });
 
 /** POST /api/discover/invites/reveal — PAID (30 Sparks), but ONLY if
@@ -338,7 +321,7 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
   const enriched = (inviters ?? []).map((l) => ({ ...l, super_liked: superLikerIds.has(l.id) }));
   const enrichedWithPhotos = await attachPhotoGalleries(enriched);
 
-  res.json({ invites: withComputedAges(enrichedWithPhotos), balance });
+  res.json({ invites: withComputedAges(await attachAudioPrompts(enrichedWithPhotos)), balance });
 });
 
 /** GET /api/discover/search — filter/search the same unswiped candidate
@@ -393,7 +376,7 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
 
   const withPhotos = await attachPhotoGalleries(results ?? []);
 
-  res.json({ results: withComputedAges(withPhotos) });
+  res.json({ results: withComputedAges(await attachAudioPrompts(withPhotos)) });
 });
 
 /** GET /api/discover/categories — lightweight preview data for stat cards
@@ -658,7 +641,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
 
   const withPhotos = await attachPhotoGalleries(results);
 
-  res.json({ results: withComputedAges(withPhotos) });
+  res.json({ results: withComputedAges(await attachAudioPrompts(withPhotos)) });
 });
 
 /** POST /api/discover/message-request — send an opening message to
@@ -785,7 +768,7 @@ router.get("/discover/invites/sent", requireAuth, async (req, res): Promise<void
   const enriched = (sentProfiles ?? []).map((p) => ({ ...p, super_liked: superSentIds.has(p.id) }));
   const enrichedWithPhotos = await attachPhotoGalleries(enriched);
 
-  res.json({ sent: withComputedAges(enrichedWithPhotos) });
+  res.json({ sent: withComputedAges(await attachAudioPrompts(enrichedWithPhotos)) });
 });
 
 /** DELETE /api/discover/invites/sent/:targetId — withdraw an invite you
