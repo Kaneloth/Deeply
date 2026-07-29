@@ -9,7 +9,7 @@ import { consumeFreeInviteOrCharge } from "../lib/invites-quota";
 
 const router: IRouter = Router();
 
-const SUPER_LIKE_COST = 5;
+const SUPER_LIKE_COST = 10;
 const UNDO_COST = 5;
 const REVEAL_LIKES_COST = 30;
 const MESSAGE_REQUEST_COST = 30;
