@@ -1,19 +1,24 @@
 [build]
   command = "pnpm --filter @workspace/pulse-app... run build"
   publish = "artifacts/pulse-app/dist/public"
-
 [build.environment]
   PNPM_FLAGS = "--no-frozen-lockfile"
-
 [functions]
   directory = "netlify/functions"
   node_bundler = "esbuild"
+
+# Dynamic, per-user API responses must never be cached by the CDN or the
+# browser — stale caching here can surface as intermittent, self-resolving
+# "not found" errors on data that actually exists.
+[[headers]]
+  for = "/api/*"
+  [headers.values]
+    Cache-Control = "no-store, no-cache, must-revalidate, max-age=0"
 
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/api"
   status = 200
-
 # SPA fallback: any other path that isn't a real file (like /discover,
 # /matches, /profile, etc.) should serve index.html so the app's own
 # client-side router can handle it. This MUST come after the /api/*
