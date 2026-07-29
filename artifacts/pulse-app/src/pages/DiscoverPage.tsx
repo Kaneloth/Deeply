@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ProfileCard, type ProfileCardData } from "@/components/ProfileCard";
-import { X, Heart, MessageCircle } from "lucide-react";
+import { X, Heart, MessageCircle, Star, RotateCcw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useSparks } from "@/contexts/SparksContext";
 
 interface Candidate extends ProfileCardData {
   photo_url: string | null;
@@ -91,6 +92,7 @@ export default function DiscoverPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [matchName, setMatchName] = useState<string | null>(null);
   const [isSwiping, setIsSwiping] = useState(false);
+  const [isUndoing, setIsUndoing] = useState(false);
   const [invitesCount, setInvitesCount] = useState<number>(0);
   const [exiting, setExiting] = useState<{ id: string; direction: SwipeDirection } | null>(null);
   const [composeFor, setComposeFor] = useState<Candidate | null>(null);
@@ -135,6 +137,8 @@ export default function DiscoverPage() {
     fetchInvitesCount();
   }, [fetchQueue, fetchInvitesCount]);
 
+  const { refresh: refreshSparksBadge } = useSparks();
+
   const handleDecision = async (direction: SwipeDirection) => {
     if (isSwiping || candidates.length === 0) return;
     const target = candidates[0];
@@ -149,6 +153,10 @@ export default function DiscoverPage() {
       },
       body: JSON.stringify({ targetId: target.id, direction }),
     }).then(async (res) => {
+      if (res.status === 402) {
+        const body = await res.json();
+        throw new Error(body.error ?? "Insufficient Sparks");
+      }
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to record swipe");
       return body;
@@ -161,6 +169,9 @@ export default function DiscoverPage() {
 
     try {
       const body = await apiCall;
+      if (direction === "super_like") {
+        refreshSparksBadge();
+      }
       if (body.matched) {
         setMatchName(target.name);
         fetchInvitesCount();
@@ -173,6 +184,43 @@ export default function DiscoverPage() {
       });
     } finally {
       setIsSwiping(false);
+    }
+  };
+
+  const handleUndo = async () => {
+    if (isUndoing) return;
+    setIsUndoing(true);
+    try {
+      const res = await fetch("/api/discover/undo", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (res.status === 402) {
+        const body = await res.json();
+        toast({
+          title: "You're out of Sparks",
+          description: "Recharge now or wait for your next monthly grant to undo a swipe.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to undo");
+
+      if (body.restoredProfile) {
+        setCandidates((prev) => [body.restoredProfile, ...prev]);
+      }
+      refreshSparksBadge();
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to undo swipe.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUndoing(false);
     }
   };
 
@@ -272,7 +320,14 @@ export default function DiscoverPage() {
       </div>
 
       {visibleCards.length > 0 && (
-        <div className="flex items-center justify-center gap-3 mt-3">
+        <div className="flex items-center justify-center gap-2.5 mt-3">
+          <button
+            onClick={handleUndo}
+            disabled={isUndoing || isSwiping}
+            className="w-9 h-9 rounded-full bg-card border border-card-border flex items-center justify-center text-amber-500 hover:border-amber-500 transition-colors shadow-lg active:scale-95 disabled:opacity-50"
+          >
+            <RotateCcw size={15} />
+          </button>
           <button
             onClick={() => handleDecision("pass")}
             disabled={isSwiping}
@@ -296,6 +351,13 @@ export default function DiscoverPage() {
             className="w-12 h-12 rounded-full bg-gradient-accent flex items-center justify-center text-white shadow-[0_8px_20px_rgba(225,29,72,0.3)] active:scale-95 transition-transform"
           >
             <Heart size={20} className="fill-current" />
+          </button>
+          <button
+            onClick={() => handleDecision("super_like")}
+            disabled={isSwiping}
+            className="w-9 h-9 rounded-full bg-card border border-card-border flex items-center justify-center text-sky-400 hover:border-sky-400 transition-colors shadow-lg active:scale-95"
+          >
+            <Star size={15} className="fill-current" />
           </button>
         </div>
       )}
