@@ -18,6 +18,7 @@ interface Match {
   matched_user: MatchedUser | null;
   message_count: number;
   created_at: string;
+  has_unread?: boolean;
 }
 
 export default function MatchesPage() {
@@ -92,15 +93,20 @@ export default function MatchesPage() {
             >
               <Link href={`/matches/${match.id}`} className="block">
                 <div className="flex items-center gap-4 p-4 rounded-2xl bg-card border border-card-border hover:border-primary/50 transition-colors active:scale-[0.98]">
-                  <div className="w-16 h-16 rounded-full bg-muted overflow-hidden border-2 border-background shadow-md shrink-0">
-                    {match.matched_user?.photo_url ? (
-                      <img src={match.matched_user.photo_url} alt="" className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/20 to-accent/20">
-                        <span className="text-primary text-xl font-bold font-['Syne']">
-                          {match.matched_user?.name?.[0] || "?"}
-                        </span>
-                      </div>
+                  <div className="relative shrink-0">
+                    <div className="w-16 h-16 rounded-full bg-muted overflow-hidden border-2 border-background shadow-md">
+                      {match.matched_user?.photo_url ? (
+                        <img src={match.matched_user.photo_url} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/20 to-accent/20">
+                          <span className="text-primary text-xl font-bold font-['Syne']">
+                            {match.matched_user?.name?.[0] || "?"}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    {match.has_unread && (
+                      <span className="absolute top-0 right-0 w-3.5 h-3.5 rounded-full bg-primary border-2 border-background" />
                     )}
                   </div>
 
@@ -111,7 +117,7 @@ export default function MatchesPage() {
                         <span className="text-muted-foreground font-normal ml-2">{match.matched_user.age}</span>
                       ) : null}
                     </h3>
-                    <p className="text-sm text-muted-foreground mt-0.5">
+                    <p className={`text-sm mt-0.5 ${match.has_unread ? "text-foreground font-semibold" : "text-muted-foreground"}`}>
                       {match.message_count > 0
                         ? `${match.message_count} message${match.message_count === 1 ? "" : "s"}`
                         : "Say hi 👋"}

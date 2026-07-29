@@ -43,11 +43,23 @@ router.get("/matches", requireAuth, async (req, res): Promise<void> => {
     .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
     .order("created_at", { ascending: false });
 
+  const matchIds = (matches ?? []).map((m) => m.id);
+  let unreadMatchIds = new Set<string>();
+  if (matchIds.length > 0) {
+    const { data: unreadRows } = await supabase
+      .from("messages")
+      .select("match_id")
+      .in("match_id", matchIds)
+      .eq("is_read", false)
+      .neq("sender_id", userId);
+    unreadMatchIds = new Set((unreadRows ?? []).map((r) => r.match_id));
+  }
+
   const formatted = await Promise.all(
     (matches ?? []).map((m) => formatMatch(m as Record<string, any>, userId)),
   );
 
-  res.json(formatted);
+  res.json(formatted.map((m) => ({ ...m, has_unread: unreadMatchIds.has(m.id) })));
 });
 
 /** GET /api/matches/:matchId */
