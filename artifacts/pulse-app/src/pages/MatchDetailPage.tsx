@@ -32,8 +32,18 @@ export default function MatchDetailPage() {
       const res = await fetch(`/api/matches/${matchId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
+
+      if (res.status === 404) {
+        toast({
+          title: "Match no longer available",
+          description: "This match has been removed.",
+        });
+        setLocation("/matches");
+        return;
+      }
+
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? "Match not found");
+      if (!res.ok) throw new Error(body.error ?? "Failed to load match");
       setMatch(body);
     } catch (err) {
       toast({
@@ -44,7 +54,7 @@ export default function MatchDetailPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [matchId, token, toast]);
+  }, [matchId, token, toast, setLocation]);
 
   useEffect(() => {
     fetchMatch();

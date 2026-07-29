@@ -253,7 +253,7 @@ export default function ChatPage() {
       <header className="flex-none bg-card/90 backdrop-blur-xl border-b border-card-border py-4 px-4">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
-            <Link href={`/matches/${matchId}`} className="w-10 h-10 flex items-center justify-center rounded-full bg-secondary text-foreground hover:bg-secondary/80 transition-colors shrink-0">
+            <Link href="/matches" className="w-10 h-10 flex items-center justify-center rounded-full bg-secondary text-foreground hover:bg-secondary/80 transition-colors shrink-0">
               <ChevronLeft size={24} />
             </Link>
             <div className="flex items-center gap-3 min-w-0">
