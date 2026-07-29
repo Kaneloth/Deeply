@@ -4,6 +4,7 @@ import { Link } from "wouter";
 import { Skeleton } from "@/components/ui/skeleton";
 import { motion } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
+import { PageHeader } from "@/components/PageHeader";
 
 interface MatchedUser {
   id: string;
@@ -51,8 +52,8 @@ export default function MatchesPage() {
 
   if (isLoading) {
     return (
-      <div className="p-6 pt-12 space-y-4">
-        <h1 className="text-3xl font-['Syne'] font-bold mb-8">Matches</h1>
+      <div className="px-4 pb-6 pt-6 space-y-4">
+        <PageHeader title="Matches" />
         {[1, 2, 3].map((i) => (
           <div key={i} className="flex items-center gap-4 p-4 rounded-2xl bg-card border border-card-border">
             <Skeleton className="w-16 h-16 rounded-full" />
@@ -67,8 +68,8 @@ export default function MatchesPage() {
   }
 
   return (
-    <div className="p-6 pt-12 min-h-full">
-      <h1 className="text-3xl font-['Syne'] font-bold mb-8 tracking-tight">Matches</h1>
+    <div className="px-4 pb-6 pt-6 min-h-full">
+      <PageHeader title="Matches" />
 
       {matches.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-center">

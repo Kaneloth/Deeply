@@ -236,7 +236,7 @@ export default function ChatPage() {
 
   if (matchLoading) {
     return (
-      <div className="p-6 pt-12">
+      <div className="p-6 pt-6">
         <Skeleton className="h-10 w-full mb-4" />
         <Skeleton className="h-[60vh] w-full" />
       </div>
@@ -246,9 +246,11 @@ export default function ChatPage() {
   if (!match) return <div className="p-6 text-center">Match not found.</div>;
 
   return (
-    <div className="flex flex-col h-[100dvh] w-full max-w-[430px] mx-auto bg-background relative z-50">
-      {/* Header */}
-      <header className="flex-none bg-card/90 backdrop-blur-xl border-b border-card-border pt-12 pb-4 px-4 sticky top-0 z-10">
+    <div className="flex flex-col h-full overflow-hidden w-full max-w-[430px] mx-auto bg-background">
+      {/* Header — AppShell's persistent top bar already reserves the
+          safe-area/status-bar space, so this header just needs normal
+          padding, not its own extra top offset. */}
+      <header className="flex-none bg-card/90 backdrop-blur-xl border-b border-card-border py-4 px-4">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <Link href={`/matches/${matchId}`} className="w-10 h-10 flex items-center justify-center rounded-full bg-secondary text-foreground hover:bg-secondary/80 transition-colors shrink-0">
@@ -288,7 +290,7 @@ export default function ChatPage() {
       </header>
 
       {/* Messages Area */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4 scroll-smooth">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4 scroll-smooth min-h-0">
         {messages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center p-6">
             <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-4 text-primary font-bold font-['Syne'] text-2xl">
@@ -345,8 +347,10 @@ export default function ChatPage() {
         )}
       </div>
 
-      {/* Input */}
-      <div className="flex-none bg-background border-t border-border px-4 py-3 pb-8">
+      {/* Input — AppShell's main already reserves clearance for the
+          bottom nav, so this only needs a modest bottom padding, not its
+          own large offset on top of that. */}
+      <div className="flex-none bg-background border-t border-border px-4 py-3">
         <form onSubmit={handleSend} className="flex gap-2 items-end">
           <Input
             value={input}
