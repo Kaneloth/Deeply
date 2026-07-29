@@ -157,6 +157,7 @@ export default function ProfilePage() {
   const [isLoadingPrompts, setIsLoadingPrompts] = useState(true);
   const [showAddPromptSheet, setShowAddPromptSheet] = useState(false);
   const [selectedNewPromptQuestion, setSelectedNewPromptQuestion] = useState<string | null>(null);
+  const [customPromptDraft, setCustomPromptDraft] = useState("");
   const [isSavingPrompt, setIsSavingPrompt] = useState(false);
   const [deletingPromptId, setDeletingPromptId] = useState<string | null>(null);
   const [playingPromptId, setPlayingPromptId] = useState<string | null>(null);
@@ -1070,6 +1071,26 @@ export default function ProfilePage() {
 
               {!selectedNewPromptQuestion ? (
                 <div className="space-y-2 overflow-y-auto flex-1 min-h-0">
+                  <div className="flex gap-2 mb-1">
+                    <Input
+                      value={customPromptDraft}
+                      onChange={(e) => setCustomPromptDraft(e.target.value)}
+                      placeholder="Or write your own question..."
+                      className="bg-background border-card-border h-11 rounded-xl text-sm"
+                    />
+                    <Button
+                      onClick={() => {
+                        if (customPromptDraft.trim()) {
+                          setSelectedNewPromptQuestion(customPromptDraft.trim());
+                          setCustomPromptDraft("");
+                        }
+                      }}
+                      disabled={!customPromptDraft.trim()}
+                      className="h-11 px-4 rounded-xl bg-gradient-accent border-0 shrink-0"
+                    >
+                      Use
+                    </Button>
+                  </div>
                   {AUDIO_PROMPT_QUESTIONS.filter((q) => !prompts.some((p) => p.prompt_question === q)).map((q) => (
                     <button
                       key={q}

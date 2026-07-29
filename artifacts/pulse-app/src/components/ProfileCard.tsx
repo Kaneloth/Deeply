@@ -133,7 +133,7 @@ export function ProfileCard({ profile, active = true }: { profile: ProfileCardDa
                       <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wide">
                         <Mic size={10} /> Audio prompt
                       </div>
-                      <p className="text-sm font-medium truncate">{prompt.prompt_question}</p>
+                      <p className="text-sm font-medium line-clamp-2 leading-snug">{prompt.prompt_question}</p>
                     </div>
                   </button>
                 ))}

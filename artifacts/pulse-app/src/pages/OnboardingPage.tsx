@@ -107,6 +107,7 @@ export default function OnboardingPage() {
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   const [selectedPromptQuestion, setSelectedPromptQuestion] = useState<string | null>(null);
+  const [customPromptDraft, setCustomPromptDraft] = useState("");
   const [isSavingAudio, setIsSavingAudio] = useState(false);
   const [audioSaved, setAudioSaved] = useState(false);
   const [savedAudioUrl, setSavedAudioUrl] = useState<string | null>(null);
@@ -487,6 +488,26 @@ export default function OnboardingPage() {
 
             {!selectedPromptQuestion ? (
               <div className="space-y-2">
+                <div className="flex gap-2 mb-1">
+                  <Input
+                    value={customPromptDraft}
+                    onChange={(e) => setCustomPromptDraft(e.target.value)}
+                    placeholder="Or write your own question..."
+                    className="bg-card border-card-border h-11 rounded-xl text-sm"
+                  />
+                  <Button
+                    onClick={() => {
+                      if (customPromptDraft.trim()) {
+                        setSelectedPromptQuestion(customPromptDraft.trim());
+                        setCustomPromptDraft("");
+                      }
+                    }}
+                    disabled={!customPromptDraft.trim()}
+                    className="h-11 px-4 rounded-xl bg-gradient-accent border-0 shrink-0"
+                  >
+                    Use
+                  </Button>
+                </div>
                 {AUDIO_PROMPT_QUESTIONS.map((q) => (
                   <button
                     key={q}
