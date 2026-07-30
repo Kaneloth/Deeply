@@ -30,23 +30,31 @@ export function MediaPicker({
   const [query, setQuery] = useState("");
   const [gifs, setGifs] = useState<GifResult[]>([]);
   const [isLoadingGifs, setIsLoadingGifs] = useState(false);
+  const [gifError, setGifError] = useState<string | null>(null);
 
   const fetchGifs = useCallback(async (searchTerm: string) => {
     setIsLoadingGifs(true);
+    setGifError(null);
     try {
       const endpoint = searchTerm.trim()
         ? `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(searchTerm)}&limit=24&rating=pg-13`
         : `https://api.giphy.com/v1/gifs/trending?api_key=${GIPHY_API_KEY}&limit=24&rating=pg-13`;
       const res = await fetch(endpoint);
       const body = await res.json();
+
+      if (!res.ok || body.meta?.status >= 400) {
+        throw new Error(body.meta?.msg || `GIPHY request failed (${res.status})`);
+      }
+
       const results: GifResult[] = (body.data ?? []).map((g: any) => ({
         id: g.id,
         url: g.images?.fixed_height?.url ?? g.images?.original?.url,
         previewUrl: g.images?.fixed_height_small?.url ?? g.images?.fixed_height?.url,
       }));
       setGifs(results);
-    } catch {
+    } catch (err) {
       setGifs([]);
+      setGifError(err instanceof Error ? err.message : "Couldn't load GIFs");
     } finally {
       setIsLoadingGifs(false);
     }
@@ -106,6 +114,15 @@ export function MediaPicker({
             {isLoadingGifs ? (
               <div className="flex items-center justify-center h-32">
                 <Loader2 size={20} className="animate-spin text-muted-foreground" />
+              </div>
+            ) : gifError ? (
+              <div className="flex flex-col items-center justify-center h-32 text-center px-4">
+                <p className="text-sm text-destructive font-medium">Couldn't load GIFs</p>
+                <p className="text-xs text-muted-foreground mt-1">{gifError}</p>
+              </div>
+            ) : gifs.length === 0 ? (
+              <div className="flex items-center justify-center h-32">
+                <p className="text-sm text-muted-foreground">No GIFs found</p>
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-2">

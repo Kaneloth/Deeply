@@ -1,4 +1,3 @@
-import { useGetMyProfile, useUpdateMyProfile } from "@workspace/api-client-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSparks } from "@/contexts/SparksContext";
 import { Button } from "@/components/ui/button";
@@ -75,11 +74,36 @@ function BoostCountdown({ until }: { until: string }) {
 }
 
 export default function ProfilePage() {
-  const { data: profile, isLoading } = useGetMyProfile();
-  const updateProfile = useUpdateMyProfile();
   const { token } = useAuth();
   const { refresh: refreshSparksBadge } = useSparks();
   const { toast } = useToast();
+  const [profile, setProfile] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const fetchProfile = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const res = await fetch("/api/profile/me", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to load profile");
+      setProfile(body);
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to load profile.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [token, toast]);
+
+  useEffect(() => {
+    fetchProfile();
+  }, [fetchProfile]);
 
   const [activeTab, setActiveTab] = useState<"profile" | "preferences">("profile");
 
@@ -712,35 +736,50 @@ export default function ProfilePage() {
     education !== (profile.education || "")
   );
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!profile) return;
-    
-    updateProfile.mutate({
-      data: {
-        name: formData.name,
-        birthday: formData.birthday,
-        city: formData.city,
-        bio: formData.bio,
-        gender,
-        looking_for_gender: lookingForGender,
-        distance_km: distanceKm,
-        relationship_type: relationshipType,
-        dating_intentions: intentions,
-        personality_tags: interests,
-        num_kids: numKids,
-        family_plans: familyPlans,
-        smoking_status: smokingStatus,
-        drinking_status: drinkingStatus,
-        languages_spoken: languagesSpoken,
-        languages_other: languagesOther,
-        love_language: loveLanguage,
-        education,
-      }
-    }, {
-      onSuccess: () => {
-        toast({ title: "Profile updated", description: "Your changes have been saved." });
-      }
-    });
+    setIsSaving(true);
+    try {
+      const res = await fetch("/api/profile/me", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name: formData.name,
+          birthday: formData.birthday,
+          city: formData.city,
+          bio: formData.bio,
+          gender,
+          looking_for_gender: lookingForGender,
+          distance_km: distanceKm,
+          relationship_type: relationshipType,
+          dating_intentions: intentions,
+          personality_tags: interests,
+          num_kids: numKids,
+          family_plans: familyPlans,
+          smoking_status: smokingStatus,
+          drinking_status: drinkingStatus,
+          languages_spoken: languagesSpoken,
+          languages_other: languagesOther,
+          love_language: loveLanguage,
+          education,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to save profile");
+      setProfile(body);
+      toast({ title: "Profile updated", description: "Your changes have been saved." });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to save profile.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   if (isLoading) {
@@ -1211,9 +1250,9 @@ export default function ProfilePage() {
           <Button 
             className="w-full h-14 rounded-2xl bg-foreground text-background hover:bg-foreground/90 font-bold text-lg shadow-2xl"
             onClick={handleSave}
-            disabled={updateProfile.isPending}
+            disabled={isSaving}
           >
-            {updateProfile.isPending ? "Saving..." : "Save Changes"}
+            {isSaving ? "Saving..." : "Save Changes"}
           </Button>
         </div>
       )}
