@@ -1,7 +1,19 @@
 import { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { Flame, Search, Heart, MessageCircle, Zap } from "lucide-react";
+import { Compass, Search, Mail, Heart, HeartHandshake, Zap } from "lucide-react";
 import { useSparks } from "@/contexts/SparksContext";
+
+function InvitesIcon({ size }: { size: number }) {
+  return (
+    <div className="relative" style={{ width: size, height: size }}>
+      <Mail size={size} />
+      <Heart
+        size={size * 0.42}
+        className="fill-current absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
+      />
+    </div>
+  );
+}
 
 export function BottomNav() {
   const [location] = useLocation();
@@ -9,10 +21,10 @@ export function BottomNav() {
 
   return (
     <nav className="fixed bottom-0 w-full max-w-[430px] bg-background/80 backdrop-blur-xl border-t border-border z-50 px-4 py-4 flex items-center justify-between">
-      <NavItem href="/discover" icon={<Flame size={22} />} active={location === "/discover"} label="Discover" />
+      <NavItem href="/discover" icon={<Compass size={22} />} active={location === "/discover"} label="Discover" />
       <NavItem href="/search" icon={<Search size={22} />} active={location === "/search"} label="Search" />
-      <NavItem href="/invites" icon={<Heart size={22} />} active={location === "/invites"} label="Invites" />
-      <NavItem href="/matches" icon={<MessageCircle size={22} />} active={location.startsWith("/matches")} label="Matches" />
+      <NavItem href="/invites" icon={<InvitesIcon size={22} />} active={location === "/invites"} label="Invites" />
+      <NavItem href="/matches" icon={<HeartHandshake size={22} />} active={location.startsWith("/matches")} label="Matches" />
       <NavItem
         href="/sparks"
         icon={<Zap size={22} />}
