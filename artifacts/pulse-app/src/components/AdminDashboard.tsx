@@ -284,15 +284,21 @@ function UsersSection({ token, toast, isSuperAdmin }: { token: string | null; to
       if (search.trim()) params.set("search", search.trim());
       if (filter !== "all") params.set("filter", filter);
       const res = await fetch(`/api/admin/users?${params}`, { headers: { Authorization: `Bearer ${token}` } });
-      const body = await res.json();
-      if (res.ok) {
-        setUsers(body.users ?? []);
-        setTotal(body.total ?? 0);
-      }
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? `Failed to load users (${res.status})`);
+      setUsers(body.users ?? []);
+      setTotal(body.total ?? 0);
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to load users.",
+        variant: "destructive",
+      });
+      setUsers([]);
     } finally {
       setLoading(false);
     }
-  }, [token, page, search, filter]);
+  }, [token, page, search, filter, toast]);
 
   useEffect(() => {
     const t = setTimeout(fetchUsers, 300);

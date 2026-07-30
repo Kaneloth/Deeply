@@ -6,8 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/PageHeader";
 import { useToast } from "@/hooks/use-toast";
-import { useLocation } from "wouter";
-import { AdminDashboard } from "@/components/AdminDashboard";
+import { useLocation, Link } from "wouter";
 import { Shield } from "lucide-react";
 import {
   LogOut, Moon, Sun, Type, Lock, HelpCircle, LifeBuoy, Trash2,
@@ -57,7 +56,6 @@ export default function SettingsPage() {
 
   const [email, setEmail] = useState<string | null>(null);
   const [adminAccess, setAdminAccess] = useState<{ isAdmin: boolean; isSuperAdmin: boolean; scopes: string[] } | null>(null);
-  const [showAdminDashboard, setShowAdminDashboard] = useState(false);
 
   const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
@@ -518,8 +516,8 @@ export default function SettingsPage() {
 
         {/* Admin — only visible if the account has any admin access */}
         {adminAccess?.isAdmin && (
-          <button
-            onClick={() => setShowAdminDashboard(true)}
+          <Link
+            href="/admin"
             className="w-full flex items-center justify-between bg-card border border-primary/30 rounded-2xl p-4"
           >
             <div className="flex items-center gap-3">
@@ -532,7 +530,7 @@ export default function SettingsPage() {
               </div>
             </div>
             <ChevronRight size={16} className="text-primary" />
-          </button>
+          </Link>
         )}
 
         {/* About */}
@@ -612,10 +610,6 @@ export default function SettingsPage() {
           )}
         </div>
       </div>
-
-      {showAdminDashboard && adminAccess && (
-        <AdminDashboard access={adminAccess as any} onClose={() => setShowAdminDashboard(false)} />
-      )}
     </div>
   );
 }

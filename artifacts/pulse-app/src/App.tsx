@@ -6,7 +6,6 @@ import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { SparksProvider } from '@/contexts/SparksContext';
 import { AppShell } from '@/components/AppShell';
 import NotFound from '@/pages/not-found';
-
 import AuthPage from '@/pages/AuthPage';
 import OnboardingPage from '@/pages/OnboardingPage';
 import DiscoverPage from '@/pages/DiscoverPage';
@@ -18,9 +17,8 @@ import ChatPage from '@/pages/ChatPage';
 import SparksPage from '@/pages/SparksPage';
 import ProfilePage from '@/pages/ProfilePage';
 import SettingsPage from '@/pages/SettingsPage';
-
+import AdminPage from '@/pages/AdminPage';
 const queryClient = new QueryClient();
-
 function ProtectedRoute({ component: Component, ...rest }: any) {
   const { isAuthenticated } = useAuth();
   
@@ -30,7 +28,6 @@ function ProtectedRoute({ component: Component, ...rest }: any) {
   
   return <Component {...rest} />;
 }
-
 function PublicRoute({ component: Component, ...rest }: any) {
   const { isAuthenticated } = useAuth();
   
@@ -40,7 +37,6 @@ function PublicRoute({ component: Component, ...rest }: any) {
   
   return <Component {...rest} />;
 }
-
 function Router() {
   return (
     <AppShell>
@@ -59,6 +55,7 @@ function Router() {
         <Route path="/sparks" component={() => <ProtectedRoute component={SparksPage} />} />
         <Route path="/profile" component={() => <ProtectedRoute component={ProfilePage} />} />
         <Route path="/settings" component={() => <ProtectedRoute component={SettingsPage} />} />
+        <Route path="/admin" component={() => <ProtectedRoute component={AdminPage} />} />
         
         {/* Catch all */}
         <Route component={NotFound} />
@@ -66,7 +63,6 @@ function Router() {
     </AppShell>
   );
 }
-
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -83,5 +79,4 @@ function App() {
     </QueryClientProvider>
   );
 }
-
 export default App;
