@@ -9,7 +9,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import {
   LogOut, Moon, Sun, Type, Lock, HelpCircle, LifeBuoy, Trash2,
-  ChevronRight, AlertTriangle, Eye, EyeOff, Mail,
+  ChevronRight, AlertTriangle, Eye, EyeOff, Mail, EyeOff as IncognitoIcon,
+  ShieldOff, X as XIcon,
 } from "lucide-react";
 
 const TEXT_SIZE_OPTIONS: { label: string; value: TextSize }[] = [
@@ -72,11 +73,106 @@ export default function SettingsPage() {
   const [deletePassword, setDeletePassword] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
 
+  const [isIncognito, setIsIncognito] = useState(false);
+  const [isTogglingIncognito, setIsTogglingIncognito] = useState(false);
+
+  interface BlockedEntry {
+    id: string;
+    blocked_user: { id: string; name: string; photo_url: string | null } | null;
+    created_at: string;
+  }
+  const [showBlockedList, setShowBlockedList] = useState(false);
+  const [blockedUsers, setBlockedUsers] = useState<BlockedEntry[]>([]);
+  const [isLoadingBlocked, setIsLoadingBlocked] = useState(false);
+  const [blockActionId, setBlockActionId] = useState<string | null>(null);
+
+  const fetchBlockedUsers = async () => {
+    setIsLoadingBlocked(true);
+    try {
+      const res = await fetch("/api/blocks", { headers: { Authorization: `Bearer ${token}` } });
+      const body = await res.json();
+      if (res.ok) setBlockedUsers(body ?? []);
+    } catch {
+      // Silent — non-critical.
+    } finally {
+      setIsLoadingBlocked(false);
+    }
+  };
+
+  const handleUnblock = async (blockedUserId: string) => {
+    setBlockActionId(blockedUserId);
+    try {
+      const res = await fetch(`/api/blocks/${blockedUserId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Failed to unblock");
+      setBlockedUsers((prev) => prev.filter((b) => b.blocked_user?.id !== blockedUserId));
+      toast({ title: "Unblocked" });
+    } catch {
+      toast({ title: "Error", description: "Failed to unblock.", variant: "destructive" });
+    } finally {
+      setBlockActionId(null);
+    }
+  };
+
+  const handleRemoveFromList = async (blockedUserId: string) => {
+    setBlockActionId(blockedUserId);
+    try {
+      const res = await fetch(`/api/blocks/${blockedUserId}/remove`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Failed to remove");
+      setBlockedUsers((prev) => prev.filter((b) => b.blocked_user?.id !== blockedUserId));
+    } catch {
+      toast({ title: "Error", description: "Failed to remove.", variant: "destructive" });
+    } finally {
+      setBlockActionId(null);
+    }
+  };
+
+  const handleToggleIncognito = async () => {
+    const next = !isIncognito;
+    setIsTogglingIncognito(true);
+    try {
+      const res = await fetch("/api/profile/me", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ is_incognito: next }),
+      });
+      if (!res.ok) throw new Error("Failed to update");
+      setIsIncognito(next);
+      toast({
+        title: next ? "Incognito mode on" : "Incognito mode off",
+        description: next ? "You're now hidden from Discover and Search." : "You're visible in Discover and Search again.",
+      });
+    } catch {
+      toast({ title: "Error", description: "Failed to update incognito mode.", variant: "destructive" });
+    } finally {
+      setIsTogglingIncognito(false);
+    }
+  };
+
   useEffect(() => {
     fetch("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } })
       .then((res) => (res.ok ? res.json() : null))
       .then((body) => setEmail(body?.email ?? null))
       .catch(() => {});
+  }, [token]);
+
+  useEffect(() => {
+    fetch("/api/profile/me", { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (body) setIsIncognito(!!body.is_incognito);
+      })
+      .catch(() => {});
+    fetchBlockedUsers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   const handleChangePassword = async () => {
@@ -271,6 +367,94 @@ export default function SettingsPage() {
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+
+        {/* Privacy & Safety */}
+        <div className="space-y-3">
+          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">Privacy & Safety</h3>
+
+          <button
+            onClick={handleToggleIncognito}
+            disabled={isTogglingIncognito}
+            className="w-full flex items-center justify-between bg-card border border-card-border rounded-2xl p-4 disabled:opacity-60"
+          >
+            <div className="flex items-center gap-3">
+              <IncognitoIcon size={18} className="text-muted-foreground" />
+              <div className="text-left">
+                <p className="text-sm font-medium">Incognito Mode</p>
+                <p className="text-xs text-muted-foreground">
+                  {isIncognito ? "Hidden from Discover & Search" : "Visible in Discover & Search"}
+                </p>
+              </div>
+            </div>
+            <div className={`h-6 w-10 rounded-full relative transition-colors ${isIncognito ? "bg-primary" : "bg-secondary"}`}>
+              <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${isIncognito ? "right-1" : "left-1"}`} />
+            </div>
+          </button>
+
+          <div className="bg-card border border-card-border rounded-2xl overflow-hidden">
+            <button
+              onClick={() => setShowBlockedList((v) => !v)}
+              className="w-full flex items-center justify-between p-4"
+            >
+              <div className="flex items-center gap-3">
+                <ShieldOff size={18} className="text-muted-foreground" />
+                <div className="text-left">
+                  <p className="text-sm font-medium">Blocked Users</p>
+                  <p className="text-xs text-muted-foreground">
+                    {blockedUsers.length > 0 ? `${blockedUsers.length} blocked` : "No one blocked"}
+                  </p>
+                </div>
+              </div>
+              <ChevronRight size={16} className={`text-muted-foreground transition-transform ${showBlockedList ? "rotate-90" : ""}`} />
+            </button>
+
+            {showBlockedList && (
+              <div className="border-t border-border p-3 space-y-2">
+                {isLoadingBlocked ? (
+                  <p className="text-xs text-muted-foreground text-center py-3">Loading...</p>
+                ) : blockedUsers.length === 0 ? (
+                  <p className="text-xs text-muted-foreground text-center py-3">You haven't blocked anyone.</p>
+                ) : (
+                  blockedUsers.map((entry) => {
+                    const user = entry.blocked_user;
+                    const actioning = blockActionId === user?.id;
+                    return (
+                      <div key={entry.id} className="flex items-center gap-3 bg-background border border-card-border rounded-xl p-3">
+                        <div className="w-9 h-9 rounded-full bg-muted overflow-hidden shrink-0">
+                          {user?.photo_url ? (
+                            <img src={user.photo_url} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center bg-primary/20 text-primary text-xs font-bold">
+                              {user?.name?.[0] ?? "?"}
+                            </div>
+                          )}
+                        </div>
+                        <p className="text-sm font-medium flex-1 min-w-0 truncate">{user?.name ?? "Unknown"}</p>
+                        <div className="flex gap-1.5 shrink-0">
+                          <button
+                            onClick={() => user && handleUnblock(user.id)}
+                            disabled={actioning}
+                            className="px-2.5 py-1.5 rounded-lg bg-secondary text-xs font-medium text-foreground disabled:opacity-50"
+                          >
+                            Unblock
+                          </button>
+                          <button
+                            onClick={() => user && handleRemoveFromList(user.id)}
+                            disabled={actioning}
+                            title="Keeps them blocked, just removes this entry"
+                            className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center text-muted-foreground disabled:opacity-50"
+                          >
+                            <XIcon size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
           </div>
         </div>
 

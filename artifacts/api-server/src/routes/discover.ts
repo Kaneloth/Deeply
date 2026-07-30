@@ -28,6 +28,7 @@ router.get("/discover/queue", requireAuth, async (req, res): Promise<void> => {
     .from("profiles")
     .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, boosted_until, num_kids, family_plans, smoking_status, drinking_status")
     .not("id", "in", `(${excludedIds.join(",")})`)
+    .eq("is_incognito", false)
     .limit(60);
 
   if (error) {
@@ -300,7 +301,8 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
   let query = supabase
     .from("profiles")
     .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, num_kids, family_plans, smoking_status, drinking_status")
-    .not("id", "in", `(${excludedIds.join(",")})`);
+    .not("id", "in", `(${excludedIds.join(",")})`)
+    .eq("is_incognito", false);
 
   if (name) {
     query = query.ilike("name", `%${name}%`);
@@ -357,12 +359,14 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
       .from("profiles")
       .select("photo_url")
       .not("id", "in", excludeClause)
+      .eq("is_incognito", false)
       .gte("created_at", sevenDaysAgo)
       .limit(3);
     const { count } = await supabase
       .from("profiles")
       .select("id", { count: "exact", head: true })
       .not("id", "in", excludeClause)
+      .eq("is_incognito", false)
       .gte("created_at", sevenDaysAgo);
     categories.push({
       key: "new_here",
@@ -378,12 +382,14 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
       .from("profiles")
       .select("photo_url")
       .not("id", "in", excludeClause)
+      .eq("is_incognito", false)
       .eq("is_verified", true)
       .limit(3);
     const { count } = await supabase
       .from("profiles")
       .select("id", { count: "exact", head: true })
       .not("id", "in", excludeClause)
+      .eq("is_incognito", false)
       .eq("is_verified", true);
     categories.push({
       key: "verified",
@@ -405,6 +411,7 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
         .from("profiles")
         .select("photo_url")
         .in("id", audioUserIds.slice(0, 50))
+        .eq("is_incognito", false)
         .limit(3);
       preview = (data ?? []).map((p) => p.photo_url).filter(Boolean) as string[];
     }
@@ -417,12 +424,14 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
       .from("profiles")
       .select("photo_url")
       .not("id", "in", excludeClause)
+      .eq("is_incognito", false)
       .ilike("city", viewerProfile.city)
       .limit(3);
     const { count } = await supabase
       .from("profiles")
       .select("id", { count: "exact", head: true })
       .not("id", "in", excludeClause)
+      .eq("is_incognito", false)
       .ilike("city", viewerProfile.city);
     categories.push({
       key: "near_you",
@@ -438,12 +447,14 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
       .from("profiles")
       .select("photo_url")
       .not("id", "in", excludeClause)
+      .eq("is_incognito", false)
       .overlaps("personality_tags", viewerProfile.personality_tags)
       .limit(3);
     const { count } = await supabase
       .from("profiles")
       .select("id", { count: "exact", head: true })
       .not("id", "in", excludeClause)
+      .eq("is_incognito", false)
       .overlaps("personality_tags", viewerProfile.personality_tags);
     categories.push({
       key: "matches_vibe",
@@ -469,7 +480,7 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
     const topIds = [...countMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([id]) => id);
     let preview: string[] = [];
     if (topIds.length > 0) {
-      const { data } = await supabase.from("profiles").select("id, photo_url").in("id", topIds);
+      const { data } = await supabase.from("profiles").select("id, photo_url").in("id", topIds).eq("is_incognito", false);
       preview = topIds
         .map((id) => data?.find((p) => p.id === id)?.photo_url)
         .filter(Boolean) as string[];
@@ -506,6 +517,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
         .from("profiles")
         .select(SELECT_FIELDS)
         .not("id", "in", excludeClause)
+        .eq("is_incognito", false)
         .gte("created_at", sevenDaysAgo)
         .order("created_at", { ascending: false })
         .limit(30);
@@ -517,6 +529,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
         .from("profiles")
         .select(SELECT_FIELDS)
         .not("id", "in", excludeClause)
+        .eq("is_incognito", false)
         .eq("is_verified", true)
         .limit(30);
       results = data ?? [];
@@ -528,7 +541,11 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
         (id) => !excludedIds.includes(id),
       );
       if (audioUserIds.length > 0) {
-        const { data } = await supabase.from("profiles").select(SELECT_FIELDS).in("id", audioUserIds.slice(0, 30));
+        const { data } = await supabase
+          .from("profiles")
+          .select(SELECT_FIELDS)
+          .in("id", audioUserIds.slice(0, 30))
+          .eq("is_incognito", false);
         results = data ?? [];
       }
       break;
@@ -539,6 +556,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
           .from("profiles")
           .select(SELECT_FIELDS)
           .not("id", "in", excludeClause)
+          .eq("is_incognito", false)
           .ilike("city", viewerProfile.city)
           .limit(30);
         results = data ?? [];
@@ -551,6 +569,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
           .from("profiles")
           .select(SELECT_FIELDS)
           .not("id", "in", excludeClause)
+          .eq("is_incognito", false)
           .overlaps("personality_tags", viewerProfile.personality_tags)
           .limit(30);
         results = data ?? [];
@@ -571,7 +590,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
       }
       const topIds = [...countMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([id]) => id);
       if (topIds.length > 0) {
-        const { data } = await supabase.from("profiles").select(SELECT_FIELDS).in("id", topIds);
+        const { data } = await supabase.from("profiles").select(SELECT_FIELDS).in("id", topIds).eq("is_incognito", false);
         // Preserve popularity order
         results = topIds.map((id) => (data ?? []).find((p) => p.id === id)).filter(Boolean);
       }

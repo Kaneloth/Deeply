@@ -65,6 +65,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     num_kids, smoking_status, drinking_status, languages_spoken,
     languages_other, love_language, education, family_plans,
     notify_messages, notify_matches, notify_likes, notify_sparks,
+    is_incognito,
   } = req.body as {
     name?: string;
     age?: number;
@@ -91,6 +92,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     notify_matches?: boolean;
     notify_likes?: boolean;
     notify_sparks?: boolean;
+    is_incognito?: boolean;
   };
   const updates: Record<string, unknown> = {};
   if (name !== undefined) updates.name = name;
@@ -122,6 +124,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   if (notify_matches !== undefined) updates.notify_matches = notify_matches;
   if (notify_likes !== undefined) updates.notify_likes = notify_likes;
   if (notify_sparks !== undefined) updates.notify_sparks = notify_sparks;
+  if (is_incognito !== undefined) updates.is_incognito = is_incognito;
   const { data: profile, error } = await supabase
     .from("profiles")
     .update(updates)
@@ -520,5 +523,223 @@ router.delete("/profile/me/photos/:photoId", requireAuth, async (req, res): Prom
 
   res.sendStatus(204);
 });
+
+// ============================================================
+// Blocking & Reporting
+// ============================================================
+
+const ALLOWED_SCREENSHOT_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const MAX_SCREENSHOT_SIZE = 10 * 1024 * 1024; // 10MB
+
+const screenshotUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_SCREENSHOT_SIZE },
+  fileFilter: (_req, file, cb) => {
+    if (!ALLOWED_SCREENSHOT_MIME_TYPES.includes(file.mimetype)) {
+      cb(new Error("Only JPEG, PNG, or WEBP screenshots are allowed"));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
+const SCREENSHOT_EXT_BY_MIME: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+};
+
+/** POST /api/blocks — block another user. Upserts so re-blocking someone
+ *  (e.g. after a "Remove" that keeps the block in effect) is a no-op. */
+router.post("/blocks", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const { blockedUserId } = req.body as { blockedUserId?: string };
+
+  if (!blockedUserId) {
+    res.status(400).json({ error: "blockedUserId is required" });
+    return;
+  }
+  if (blockedUserId === userId) {
+    res.status(400).json({ error: "Cannot block yourself" });
+    return;
+  }
+
+  const { error } = await supabase
+    .from("blocks")
+    .upsert(
+      { blocker_id: userId, blocked_id: blockedUserId, is_hidden: false },
+      { onConflict: "blocker_id,blocked_id" },
+    );
+
+  if (error) {
+    res.status(500).json({ error: `Failed to block: ${error.message}` });
+    return;
+  }
+
+  res.status(201).json({ success: true });
+});
+
+/** GET /api/blocks — list currently blocked users (excluding ones
+ *  "Removed" from the list, which stay blocked but shouldn't clutter the
+ *  manageable list anymore). */
+router.get("/blocks", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+
+  const { data: blocks } = await supabase
+    .from("blocks")
+    .select("id, blocked_id, created_at")
+    .eq("blocker_id", userId)
+    .eq("is_hidden", false)
+    .order("created_at", { ascending: false });
+
+  if (!blocks || blocks.length === 0) {
+    res.json([]);
+    return;
+  }
+
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("id, name, photo_url")
+    .in("id", blocks.map((b) => b.blocked_id));
+
+  const profileById = new Map((profiles ?? []).map((p) => [p.id, p]));
+
+  const result = blocks.map((b) => ({
+    id: b.id,
+    blocked_user: profileById.get(b.blocked_id) ?? null,
+    created_at: b.created_at,
+  }));
+
+  res.json(result);
+});
+
+/** DELETE /api/blocks/:blockedUserId — Unblock. Fully lifts the block; the
+ *  other person can appear in Discover/Search again. */
+router.delete("/blocks/:blockedUserId", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const blockedUserId = Array.isArray(req.params.blockedUserId)
+    ? req.params.blockedUserId[0]
+    : req.params.blockedUserId;
+
+  const { error } = await supabase
+    .from("blocks")
+    .delete()
+    .eq("blocker_id", userId)
+    .eq("blocked_id", blockedUserId);
+
+  if (error) {
+    res.status(500).json({ error: `Failed to unblock: ${error.message}` });
+    return;
+  }
+
+  res.sendStatus(204);
+});
+
+/** POST /api/blocks/:blockedUserId/remove — Remove from the blocked list.
+ *  The block itself stays in effect (they remain hidden from each other
+ *  permanently) — this only hides the entry from the manageable list, for
+ *  when someone doesn't want to keep seeing a serious block in their
+ *  settings but also doesn't want to risk accidentally reversing it. */
+router.post("/blocks/:blockedUserId/remove", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const blockedUserId = Array.isArray(req.params.blockedUserId)
+    ? req.params.blockedUserId[0]
+    : req.params.blockedUserId;
+
+  const { error } = await supabase
+    .from("blocks")
+    .update({ is_hidden: true })
+    .eq("blocker_id", userId)
+    .eq("blocked_id", blockedUserId);
+
+  if (error) {
+    res.status(500).json({ error: `Failed to remove: ${error.message}` });
+    return;
+  }
+
+  res.sendStatus(204);
+});
+
+/** POST /api/reports — file a report against another user, optionally
+ *  with a screenshot as evidence. Does not itself block the reported
+ *  user — the client should call POST /blocks separately if the reporter
+ *  also wants to block them. */
+router.post(
+  "/reports",
+  requireAuth,
+  (req, res, next) => {
+    screenshotUpload.single("screenshot")(req, res, (err) => {
+      if (err) {
+        res.status(400).json({ error: err.message });
+        return;
+      }
+      next();
+    });
+  },
+  async (req, res): Promise<void> => {
+    const userId = req.user!.id;
+    const { reportedUserId, context, matchId, reason, details } = req.body as {
+      reportedUserId?: string;
+      context?: "chat" | "profile";
+      matchId?: string;
+      reason?: string;
+      details?: string;
+    };
+
+    if (!reportedUserId || !context || !reason) {
+      res.status(400).json({ error: "reportedUserId, context, and reason are required" });
+      return;
+    }
+    if (!["chat", "profile"].includes(context)) {
+      res.status(400).json({ error: "context must be 'chat' or 'profile'" });
+      return;
+    }
+    if (reportedUserId === userId) {
+      res.status(400).json({ error: "Cannot report yourself" });
+      return;
+    }
+
+    let screenshotUrl: string | null = null;
+    if (req.file) {
+      const ext = SCREENSHOT_EXT_BY_MIME[req.file.mimetype] ?? "jpg";
+      const storagePath = `${userId}/${randomUUID()}.${ext}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("report-screenshots")
+        .upload(storagePath, req.file.buffer, { contentType: req.file.mimetype });
+
+      if (uploadError) {
+        res.status(500).json({ error: `Screenshot upload failed: ${uploadError.message}` });
+        return;
+      }
+
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from("report-screenshots").getPublicUrl(storagePath);
+      screenshotUrl = publicUrl;
+    }
+
+    const { data: report, error } = await supabase
+      .from("reports")
+      .insert({
+        reporter_id: userId,
+        reported_id: reportedUserId,
+        context,
+        match_id: matchId ?? null,
+        reason,
+        details: details ?? null,
+        screenshot_url: screenshotUrl,
+      })
+      .select("id")
+      .single();
+
+    if (error || !report) {
+      res.status(500).json({ error: "Failed to submit report" });
+      return;
+    }
+
+    res.status(201).json({ id: report.id, success: true });
+  },
+);
 
 export default router;

@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { requireAuth } from "../middlewares/auth";
 import { supabase } from "../lib/supabase";
 import { spendSparks } from "../lib/sparks-helper";
+import { isBlockedEitherWay } from "../lib/blocks-helper";
 
 const router: IRouter = Router();
 
@@ -190,6 +191,12 @@ router.post("/matches/:matchId/messages", requireAuth, async (req, res): Promise
 
   if (!match) {
     res.status(404).json({ error: "Match not found" });
+    return;
+  }
+
+  const otherUserId = match.user1_id === userId ? match.user2_id : match.user1_id;
+  if (await isBlockedEitherWay(userId, otherUserId)) {
+    res.status(403).json({ error: "You can't message this person" });
     return;
   }
 

@@ -1,9 +1,11 @@
 import { supabase } from "./supabase";
+import { getBlockedUserIds } from "./blocks-helper";
 
 /** IDs to exclude from any discovery/search candidate list: the viewer
- *  themselves, anyone they've already swiped on, and anyone they're
- *  already matched with. The matches table is checked directly rather
- *  than relying solely on swipe history, since some paths (e.g.
+ *  themselves, anyone they've already swiped on, anyone they're already
+ *  matched with, and anyone involved in a block relationship with them
+ *  (either direction). The matches table is checked directly rather than
+ *  relying solely on swipe history, since some paths (e.g.
  *  message-request) can create a match without necessarily recording a
  *  reciprocal swipe row for both users. */
 export async function getExcludedCandidateIds(userId: string): Promise<string[]> {
@@ -21,7 +23,14 @@ export async function getExcludedCandidateIds(userId: string): Promise<string[]>
     m.user1_id === userId ? m.user2_id : m.user1_id,
   );
 
-  return [userId, ...(alreadySwiped?.map((s) => s.target_id) ?? []), ...matchedPartnerIds];
+  const blockedIds = await getBlockedUserIds(userId);
+
+  return [
+    userId,
+    ...(alreadySwiped?.map((s) => s.target_id) ?? []),
+    ...matchedPartnerIds,
+    ...blockedIds,
+  ];
 }
 
 export interface PendingInviter {
@@ -59,6 +68,8 @@ export async function getPendingInviterIds(userId: string): Promise<PendingInvit
     (existingMatches ?? []).map((m) => (m.user1_id === userId ? m.user2_id : m.user1_id)),
   );
 
+  const blockedIds = new Set(await getBlockedUserIds(userId));
+
   const { data: myOwnSwipes } = await supabase
     .from("swipes")
     .select("target_id, created_at")
@@ -87,6 +98,7 @@ export async function getPendingInviterIds(userId: string): Promise<PendingInvit
   const pending: PendingInviter[] = [];
   for (const [inviterId, invite] of latestInvitePerInviter) {
     if (matchedIds.has(inviterId)) continue;
+    if (blockedIds.has(inviterId)) continue;
     const decidedAt = myLatestDecisionAt.get(inviterId);
     if (decidedAt !== undefined && decidedAt >= invite.createdAt) continue; // already acted on this one
     pending.push({ id: inviterId, direction: invite.direction });

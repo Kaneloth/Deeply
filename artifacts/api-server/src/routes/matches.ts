@@ -3,6 +3,7 @@ import { requireAuth } from "../middlewares/auth";
 import { supabase } from "../lib/supabase";
 import { attachPhotoGalleries } from "../lib/photo-galleries";
 import { attachAudioPrompts } from "../lib/audio-prompts-helper";
+import { getBlockedUserIds } from "../lib/blocks-helper";
 import { withComputedAge } from "../lib/age";
 
 const router: IRouter = Router();
@@ -37,13 +38,19 @@ async function formatMatch(m: Record<string, any>, viewerId: string) {
 router.get("/matches", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
-  const { data: matches } = await supabase
+  const { data: rawMatches } = await supabase
     .from("matches")
     .select(MATCH_SELECT)
     .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
     .order("created_at", { ascending: false });
 
-  const matchIds = (matches ?? []).map((m) => m.id);
+  const blockedIds = new Set(await getBlockedUserIds(userId));
+  const matches = (rawMatches ?? []).filter((m) => {
+    const partnerId = m.user1_id === userId ? m.user2_id : m.user1_id;
+    return !blockedIds.has(partnerId);
+  });
+
+  const matchIds = matches.map((m) => m.id);
   let unreadMatchIds = new Set<string>();
   if (matchIds.length > 0) {
     const { data: unreadRows } = await supabase
@@ -56,7 +63,7 @@ router.get("/matches", requireAuth, async (req, res): Promise<void> => {
   }
 
   const formatted = await Promise.all(
-    (matches ?? []).map((m) => formatMatch(m as Record<string, any>, userId)),
+    matches.map((m) => formatMatch(m as Record<string, any>, userId)),
   );
 
   res.json(formatted.map((m) => ({ ...m, has_unread: unreadMatchIds.has(m.id) })));
