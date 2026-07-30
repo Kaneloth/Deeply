@@ -4,7 +4,7 @@ import { randomUUID } from "crypto";
 import { requireAuth } from "../middlewares/auth";
 import { supabase } from "../lib/supabase";
 import { spendSparks } from "../lib/sparks-helper";
-import { withComputedAge } from "../lib/age";
+import { withComputedAge, withComputedAges } from "../lib/age";
 import { isSuperAdmin, requireSuperAdmin, requireAdminScope, type AdminScope } from "../lib/admin-auth";
 
 const router: IRouter = Router();
