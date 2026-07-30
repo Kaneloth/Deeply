@@ -11,16 +11,47 @@ import { Button } from "@/components/ui/button";
 import { useLocation } from "wouter";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
+import { Eye, EyeOff } from "lucide-react";
 
 const loginSchema = z.object({
   email: z.string().email({ message: "Invalid email address" }),
   password: z.string().min(6, { message: "Password must be at least 6 characters" }),
 });
 
-const signupSchema = loginSchema.extend({
-  name: z.string().min(2, { message: "Name is required" }),
-  age: z.coerce.number().min(18, { message: "Must be at least 18" }).max(120),
-});
+const signupSchema = loginSchema
+  .extend({
+    name: z.string().min(2, { message: "Name is required" }),
+    confirmPassword: z.string().min(6, { message: "Please confirm your password" }),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "Passwords do not match",
+    path: ["confirmPassword"],
+  });
+
+/** A password Input with a show/hide eye toggle, wired to work inside
+ *  react-hook-form's FormControl (same value/onChange contract as a
+ *  normal field). */
+function PasswordInput({ field }: { field: any }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className="relative">
+      <Input
+        placeholder="••••••••"
+        type={visible ? "text" : "password"}
+        {...field}
+        className="bg-card border-card-border pr-10"
+      />
+      <button
+        type="button"
+        onClick={() => setVisible((v) => !v)}
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+        tabIndex={-1}
+      >
+        {visible ? <EyeOff size={16} /> : <Eye size={16} />}
+      </button>
+    </div>
+  );
+}
 
 export default function AuthPage() {
   const [isLogin, setIsLogin] = useState(true);
@@ -40,7 +71,7 @@ export default function AuthPage() {
 
   const signupForm = useForm<z.infer<typeof signupSchema>>({
     resolver: zodResolver(signupSchema),
-    defaultValues: { email: "", password: "", name: "", age: undefined },
+    defaultValues: { email: "", password: "", confirmPassword: "", name: "" },
   });
 
   const onLoginSubmit = async (data: z.infer<typeof loginSchema>) => {
@@ -69,10 +100,13 @@ export default function AuthPage() {
   const onSignupSubmit = async (data: z.infer<typeof signupSchema>) => {
     setIsLoading(true);
     try {
+      // confirmPassword only exists for client-side validation — the
+      // backend just needs email, password, and name.
+      const { confirmPassword, ...payload } = data;
       const res = await fetch("/api/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify(payload),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Signup failed");
@@ -193,7 +227,7 @@ export default function AuthPage() {
       
       <div className="w-full z-10 flex flex-col items-center mt-[-10vh] mb-12">
         <HeartbeatVisual />
-        <h1 className="text-5xl font-['Syne'] font-extrabold text-transparent bg-clip-text bg-gradient-accent mt-4 tracking-tighter">
+        <h1 className="text-5xl font-['Syne'] font-extrabold text-primary mt-4 tracking-tighter">
           DEEPLY
         </h1>
         <p className="text-muted-foreground text-sm mt-2 text-center max-w-[280px]">
@@ -233,7 +267,7 @@ export default function AuthPage() {
                       <FormItem>
                         <FormLabel>Password</FormLabel>
                         <FormControl>
-                          <Input placeholder="••••••••" type="password" {...field} className="bg-card border-card-border" />
+                          <PasswordInput field={field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -270,19 +304,6 @@ export default function AuthPage() {
                   />
                   <FormField
                     control={signupForm.control}
-                    name="age"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Age</FormLabel>
-                        <FormControl>
-                          <Input placeholder="24" type="number" {...field} className="bg-card border-card-border" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={signupForm.control}
                     name="email"
                     render={({ field }) => (
                       <FormItem>
@@ -301,7 +322,20 @@ export default function AuthPage() {
                       <FormItem>
                         <FormLabel>Password</FormLabel>
                         <FormControl>
-                          <Input placeholder="••••••••" type="password" {...field} className="bg-card border-card-border" />
+                          <PasswordInput field={field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={signupForm.control}
+                    name="confirmPassword"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Confirm Password</FormLabel>
+                        <FormControl>
+                          <PasswordInput field={field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
