@@ -4,8 +4,9 @@ import { useParams, useLocation, Link } from "wouter";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { ProfileCard, type ProfileCardData } from "@/components/ProfileCard";
-import { ChevronLeft, MessageCircle, UserX } from "lucide-react";
+import { ChevronLeft, MessageCircle, UserX, MoreVertical, Flag } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { ReportBlockModal } from "@/components/ReportBlockModal";
 
 interface Match {
   id: string;
@@ -24,6 +25,9 @@ export default function MatchDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [showUnmatchConfirm, setShowUnmatchConfirm] = useState(false);
   const [isUnmatching, setIsUnmatching] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [isBlocking, setIsBlocking] = useState(false);
 
   const fetchMatch = useCallback(async () => {
     if (!matchId) return;
@@ -85,6 +89,35 @@ export default function MatchDetailPage() {
     }
   };
 
+  const handleBlock = async () => {
+    if (!profile?.id || isBlocking) return;
+    setIsBlocking(true);
+    try {
+      const res = await fetch("/api/blocks", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ blockedUserId: profile.id }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to block");
+      }
+      toast({ title: `${profile.name} has been blocked` });
+      setLocation("/matches");
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to block user.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsBlocking(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="p-4 pt-10 space-y-6">
@@ -110,7 +143,52 @@ export default function MatchDetailPage() {
         >
           <ChevronLeft size={16} />
         </Link>
+
+        <button
+          onClick={() => setShowProfileMenu((v) => !v)}
+          className="absolute top-3 right-3 z-20 w-8 h-8 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center text-white border border-white/10"
+        >
+          <MoreVertical size={16} />
+        </button>
+
+        {showProfileMenu && (
+          <>
+            <div className="fixed inset-0 z-20" onClick={() => setShowProfileMenu(false)} />
+            <div className="absolute top-12 right-3 z-30 bg-card border border-card-border rounded-xl shadow-lg overflow-hidden min-w-[170px]">
+              <button
+                onClick={() => {
+                  setShowProfileMenu(false);
+                  handleBlock();
+                }}
+                disabled={isBlocking}
+                className="flex items-center gap-2.5 w-full px-4 py-3 text-sm text-foreground hover:bg-secondary transition-colors disabled:opacity-50"
+              >
+                <UserX size={15} className="text-muted-foreground" /> Block user
+              </button>
+              <button
+                onClick={() => {
+                  setShowProfileMenu(false);
+                  setShowReportModal(true);
+                }}
+                className="flex items-center gap-2.5 w-full px-4 py-3 text-sm text-destructive hover:bg-secondary transition-colors"
+              >
+                <Flag size={15} /> Report and block
+              </button>
+            </div>
+          </>
+        )}
       </div>
+
+      {showReportModal && profile && (
+        <ReportBlockModal
+          targetId={profile.id}
+          targetName={profile.name}
+          context="profile"
+          matchId={matchId}
+          onClose={() => setShowReportModal(false)}
+          onSuccess={() => setLocation("/matches")}
+        />
+      )}
 
       <div className="flex items-center justify-center gap-3 mt-3">
         <button

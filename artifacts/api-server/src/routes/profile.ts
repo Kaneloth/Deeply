@@ -661,14 +661,14 @@ router.post("/blocks/:blockedUserId/remove", requireAuth, async (req, res): Prom
 });
 
 /** POST /api/reports — file a report against another user, optionally
- *  with a screenshot as evidence. Does not itself block the reported
- *  user — the client should call POST /blocks separately if the reporter
- *  also wants to block them. */
+ *  with up to 5 screenshots as evidence. Does not itself block the
+ *  reported user — the client should call POST /blocks separately if the
+ *  reporter also wants to block them. */
 router.post(
   "/reports",
   requireAuth,
   (req, res, next) => {
-    screenshotUpload.single("screenshot")(req, res, (err) => {
+    screenshotUpload.array("screenshots", 5)(req, res, (err) => {
       if (err) {
         res.status(400).json({ error: err.message });
         return;
@@ -699,14 +699,15 @@ router.post(
       return;
     }
 
-    let screenshotUrl: string | null = null;
-    if (req.file) {
-      const ext = SCREENSHOT_EXT_BY_MIME[req.file.mimetype] ?? "jpg";
+    const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+    const screenshotUrls: string[] = [];
+    for (const file of files) {
+      const ext = SCREENSHOT_EXT_BY_MIME[file.mimetype] ?? "jpg";
       const storagePath = `${userId}/${randomUUID()}.${ext}`;
 
       const { error: uploadError } = await supabase.storage
         .from("report-screenshots")
-        .upload(storagePath, req.file.buffer, { contentType: req.file.mimetype });
+        .upload(storagePath, file.buffer, { contentType: file.mimetype });
 
       if (uploadError) {
         res.status(500).json({ error: `Screenshot upload failed: ${uploadError.message}` });
@@ -716,7 +717,7 @@ router.post(
       const {
         data: { publicUrl },
       } = supabase.storage.from("report-screenshots").getPublicUrl(storagePath);
-      screenshotUrl = publicUrl;
+      screenshotUrls.push(publicUrl);
     }
 
     const { data: report, error } = await supabase
@@ -728,7 +729,7 @@ router.post(
         match_id: matchId ?? null,
         reason,
         details: details ?? null,
-        screenshot_url: screenshotUrl,
+        screenshot_urls: screenshotUrls,
       })
       .select("id")
       .single();

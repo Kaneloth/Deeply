@@ -1,13 +1,14 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useParams, Link } from "wouter";
+import { useParams, Link, useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSparks } from "@/contexts/SparksContext";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, Send, Undo2, Eye, CheckCheck, Smile, ImagePlus, X } from "lucide-react";
+import { ChevronLeft, Send, Undo2, Eye, CheckCheck, Smile, ImagePlus, X, MoreVertical, UserX, Flag } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { EmojiPicker } from "@/components/EmojiPicker";
+import { ReportBlockModal } from "@/components/ReportBlockModal";
 import { MediaPicker } from "@/components/MediaPicker";
 
 interface MatchedUser {
@@ -50,6 +51,7 @@ export default function ChatPage() {
   const { token } = useAuth();
   const { refresh: refreshSparksBadge } = useSparks();
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
 
   const [match, setMatch] = useState<Match | null>(null);
   const [matchLoading, setMatchLoading] = useState(true);
@@ -59,6 +61,9 @@ export default function ChatPage() {
   const [showMediaPicker, setShowMediaPicker] = useState(false);
   const [reactingToMessageId, setReactingToMessageId] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [showHeaderMenu, setShowHeaderMenu] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [isBlocking, setIsBlocking] = useState(false);
   const [receiptsUnlocked, setReceiptsUnlocked] = useState(false);
   const [isUnlockingReceipts, setIsUnlockingReceipts] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -282,6 +287,35 @@ export default function ChatPage() {
     }
   };
 
+  const handleBlock = async () => {
+    if (!match?.matched_user?.id || isBlocking) return;
+    setIsBlocking(true);
+    try {
+      const res = await fetch("/api/blocks", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ blockedUserId: match.matched_user.id }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to block");
+      }
+      toast({ title: `${match.matched_user.name} has been blocked` });
+      setLocation("/matches");
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to block user.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsBlocking(false);
+    }
+  };
+
   const handleUnsend = async (messageId: string) => {
     try {
       const res = await fetch(`/api/messages/${messageId}/unsend`, {
@@ -366,19 +400,66 @@ export default function ChatPage() {
             </div>
           </div>
 
-          {!receiptsUnlocked && (
+          <div className="flex items-center gap-2 shrink-0 relative">
+            {!receiptsUnlocked && (
+              <button
+                onClick={handleUnlockReceipts}
+                disabled={isUnlockingReceipts}
+                title="Unlock read receipts"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-muted-foreground hover:text-foreground transition-colors text-xs font-medium shrink-0 disabled:opacity-50"
+              >
+                <Eye size={13} />
+                <span>{isUnlockingReceipts ? "..." : "Receipts"}</span>
+              </button>
+            )}
+
             <button
-              onClick={handleUnlockReceipts}
-              disabled={isUnlockingReceipts}
-              title="Unlock read receipts"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-muted-foreground hover:text-foreground transition-colors text-xs font-medium shrink-0 disabled:opacity-50"
+              onClick={() => setShowHeaderMenu((v) => !v)}
+              className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center text-foreground shrink-0"
             >
-              <Eye size={13} />
-              <span>{isUnlockingReceipts ? "..." : "Receipts"}</span>
+              <MoreVertical size={16} />
             </button>
-          )}
+
+            {showHeaderMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowHeaderMenu(false)} />
+                <div className="absolute right-0 top-11 z-50 bg-card border border-card-border rounded-xl shadow-lg overflow-hidden min-w-[170px]">
+                  <button
+                    onClick={() => {
+                      setShowHeaderMenu(false);
+                      handleBlock();
+                    }}
+                    disabled={isBlocking}
+                    className="flex items-center gap-2.5 w-full px-4 py-3 text-sm text-foreground hover:bg-secondary transition-colors disabled:opacity-50"
+                  >
+                    <UserX size={15} className="text-muted-foreground" /> Block user
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowHeaderMenu(false);
+                      setShowReportModal(true);
+                    }}
+                    className="flex items-center gap-2.5 w-full px-4 py-3 text-sm text-destructive hover:bg-secondary transition-colors"
+                  >
+                    <Flag size={15} /> Report and block
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </header>
+
+      {showReportModal && match?.matched_user && (
+        <ReportBlockModal
+          targetId={match.matched_user.id}
+          targetName={match.matched_user.name}
+          context="chat"
+          matchId={matchId}
+          onClose={() => setShowReportModal(false)}
+          onSuccess={() => setLocation("/matches")}
+        />
+      )}
 
       {/* Messages Area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4 scroll-smooth min-h-0">
