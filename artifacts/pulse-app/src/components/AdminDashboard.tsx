@@ -670,11 +670,23 @@ function SparksSection({ token, toast }: { token: string | null; toast: any }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    setLoading(true);
     fetch("/api/admin/sparks/transactions", { headers: { Authorization: `Bearer ${token}` } })
-      .then((res) => (res.ok ? res.json() : []))
-      .then((body) => setTransactions(body ?? []))
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error ?? `Failed to load transactions (${res.status})`);
+        setTransactions(body ?? []);
+      })
+      .catch((err) => {
+        toast({
+          title: "Error",
+          description: err instanceof Error ? err.message : "Failed to load transactions.",
+          variant: "destructive",
+        });
+        setTransactions([]);
+      })
       .finally(() => setLoading(false));
-  }, [token]);
+  }, [token, toast]);
 
   if (loading) return <CenteredLoader />;
   if (transactions.length === 0) return <EmptyNote text="No transactions yet." />;

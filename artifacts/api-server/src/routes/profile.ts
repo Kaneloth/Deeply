@@ -964,7 +964,7 @@ router.get("/admin/users", requireAuth, requireAdminScope("manage_users"), async
   const { data, count, error } = await query.range(from, from + PAGE_SIZE - 1);
 
   if (error) {
-    res.status(500).json({ error: "Failed to load users" });
+    res.status(500).json({ error: `Failed to load users: ${error.message}` });
     return;
   }
 
@@ -1045,7 +1045,11 @@ router.get("/admin/sparks/transactions", requireAuth, requireAdminScope("manage_
   const { userId } = req.query as { userId?: string };
   let query = supabase.from("sparks_transactions").select("*").order("created_at", { ascending: false }).limit(200);
   if (userId) query = query.eq("user_id", userId);
-  const { data } = await query;
+  const { data, error } = await query;
+  if (error) {
+    res.status(500).json({ error: `Failed to load transactions: ${error.message}` });
+    return;
+  }
   res.json(data ?? []);
 });
 
