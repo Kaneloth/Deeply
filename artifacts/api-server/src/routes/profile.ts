@@ -5,6 +5,7 @@ import { requireAuth } from "../middlewares/auth";
 import { supabase } from "../lib/supabase";
 import { spendSparks } from "../lib/sparks-helper";
 import { withComputedAge } from "../lib/age";
+import { isSuperAdmin, requireSuperAdmin, type AdminScope } from "../lib/admin-auth";
 
 const router: IRouter = Router();
 
@@ -757,5 +758,83 @@ router.post(
     res.status(201).json({ id: report.id, success: true });
   },
 );
+
+// ============================================================
+// Admin — foundation (status check + grant/revoke). Reports/users/
+// Sparks management endpoints come once the dashboard UI is designed.
+// ============================================================
+
+/** GET /api/admin/me — tells the frontend whether the current user has
+ *  any admin access, and which scopes, so it knows whether to show admin
+ *  navigation at all and which sections to reveal. */
+router.get("/admin/me", requireAuth, async (req, res): Promise<void> => {
+  if (isSuperAdmin(req.user!.email)) {
+    res.json({ isAdmin: true, isSuperAdmin: true, scopes: ["manage_reports", "manage_users", "manage_sparks", "view_analytics"] });
+    return;
+  }
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_admin, admin_scopes")
+    .eq("id", req.user!.id)
+    .single();
+
+  res.json({
+    isAdmin: !!profile?.is_admin,
+    isSuperAdmin: false,
+    scopes: profile?.admin_scopes ?? [],
+  });
+});
+
+/** POST /api/admin/grant — super-admin only. Grants (or replaces) the set
+ *  of scopes for a user, identified by email. Passing an empty scopes
+ *  array effectively revokes admin access (is_admin becomes false). */
+router.post("/admin/grant", requireAuth, requireSuperAdmin, async (req, res): Promise<void> => {
+  const granterId = req.user!.id;
+  const { email, scopes } = req.body as { email?: string; scopes?: AdminScope[] };
+
+  if (!email) {
+    res.status(400).json({ error: "email is required" });
+    return;
+  }
+
+  const validScopes: AdminScope[] = ["manage_reports", "manage_users", "manage_sparks", "view_analytics"];
+  const requestedScopes = (scopes ?? []).filter((s): s is AdminScope => validScopes.includes(s as AdminScope));
+
+  const { data: authUser, error: lookupError } = await supabase.auth.admin.listUsers();
+  if (lookupError) {
+    res.status(500).json({ error: "Could not look up user" });
+    return;
+  }
+  const targetUser = authUser.users.find((u) => u.email?.toLowerCase() === email.toLowerCase());
+  if (!targetUser) {
+    res.status(404).json({ error: "No account found with that email" });
+    return;
+  }
+  if (isSuperAdmin(targetUser.email)) {
+    res.status(400).json({ error: "The super-admin's access can't be modified" });
+    return;
+  }
+
+  const { error: updateError } = await supabase
+    .from("profiles")
+    .update({ is_admin: requestedScopes.length > 0, admin_scopes: requestedScopes })
+    .eq("id", targetUser.id);
+
+  if (updateError) {
+    res.status(500).json({ error: `Failed to update admin access: ${updateError.message}` });
+    return;
+  }
+
+  if (requestedScopes.length > 0) {
+    await supabase.from("admin_grants").insert({
+      granted_to: targetUser.id,
+      granted_by: granterId,
+      scopes: requestedScopes,
+    });
+  }
+
+  res.json({ success: true, isAdmin: requestedScopes.length > 0, scopes: requestedScopes });
+});
 
 export default router;
