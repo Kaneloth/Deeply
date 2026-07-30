@@ -6,6 +6,7 @@ import { attachPhotoGalleries } from "../lib/photo-galleries";
 import { attachAudioPrompts } from "../lib/audio-prompts-helper";
 import { withComputedAge, withComputedAges } from "../lib/age";
 import { consumeFreeInviteOrCharge } from "../lib/invites-quota";
+import { getExcludedCandidateIds, getPendingInviterIds } from "../lib/discover-exclusions";
 
 const router: IRouter = Router();
 
@@ -19,12 +20,7 @@ const MESSAGE_REQUEST_COST = 30;
 router.get("/discover/queue", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
-  const { data: alreadySwiped } = await supabase
-    .from("swipes")
-    .select("target_id")
-    .eq("swiper_id", userId);
-
-  const excludedIds = [userId, ...(alreadySwiped?.map((s) => s.target_id) ?? [])];
+  const excludedIds = await getExcludedCandidateIds(userId);
 
   // Fetch a larger pool than we'll return, so we can prioritize active
   // boosts before trimming down to the final page size.
@@ -194,39 +190,8 @@ router.post("/discover/undo", requireAuth, async (req, res): Promise<void> => {
 router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
-  const { data: incomingLikes } = await supabase
-    .from("swipes")
-    .select("swiper_id, direction")
-    .eq("target_id", userId)
-    .in("direction", ["like", "super_like"]);
-
-  const inviterIds = incomingLikes?.map((l) => l.swiper_id) ?? [];
-
-  if (inviterIds.length === 0) {
-    res.json({ revealed: [], new_count: 0 });
-    return;
-  }
-
-  const { data: existingMatches } = await supabase
-    .from("matches")
-    .select("user1_id, user2_id")
-    .or(`user1_id.eq.${userId},user2_id.eq.${userId}`);
-
-  const matchedIds = new Set(
-    (existingMatches ?? []).map((m) => (m.user1_id === userId ? m.user2_id : m.user1_id)),
-  );
-
-  // Also exclude anyone the user has already swiped on themselves —
-  // accepting or declining an invite is a decision that shouldn't keep
-  // reappearing even if it didn't result in a match.
-  const { data: myOwnSwipes } = await supabase
-    .from("swipes")
-    .select("target_id")
-    .eq("swiper_id", userId);
-
-  const alreadyDecidedIds = new Set((myOwnSwipes ?? []).map((s) => s.target_id));
-
-  const pendingInviterIds = inviterIds.filter((id) => !matchedIds.has(id) && !alreadyDecidedIds.has(id));
+  const pendingInviters = await getPendingInviterIds(userId);
+  const pendingInviterIds = pendingInviters.map((p) => p.id);
 
   if (pendingInviterIds.length === 0) {
     res.json({ revealed: [], new_count: 0 });
@@ -254,7 +219,7 @@ router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => 
     .in("id", revealedPendingIds);
 
   const superLikerIds = new Set(
-    (incomingLikes ?? []).filter((l) => l.direction === "super_like").map((l) => l.swiper_id),
+    pendingInviters.filter((p) => p.direction === "super_like").map((p) => p.id),
   );
   const enriched = (revealedProfiles ?? []).map((p) => ({ ...p, super_liked: superLikerIds.has(p.id) }));
   const enrichedWithPhotos = await attachPhotoGalleries(enriched);
@@ -270,31 +235,8 @@ router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => 
 router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
-  const { data: incomingLikes } = await supabase
-    .from("swipes")
-    .select("swiper_id, direction")
-    .eq("target_id", userId)
-    .in("direction", ["like", "super_like"]);
-
-  const inviterIds = incomingLikes?.map((l) => l.swiper_id) ?? [];
-
-  const { data: existingMatches } = await supabase
-    .from("matches")
-    .select("user1_id, user2_id")
-    .or(`user1_id.eq.${userId},user2_id.eq.${userId}`);
-
-  const matchedIds = new Set(
-    (existingMatches ?? []).map((m) => (m.user1_id === userId ? m.user2_id : m.user1_id)),
-  );
-
-  const { data: myOwnSwipes } = await supabase
-    .from("swipes")
-    .select("target_id")
-    .eq("swiper_id", userId);
-
-  const alreadyDecidedIds = new Set((myOwnSwipes ?? []).map((s) => s.target_id));
-
-  const pendingInviterIds = inviterIds.filter((id) => !matchedIds.has(id) && !alreadyDecidedIds.has(id));
+  const pendingInviters = await getPendingInviterIds(userId);
+  const pendingInviterIds = pendingInviters.map((p) => p.id);
 
   if (pendingInviterIds.length === 0) {
     res.json({ invites: [], balance: null });
@@ -332,7 +274,7 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
     .in("id", pendingInviterIds);
 
   const superLikerIds = new Set(
-    (incomingLikes ?? []).filter((l) => l.direction === "super_like").map((l) => l.swiper_id),
+    pendingInviters.filter((p) => p.direction === "super_like").map((p) => p.id),
   );
 
   const enriched = (inviters ?? []).map((l) => ({ ...l, super_liked: superLikerIds.has(l.id) }));
@@ -353,12 +295,7 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
     tags?: string;
   };
 
-  const { data: alreadySwiped } = await supabase
-    .from("swipes")
-    .select("target_id")
-    .eq("swiper_id", userId);
-
-  const excludedIds = [userId, ...(alreadySwiped?.map((s) => s.target_id) ?? [])];
+  const excludedIds = await getExcludedCandidateIds(userId);
 
   let query = supabase
     .from("profiles")
@@ -401,12 +338,7 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
 router.get("/discover/categories", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
-  const { data: alreadySwiped } = await supabase
-    .from("swipes")
-    .select("target_id")
-    .eq("swiper_id", userId);
-
-  const excludedIds = [userId, ...(alreadySwiped?.map((s) => s.target_id) ?? [])];
+  const excludedIds = await getExcludedCandidateIds(userId);
   const excludeClause = `(${excludedIds.join(",")})`;
 
   const { data: viewerProfile } = await supabase
@@ -554,12 +486,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
   const userId = req.user!.id;
   const key = Array.isArray(req.params.key) ? req.params.key[0] : req.params.key;
 
-  const { data: alreadySwiped } = await supabase
-    .from("swipes")
-    .select("target_id")
-    .eq("swiper_id", userId);
-
-  const excludedIds = [userId, ...(alreadySwiped?.map((s) => s.target_id) ?? [])];
+  const excludedIds = await getExcludedCandidateIds(userId);
   const excludeClause = `(${excludedIds.join(",")})`;
   const SELECT_FIELDS = "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, num_kids, family_plans, smoking_status, drinking_status";
 
