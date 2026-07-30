@@ -5,7 +5,7 @@ import { requireAuth } from "../middlewares/auth";
 import { supabase } from "../lib/supabase";
 import { spendSparks } from "../lib/sparks-helper";
 import { withComputedAge } from "../lib/age";
-import { isSuperAdmin, requireSuperAdmin, type AdminScope } from "../lib/admin-auth";
+import { isSuperAdmin, requireSuperAdmin, requireAdminScope, type AdminScope } from "../lib/admin-auth";
 
 const router: IRouter = Router();
 
@@ -835,6 +835,328 @@ router.post("/admin/grant", requireAuth, requireSuperAdmin, async (req, res): Pr
   }
 
   res.json({ success: true, isAdmin: requestedScopes.length > 0, scopes: requestedScopes });
+});
+
+// ============================================================
+// Admin Dashboard — Overview, Reports, Users, Sparks, Announcements.
+// Announcements is gated under manage_users, since it wasn't one of the
+// four originally-named scopes and broadcasting to users is closely
+// related to user management.
+// ============================================================
+
+const MODERATION_REASONS_NOTE = "reason is required";
+
+/** GET /api/admin/overview */
+router.get("/admin/overview", requireAuth, requireAdminScope("view_analytics"), async (req, res): Promise<void> => {
+  const [
+    { count: totalUsers },
+    { count: bannedUsers },
+    { count: suspendedUsers },
+    { count: pendingReports },
+    { count: totalMatches },
+    { count: totalMessages },
+    { data: sparksRows },
+  ] = await Promise.all([
+    supabase.from("profiles").select("id", { count: "exact", head: true }),
+    supabase.from("profiles").select("id", { count: "exact", head: true }).eq("banned", true),
+    supabase.from("profiles").select("id", { count: "exact", head: true }).gt("suspended_until", new Date().toISOString()),
+    supabase.from("reports").select("id", { count: "exact", head: true }).eq("status", "pending"),
+    supabase.from("matches").select("id", { count: "exact", head: true }),
+    supabase.from("messages").select("id", { count: "exact", head: true }),
+    supabase.from("sparks_transactions").select("amount, type").limit(5000),
+  ]);
+
+  const purchased = (sparksRows ?? [])
+    .filter((r) => r.type === "purchase" || r.type === "monthly_grant")
+    .reduce((sum, r) => sum + Math.max(0, r.amount ?? 0), 0);
+  const consumed = (sparksRows ?? [])
+    .filter((r) => (r.amount ?? 0) < 0)
+    .reduce((sum, r) => sum + Math.abs(r.amount ?? 0), 0);
+
+  res.json({
+    totalUsers: totalUsers ?? 0,
+    bannedUsers: bannedUsers ?? 0,
+    suspendedUsers: suspendedUsers ?? 0,
+    pendingReports: pendingReports ?? 0,
+    totalMatches: totalMatches ?? 0,
+    totalMessages: totalMessages ?? 0,
+    sparksGranted: purchased,
+    sparksConsumed: consumed,
+  });
+});
+
+/** GET /api/admin/reports — pending reports with reporter/reported info */
+router.get("/admin/reports", requireAuth, requireAdminScope("manage_reports"), async (req, res): Promise<void> => {
+  const { data: rows } = await supabase
+    .from("reports")
+    .select("*")
+    .eq("status", "pending")
+    .order("created_at", { ascending: true });
+
+  const userIds = [...new Set((rows ?? []).flatMap((r) => [r.reporter_id, r.reported_id]))];
+  const { data: profiles } = userIds.length
+    ? await supabase.from("profiles").select("id, name, photo_url").in("id", userIds)
+    : { data: [] };
+  const profileMap = new Map((profiles ?? []).map((p) => [p.id, p]));
+
+  const merged = (rows ?? []).map((r) => ({
+    ...r,
+    reporter: profileMap.get(r.reporter_id) ?? null,
+    reported: profileMap.get(r.reported_id) ?? null,
+  }));
+
+  res.json(merged);
+});
+
+/** POST /api/admin/reports/:reportId/resolve */
+router.post("/admin/reports/:reportId/resolve", requireAuth, requireAdminScope("manage_reports"), async (req, res): Promise<void> => {
+  const reportId = Array.isArray(req.params.reportId) ? req.params.reportId[0] : req.params.reportId;
+  const { notes } = req.body as { notes?: string };
+  const { error } = await supabase
+    .from("reports")
+    .update({ status: "actioned", admin_notes: notes ?? null })
+    .eq("id", reportId);
+  if (error) {
+    res.status(500).json({ error: "Failed to resolve report" });
+    return;
+  }
+  res.sendStatus(204);
+});
+
+/** POST /api/admin/reports/:reportId/dismiss */
+router.post("/admin/reports/:reportId/dismiss", requireAuth, requireAdminScope("manage_reports"), async (req, res): Promise<void> => {
+  const reportId = Array.isArray(req.params.reportId) ? req.params.reportId[0] : req.params.reportId;
+  const { notes } = req.body as { notes?: string };
+  const { error } = await supabase
+    .from("reports")
+    .update({ status: "dismissed", admin_notes: notes ?? null })
+    .eq("id", reportId);
+  if (error) {
+    res.status(500).json({ error: "Failed to dismiss report" });
+    return;
+  }
+  res.sendStatus(204);
+});
+
+/** GET /api/admin/users — search + paginate */
+router.get("/admin/users", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const { search, filter, page = "1" } = req.query as { search?: string; filter?: string; page?: string };
+  const PAGE_SIZE = 25;
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+
+  let query = supabase
+    .from("profiles")
+    .select(
+      "id, name, age, birthday, city, photo_url, is_admin, admin_scopes, banned, ban_reason, suspended_until, suspension_reason, is_verified, free_sparks_balance, paid_sparks_balance, created_at",
+      { count: "exact" },
+    )
+    .order("created_at", { ascending: false });
+
+  if (search?.trim()) {
+    query = query.ilike("name", `%${search.trim()}%`);
+  }
+  if (filter === "banned") query = query.eq("banned", true);
+  else if (filter === "suspended") query = query.gt("suspended_until", new Date().toISOString());
+  else if (filter === "verified") query = query.eq("is_verified", true);
+  else if (filter === "admins") query = query.eq("is_admin", true);
+
+  const from = (pageNum - 1) * PAGE_SIZE;
+  const { data, count, error } = await query.range(from, from + PAGE_SIZE - 1);
+
+  if (error) {
+    res.status(500).json({ error: "Failed to load users" });
+    return;
+  }
+
+  res.json({ users: withComputedAges(data ?? []), total: count ?? 0, page: pageNum, pageSize: PAGE_SIZE });
+});
+
+/** POST /api/admin/users/:userId/ban */
+router.post("/admin/users/:userId/ban", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const userId = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
+  const { reason } = req.body as { reason?: string };
+  if (!reason) {
+    res.status(400).json({ error: MODERATION_REASONS_NOTE });
+    return;
+  }
+  await supabase.from("profiles").update({ banned: true, ban_reason: reason }).eq("id", userId);
+  res.sendStatus(204);
+});
+
+/** POST /api/admin/users/:userId/unban */
+router.post("/admin/users/:userId/unban", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const userId = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
+  await supabase.from("profiles").update({ banned: false, ban_reason: null }).eq("id", userId);
+  res.sendStatus(204);
+});
+
+/** POST /api/admin/users/:userId/suspend */
+router.post("/admin/users/:userId/suspend", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const userId = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
+  const { days, reason } = req.body as { days?: number; reason?: string };
+  if (!reason || !days || days < 1) {
+    res.status(400).json({ error: "days and reason are required" });
+    return;
+  }
+  const until = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+  await supabase.from("profiles").update({ suspended_until: until, suspension_reason: reason }).eq("id", userId);
+  res.json({ suspended_until: until });
+});
+
+/** POST /api/admin/users/:userId/unsuspend */
+router.post("/admin/users/:userId/unsuspend", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const userId = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
+  await supabase.from("profiles").update({ suspended_until: null, suspension_reason: null }).eq("id", userId);
+  res.sendStatus(204);
+});
+
+/** POST /api/admin/users/:userId/sparks — adjust balance (positive or
+ *  negative). Applied directly to free_sparks_balance and logged as an
+ *  admin_adjustment transaction, clamped so balance can't go negative. */
+router.post("/admin/users/:userId/sparks", requireAuth, requireAdminScope("manage_sparks"), async (req, res): Promise<void> => {
+  const userId = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
+  const { amount, description } = req.body as { amount?: number; description?: string };
+  if (!amount || amount === 0) {
+    res.status(400).json({ error: "A non-zero amount is required" });
+    return;
+  }
+
+  const { data: profile } = await supabase.from("profiles").select("free_sparks_balance").eq("id", userId).single();
+  if (!profile) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+
+  const newBalance = Math.max(0, (profile.free_sparks_balance ?? 0) + amount);
+  await supabase.from("profiles").update({ free_sparks_balance: newBalance }).eq("id", userId);
+  await supabase.from("sparks_transactions").insert({
+    user_id: userId,
+    amount,
+    type: "admin_adjustment",
+    description: description || (amount > 0 ? "Admin credit" : "Admin deduction"),
+  });
+
+  res.json({ balance: newBalance });
+});
+
+/** GET /api/admin/sparks/transactions — recent ledger, optionally filtered
+ *  by user. */
+router.get("/admin/sparks/transactions", requireAuth, requireAdminScope("manage_sparks"), async (req, res): Promise<void> => {
+  const { userId } = req.query as { userId?: string };
+  let query = supabase.from("sparks_transactions").select("*").order("created_at", { ascending: false }).limit(200);
+  if (userId) query = query.eq("user_id", userId);
+  const { data } = await query;
+  res.json(data ?? []);
+});
+
+/** GET /api/admin/announcements — full list for admin management */
+router.get("/admin/announcements", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const { data } = await supabase.from("announcements").select("*").order("created_at", { ascending: false });
+  res.json(data ?? []);
+});
+
+/** POST /api/admin/announcements */
+router.post("/admin/announcements", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const adminId = req.user!.id;
+  const { title, body, severity, targetType, recipientIds } = req.body as {
+    title?: string;
+    body?: string;
+    severity?: "info" | "warning" | "success";
+    targetType?: "all" | "specific";
+    recipientIds?: string[];
+  };
+
+  if (!title?.trim() || !body?.trim()) {
+    res.status(400).json({ error: "title and body are required" });
+    return;
+  }
+  if (targetType === "specific" && (!recipientIds || recipientIds.length === 0)) {
+    res.status(400).json({ error: "Pick at least one recipient, or target all users" });
+    return;
+  }
+
+  const { data: announcement, error } = await supabase
+    .from("announcements")
+    .insert({
+      title: title.trim(),
+      body: body.trim(),
+      severity: severity ?? "info",
+      target_type: targetType ?? "all",
+      created_by: adminId,
+    })
+    .select("id")
+    .single();
+
+  if (error || !announcement) {
+    res.status(500).json({ error: "Failed to create announcement" });
+    return;
+  }
+
+  if (targetType === "specific" && recipientIds) {
+    await supabase
+      .from("announcement_recipients")
+      .insert(recipientIds.map((userId) => ({ announcement_id: announcement.id, user_id: userId })));
+  }
+
+  res.status(201).json({ id: announcement.id });
+});
+
+/** PUT /api/admin/announcements/:id — toggle active */
+router.put("/admin/announcements/:announcementId", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const announcementId = Array.isArray(req.params.announcementId) ? req.params.announcementId[0] : req.params.announcementId;
+  const { isActive } = req.body as { isActive?: boolean };
+  await supabase.from("announcements").update({ is_active: !!isActive }).eq("id", announcementId);
+  res.sendStatus(204);
+});
+
+/** DELETE /api/admin/announcements/:id */
+router.delete("/admin/announcements/:announcementId", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const announcementId = Array.isArray(req.params.announcementId) ? req.params.announcementId[0] : req.params.announcementId;
+  await supabase.from("announcements").delete().eq("id", announcementId);
+  res.sendStatus(204);
+});
+
+// ============================================================
+// Announcements — regular-user-facing endpoints
+// ============================================================
+
+/** GET /api/announcements — active announcements targeted at me that I
+ *  haven't dismissed yet. */
+router.get("/announcements", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+
+  const { data: dismissed } = await supabase
+    .from("announcement_dismissals")
+    .select("announcement_id")
+    .eq("user_id", userId);
+  const dismissedIds = new Set((dismissed ?? []).map((d) => d.announcement_id));
+
+  const { data: targeted } = await supabase
+    .from("announcement_recipients")
+    .select("announcement_id")
+    .eq("user_id", userId);
+  const targetedIds = new Set((targeted ?? []).map((t) => t.announcement_id));
+
+  const { data: active } = await supabase.from("announcements").select("*").eq("is_active", true);
+
+  const visible = (active ?? []).filter((a) => {
+    if (dismissedIds.has(a.id)) return false;
+    if (a.target_type === "specific") return targetedIds.has(a.id);
+    return true;
+  });
+
+  res.json(visible);
+});
+
+/** POST /api/announcements/:id/dismiss */
+router.post("/announcements/:announcementId/dismiss", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const announcementId = Array.isArray(req.params.announcementId) ? req.params.announcementId[0] : req.params.announcementId;
+  await supabase.from("announcement_dismissals").upsert(
+    { announcement_id: announcementId, user_id: userId },
+    { onConflict: "announcement_id,user_id" },
+  );
+  res.sendStatus(204);
 });
 
 export default router;

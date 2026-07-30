@@ -2,6 +2,7 @@ import { ReactNode } from "react";
 import { useLocation } from "wouter";
 import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
+import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { TextSizeProvider } from "@/contexts/TextSizeContext";
 
@@ -25,6 +26,7 @@ function AppShellInner({ children }: AppShellProps) {
   return (
     <div className="w-full max-w-[430px] mx-auto h-[100dvh] bg-background relative flex flex-col overflow-hidden">
       <TopBar />
+      <AnnouncementBanner />
 
       <main className="flex-1 overflow-y-auto pb-20 no-scrollbar">
         {children}

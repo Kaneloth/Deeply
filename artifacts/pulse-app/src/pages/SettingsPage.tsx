@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/PageHeader";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
+import { AdminDashboard } from "@/components/AdminDashboard";
+import { Shield } from "lucide-react";
 import {
   LogOut, Moon, Sun, Type, Lock, HelpCircle, LifeBuoy, Trash2,
   ChevronRight, AlertTriangle, Eye, EyeOff, Mail, EyeOff as IncognitoIcon,
@@ -54,6 +56,8 @@ export default function SettingsPage() {
   const [, setLocation] = useLocation();
 
   const [email, setEmail] = useState<string | null>(null);
+  const [adminAccess, setAdminAccess] = useState<{ isAdmin: boolean; isSuperAdmin: boolean; scopes: string[] } | null>(null);
+  const [showAdminDashboard, setShowAdminDashboard] = useState(false);
 
   const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
@@ -173,6 +177,13 @@ export default function SettingsPage() {
       .catch(() => {});
     fetchBlockedUsers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  useEffect(() => {
+    fetch("/api/admin/me", { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => setAdminAccess(body))
+      .catch(() => {});
   }, [token]);
 
   const handleChangePassword = async () => {
@@ -505,6 +516,25 @@ export default function SettingsPage() {
           </a>
         </div>
 
+        {/* Admin — only visible if the account has any admin access */}
+        {adminAccess?.isAdmin && (
+          <button
+            onClick={() => setShowAdminDashboard(true)}
+            className="w-full flex items-center justify-between bg-card border border-primary/30 rounded-2xl p-4"
+          >
+            <div className="flex items-center gap-3">
+              <Shield size={18} className="text-primary" />
+              <div className="text-left">
+                <p className="text-sm font-medium">Admin Dashboard</p>
+                <p className="text-xs text-muted-foreground">
+                  {adminAccess.isSuperAdmin ? "Full access" : adminAccess.scopes.join(", ").replace(/_/g, " ")}
+                </p>
+              </div>
+            </div>
+            <ChevronRight size={16} className="text-primary" />
+          </button>
+        )}
+
         {/* About */}
         <div className="bg-card border border-card-border rounded-2xl p-5">
           <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">About</h3>
@@ -582,6 +612,10 @@ export default function SettingsPage() {
           )}
         </div>
       </div>
+
+      {showAdminDashboard && adminAccess && (
+        <AdminDashboard access={adminAccess as any} onClose={() => setShowAdminDashboard(false)} />
+      )}
     </div>
   );
 }
