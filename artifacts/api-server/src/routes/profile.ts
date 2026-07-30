@@ -99,21 +99,25 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   if (city !== undefined) updates.city = city;
   if (photo_url !== undefined) updates.photo_url = photo_url;
   if (personality_tags !== undefined) updates.personality_tags = personality_tags;
-  if (birthday !== undefined) updates.birthday = birthday;
-  if (gender !== undefined) updates.gender = gender;
-  if (looking_for_gender !== undefined) updates.looking_for_gender = looking_for_gender;
+  // These columns have CHECK constraints (only specific values allowed)
+  // or are DATE columns — an empty string from an unfilled/unselected
+  // field is neither a valid enum value nor a valid date, and would make
+  // Postgres reject the ENTIRE update. Treat "" as "not set" (null).
+  if (birthday !== undefined) updates.birthday = birthday || null;
+  if (gender !== undefined) updates.gender = gender || null;
+  if (looking_for_gender !== undefined) updates.looking_for_gender = looking_for_gender || null;
   if (distance_km !== undefined) updates.distance_km = distance_km;
-  if (relationship_type !== undefined) updates.relationship_type = relationship_type;
+  if (relationship_type !== undefined) updates.relationship_type = relationship_type || null;
   if (dating_intentions !== undefined) updates.dating_intentions = dating_intentions;
   if (onboarding_completed !== undefined) updates.onboarding_completed = onboarding_completed;
-  if (num_kids !== undefined) updates.num_kids = num_kids;
-  if (smoking_status !== undefined) updates.smoking_status = smoking_status;
-  if (drinking_status !== undefined) updates.drinking_status = drinking_status;
+  if (num_kids !== undefined) updates.num_kids = num_kids || null;
+  if (smoking_status !== undefined) updates.smoking_status = smoking_status || null;
+  if (drinking_status !== undefined) updates.drinking_status = drinking_status || null;
   if (languages_spoken !== undefined) updates.languages_spoken = languages_spoken;
   if (languages_other !== undefined) updates.languages_other = languages_other;
-  if (love_language !== undefined) updates.love_language = love_language;
-  if (education !== undefined) updates.education = education;
-  if (family_plans !== undefined) updates.family_plans = family_plans;
+  if (love_language !== undefined) updates.love_language = love_language || null;
+  if (education !== undefined) updates.education = education || null;
+  if (family_plans !== undefined) updates.family_plans = family_plans || null;
   if (notify_messages !== undefined) updates.notify_messages = notify_messages;
   if (notify_matches !== undefined) updates.notify_matches = notify_matches;
   if (notify_likes !== undefined) updates.notify_likes = notify_likes;
