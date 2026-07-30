@@ -6,22 +6,21 @@ const router: IRouter = Router();
 
 /** POST /api/auth/signup */
 router.post("/auth/signup", async (req, res): Promise<void> => {
-  const { email, password, name, age } = req.body as {
+  const { email, password, name } = req.body as {
     email?: string;
     password?: string;
     name?: string;
-    age?: number;
   };
 
-  if (!email || !password || !name || !age) {
-    res.status(400).json({ error: "email, password, name, and age are required" });
+  if (!email || !password || !name) {
+    res.status(400).json({ error: "email, password, and name are required" });
     return;
   }
 
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
-    options: { data: { name, age } },
+    options: { data: { name } },
   });
 
   if (error) {

@@ -10,7 +10,7 @@ import { ProfileCard } from "@/components/ProfileCard";
 import { PageHeader } from "@/components/PageHeader";
 import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
-import { Search as SearchIcon, Heart, X, MessageCircle, SlidersHorizontal, Sparkles, ShieldCheck, Mic, MapPin, TrendingUp, ChevronLeft } from "lucide-react";
+import { Search as SearchIcon, Heart, X, MessageCircle, SlidersHorizontal, Sparkles, ShieldCheck, Mic, MapPin, TrendingUp, ChevronLeft, Star } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const PERSONALITY_TAGS = [
@@ -56,7 +56,7 @@ function ProfileDetailOverlay({
 }: {
   profile: Result;
   onClose: () => void;
-  onSwipe: (direction: "like" | "pass") => void;
+  onSwipe: (direction: "like" | "pass" | "super_like") => void;
   onMessage: () => void;
   isActioning: boolean;
 }) {
@@ -97,6 +97,13 @@ function ProfileDetailOverlay({
               className="w-12 h-12 rounded-full bg-gradient-accent flex items-center justify-center text-white shadow-[0_8px_20px_rgba(225,29,72,0.3)] active:scale-95 transition-transform"
             >
               <Heart size={20} className="fill-current" />
+            </button>
+            <button
+              onClick={() => onSwipe("super_like")}
+              disabled={isActioning}
+              className="w-9 h-9 rounded-full bg-card border border-card-border flex items-center justify-center text-sky-400 hover:border-sky-400 transition-colors shadow-lg active:scale-95"
+            >
+              <Star size={16} className="fill-current" />
             </button>
           </div>
         </div>
@@ -211,7 +218,7 @@ export default function SearchPage() {
     }
   };
 
-  const handleSwipe = async (targetId: string, direction: "like" | "pass") => {
+  const handleSwipe = async (targetId: string, direction: "like" | "pass" | "super_like") => {
     setActioningId(targetId);
     try {
       const res = await fetch("/api/discover/swipe", {
@@ -244,6 +251,9 @@ export default function SearchPage() {
 
       if (direction === "like" && body.sparksCharged) {
         toast({ title: "5 Sparks used", description: "You've used today's 15 free invites." });
+        refreshSparksBadge();
+      }
+      if (direction === "super_like") {
         refreshSparksBadge();
       }
 
@@ -522,6 +532,16 @@ export default function SearchPage() {
                   className="w-9 h-9 rounded-full bg-gradient-accent flex items-center justify-center text-white"
                 >
                   <Heart size={16} className="fill-current" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleSwipe(r.id, "super_like");
+                  }}
+                  disabled={actioningId === r.id}
+                  className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center text-sky-400 hover:text-sky-300 transition-colors"
+                >
+                  <Star size={16} className="fill-current" />
                 </button>
               </div>
             </div>
