@@ -73,6 +73,16 @@ function BoostCountdown({ until }: { until: string }) {
   return <>{label}</>;
 }
 
+// Birthday picker bounds: must be at least 18, and a sane upper bound of
+// 100 years old.
+const _today = new Date();
+const MAX_BIRTHDATE = new Date(_today.getFullYear() - 18, _today.getMonth(), _today.getDate())
+  .toISOString()
+  .split("T")[0];
+const MIN_BIRTHDATE = new Date(_today.getFullYear() - 100, _today.getMonth(), _today.getDate())
+  .toISOString()
+  .split("T")[0];
+
 export default function ProfilePage() {
   const { token } = useAuth();
   const { refresh: refreshSparksBadge } = useSparks();
@@ -1177,6 +1187,8 @@ export default function ProfilePage() {
             type="date"
             value={formData.birthday}
             onChange={e => setFormData(prev => ({...prev, birthday: e.target.value}))}
+            max={MAX_BIRTHDATE}
+            min={MIN_BIRTHDATE}
             className="bg-card border-card-border h-12 rounded-xl text-base" 
           />
         </div>

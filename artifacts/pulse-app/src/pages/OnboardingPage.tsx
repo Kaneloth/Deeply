@@ -28,6 +28,18 @@ import {
 
 const TOTAL_STEPS = 18;
 
+// Birthday picker bounds: must be at least 18, and a sane upper bound of
+// 100 years old, so the native date picker only lets you select a valid
+// range rather than allowing (and only rejecting after the fact) a date
+// that would make someone under 18.
+const today = new Date();
+const MAX_BIRTHDATE = new Date(today.getFullYear() - 18, today.getMonth(), today.getDate())
+  .toISOString()
+  .split("T")[0];
+const MIN_BIRTHDATE = new Date(today.getFullYear() - 100, today.getMonth(), today.getDate())
+  .toISOString()
+  .split("T")[0];
+
 function StepShell({
   children,
   onContinue,
@@ -328,7 +340,15 @@ export default function OnboardingPage() {
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium">My birthday</label>
-                <Input type="date" value={birthday} onChange={(e) => setBirthday(e.target.value)} className="bg-card border-card-border h-12 rounded-xl" />
+                <Input
+                  type="date"
+                  value={birthday}
+                  onChange={(e) => setBirthday(e.target.value)}
+                  max={MAX_BIRTHDATE}
+                  min={MIN_BIRTHDATE}
+                  className="bg-card border-card-border h-12 rounded-xl"
+                />
+                <p className="text-xs text-muted-foreground">You must be 18 or older to use Deeply.</p>
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium">I'm looking for</label>

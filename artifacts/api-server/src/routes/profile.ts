@@ -94,6 +94,21 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     notify_sparks?: boolean;
     is_incognito?: boolean;
   };
+  if (birthday) {
+    const dob = new Date(birthday);
+    const today = new Date();
+    let age = today.getFullYear() - dob.getFullYear();
+    const hasHadBirthdayThisYear =
+      today.getMonth() > dob.getMonth() ||
+      (today.getMonth() === dob.getMonth() && today.getDate() >= dob.getDate());
+    if (!hasHadBirthdayThisYear) age -= 1;
+
+    if (isNaN(dob.getTime()) || age < 18) {
+      res.status(400).json({ error: "You must be at least 18 years old to use Deeply" });
+      return;
+    }
+  }
+
   const updates: Record<string, unknown> = {};
   if (name !== undefined) updates.name = name;
   if (age !== undefined) updates.age = age;
