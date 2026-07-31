@@ -122,12 +122,54 @@ router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
   }
 
   const [lo, hi] = [userId, targetId].sort();
-  const { data: match } = await supabase
+
+  // Check if the other person has already invited ME — if so, this swipe
+  // completes a mutual match. We create the match explicitly here rather
+  // than relying solely on a database trigger we don't have visibility
+  // into, so this critical path is fully under our control and doesn't
+  // silently depend on unverified trigger logic (e.g. someone accepting
+  // an invite from Discover without ever visiting the Invites page).
+  const { data: reverseSwipe } = await supabase
+    .from("swipes")
+    .select("id")
+    .eq("swiper_id", targetId)
+    .eq("target_id", userId)
+    .in("direction", ["like", "super_like"])
+    .maybeSingle();
+
+  let match: { id: string } | null = null;
+
+  const { data: existingMatch } = await supabase
     .from("matches")
     .select("id")
     .eq("user1_id", lo)
     .eq("user2_id", hi)
     .maybeSingle();
+
+  if (existingMatch) {
+    match = existingMatch;
+  } else if (reverseSwipe) {
+    const { data: newMatch, error: matchError } = await supabase
+      .from("matches")
+      .insert({ user1_id: lo, user2_id: hi })
+      .select("id")
+      .single();
+
+    if (!matchError && newMatch) {
+      match = newMatch;
+    } else if (matchError?.code === "23505") {
+      // Unique constraint hit — a trigger (or a concurrent request) beat
+      // us to creating it. Fetch what it created instead of treating
+      // this as a failure.
+      const { data: raceMatch } = await supabase
+        .from("matches")
+        .select("id")
+        .eq("user1_id", lo)
+        .eq("user2_id", hi)
+        .maybeSingle();
+      match = raceMatch ?? null;
+    }
+  }
 
   res.json({ matched: !!match, matchId: match?.id ?? null, sparksCharged: inviteBalanceAfter !== null });
 });
