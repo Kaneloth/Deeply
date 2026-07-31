@@ -908,18 +908,47 @@ router.get("/admin/reports", requireAuth, requireAdminScope("manage_reports"), a
   res.json(merged);
 });
 
+/** Extracts the storage path from a Supabase public URL, e.g.
+ *  "https://xxx.supabase.co/storage/v1/object/public/report-screenshots/abc/123.jpg"
+ *  -> "abc/123.jpg" */
+function extractStoragePath(publicUrl: string, bucket: string): string | null {
+  const marker = `/${bucket}/`;
+  const idx = publicUrl.indexOf(marker);
+  if (idx === -1) return null;
+  return publicUrl.slice(idx + marker.length);
+}
+
+/** Deletes a report's screenshot files from storage. Best-effort — a
+ *  storage cleanup failure shouldn't block the resolve/dismiss action
+ *  itself, since the report status change is what actually matters. */
+async function cleanupReportScreenshots(urls: string[] | null | undefined): Promise<void> {
+  if (!urls || urls.length === 0) return;
+  const paths = urls
+    .map((url) => extractStoragePath(url, "report-screenshots"))
+    .filter((p): p is string => !!p);
+  if (paths.length === 0) return;
+  try {
+    await supabase.storage.from("report-screenshots").remove(paths);
+  } catch {
+    // Non-fatal — see doc comment above.
+  }
+}
+
 /** POST /api/admin/reports/:reportId/resolve */
 router.post("/admin/reports/:reportId/resolve", requireAuth, requireAdminScope("manage_reports"), async (req, res): Promise<void> => {
   const reportId = Array.isArray(req.params.reportId) ? req.params.reportId[0] : req.params.reportId;
   const { notes } = req.body as { notes?: string };
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("reports")
     .update({ status: "actioned", admin_notes: notes ?? null })
-    .eq("id", reportId);
+    .eq("id", reportId)
+    .select("screenshot_urls")
+    .single();
   if (error) {
     res.status(500).json({ error: `Failed to resolve report: ${error.message}` });
     return;
   }
+  await cleanupReportScreenshots(updated?.screenshot_urls);
   res.sendStatus(204);
 });
 
@@ -927,14 +956,17 @@ router.post("/admin/reports/:reportId/resolve", requireAuth, requireAdminScope("
 router.post("/admin/reports/:reportId/dismiss", requireAuth, requireAdminScope("manage_reports"), async (req, res): Promise<void> => {
   const reportId = Array.isArray(req.params.reportId) ? req.params.reportId[0] : req.params.reportId;
   const { notes } = req.body as { notes?: string };
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("reports")
     .update({ status: "dismissed", admin_notes: notes ?? null })
-    .eq("id", reportId);
+    .eq("id", reportId)
+    .select("screenshot_urls")
+    .single();
   if (error) {
     res.status(500).json({ error: `Failed to dismiss report: ${error.message}` });
     return;
   }
+  await cleanupReportScreenshots(updated?.screenshot_urls);
   res.sendStatus(204);
 });
 
