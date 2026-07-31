@@ -1,5 +1,9 @@
 import { type Request, type Response, type NextFunction } from "express";
 import { supabase } from "../lib/supabase";
+import { spendSparks } from "../lib/sparks-helper";
+
+const INCOGNITO_DAILY_COST = 5;
+
 // Augment Express Request to carry the authenticated user
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -37,7 +41,7 @@ export async function requireAuth(
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("banned, ban_reason, suspended_until, suspension_reason")
+    .select("banned, ban_reason, suspended_until, suspension_reason, is_incognito, incognito_last_charged_at")
     .eq("id", user.id)
     .single();
 
@@ -58,6 +62,30 @@ export async function requireAuth(
       code: "SUSPENDED",
     });
     return;
+  }
+
+  // Incognito costs 5 Sparks per day it stays active, charged once every
+  // 24h since the last charge — discourages leaving it on indefinitely.
+  // If the balance can't cover it, incognito auto-disables rather than
+  // going negative or blocking the request.
+  if (profile?.is_incognito) {
+    const lastCharged = profile.incognito_last_charged_at ? new Date(profile.incognito_last_charged_at) : null;
+    const dueForCharge = !lastCharged || Date.now() - lastCharged.getTime() >= 24 * 60 * 60 * 1000;
+
+    if (dueForCharge) {
+      const spend = await spendSparks(user.id, INCOGNITO_DAILY_COST, "Incognito mode (daily)");
+      if (spend.success) {
+        await supabase
+          .from("profiles")
+          .update({ incognito_last_charged_at: new Date().toISOString() })
+          .eq("id", user.id);
+      } else {
+        await supabase
+          .from("profiles")
+          .update({ is_incognito: false, incognito_last_charged_at: null })
+          .eq("id", user.id);
+      }
+    }
   }
 
   req.user = { id: user.id, email: user.email };

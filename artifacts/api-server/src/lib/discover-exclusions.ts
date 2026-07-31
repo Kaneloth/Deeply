@@ -25,11 +25,15 @@ export async function getExcludedCandidateIds(userId: string): Promise<string[]>
 
   const blockedIds = await getBlockedUserIds(userId);
 
+  const { data: adminRows } = await supabase.from("profiles").select("id").eq("is_admin", true);
+  const adminIds = (adminRows ?? []).map((a) => a.id);
+
   return [
     userId,
     ...(alreadySwiped?.map((s) => s.target_id) ?? []),
     ...matchedPartnerIds,
     ...blockedIds,
+    ...adminIds,
   ];
 }
 

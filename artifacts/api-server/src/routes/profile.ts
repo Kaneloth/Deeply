@@ -140,7 +140,16 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   if (notify_matches !== undefined) updates.notify_matches = notify_matches;
   if (notify_likes !== undefined) updates.notify_likes = notify_likes;
   if (notify_sparks !== undefined) updates.notify_sparks = notify_sparks;
-  if (is_incognito !== undefined) updates.is_incognito = is_incognito;
+  if (is_incognito !== undefined) {
+    if (is_incognito) {
+      const { data: setting } = await supabase.from("app_settings").select("value").eq("key", "incognito_enabled").single();
+      if (setting?.value !== true) {
+        res.status(403).json({ error: "Incognito mode is not currently available." });
+        return;
+      }
+    }
+    updates.is_incognito = is_incognito;
+  }
   const { data: profile, error } = await supabase
     .from("profiles")
     .update(updates)
@@ -846,6 +855,38 @@ router.post("/admin/grant", requireAuth, requireSuperAdmin, async (req, res): Pr
 
 const MODERATION_REASONS_NOTE = "reason is required";
 
+/** GET /api/app-settings — platform-wide feature flags any authenticated
+ *  user can read, so the frontend knows what to show (e.g. whether
+ *  Incognito is currently enabled at all). */
+router.get("/app-settings", requireAuth, async (req, res): Promise<void> => {
+  const { data } = await supabase.from("app_settings").select("key, value");
+  const settings = Object.fromEntries((data ?? []).map((row) => [row.key, row.value]));
+  res.json(settings);
+});
+
+/** PUT /api/admin/settings — update a platform-wide feature flag.
+ *  Gated under manage_users, since there's no dedicated "platform
+ *  settings" scope yet and this is closest in spirit to user-facing
+ *  feature control. */
+router.put("/admin/settings", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const { key, value } = req.body as { key?: string; value?: unknown };
+  if (!key || value === undefined) {
+    res.status(400).json({ error: "key and value are required" });
+    return;
+  }
+
+  const { error } = await supabase
+    .from("app_settings")
+    .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: "key" });
+
+  if (error) {
+    res.status(500).json({ error: `Failed to update setting: ${error.message}` });
+    return;
+  }
+
+  res.json({ key, value });
+});
+
 /** GET /api/admin/overview */
 router.get("/admin/overview", requireAuth, requireAdminScope("view_analytics"), async (req, res): Promise<void> => {
   const [
@@ -972,6 +1013,7 @@ router.post("/admin/reports/:reportId/dismiss", requireAuth, requireAdminScope("
 
 /** GET /api/admin/users — search + paginate */
 router.get("/admin/users", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const adminUserId = req.user!.id;
   const { search, filter, page = "1" } = req.query as { search?: string; filter?: string; page?: string };
   const PAGE_SIZE = 25;
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
@@ -982,6 +1024,11 @@ router.get("/admin/users", requireAuth, requireAdminScope("manage_users"), async
       "id, name, age, birthday, city, photo_url, is_admin, admin_scopes, banned, ban_reason, suspended_until, suspension_reason, is_verified, free_sparks_balance, paid_sparks_balance, created_at",
       { count: "exact" },
     )
+    // Never show the requesting admin their own account here — avoids
+    // the risk of an admin accidentally banning/suspending themselves,
+    // which (given bans/suspensions now take effect immediately) could
+    // lock them out of their own account.
+    .neq("id", adminUserId)
     .order("created_at", { ascending: false });
 
   if (search?.trim()) {
@@ -1006,6 +1053,10 @@ router.get("/admin/users", requireAuth, requireAdminScope("manage_users"), async
 /** POST /api/admin/users/:userId/ban */
 router.post("/admin/users/:userId/ban", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
   const userId = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
+  if (userId === req.user!.id) {
+    res.status(400).json({ error: "You can't ban your own account" });
+    return;
+  }
   const { reason } = req.body as { reason?: string };
   if (!reason) {
     res.status(400).json({ error: MODERATION_REASONS_NOTE });
@@ -1033,6 +1084,10 @@ router.post("/admin/users/:userId/unban", requireAuth, requireAdminScope("manage
 /** POST /api/admin/users/:userId/suspend */
 router.post("/admin/users/:userId/suspend", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
   const userId = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
+  if (userId === req.user!.id) {
+    res.status(400).json({ error: "You can't suspend your own account" });
+    return;
+  }
   const { days, reason } = req.body as { days?: number; reason?: string };
   if (!reason || !days || days < 1) {
     res.status(400).json({ error: "days and reason are required" });

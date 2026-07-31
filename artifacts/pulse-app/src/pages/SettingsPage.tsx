@@ -76,6 +76,7 @@ export default function SettingsPage() {
   const [isDeleting, setIsDeleting] = useState(false);
 
   const [isIncognito, setIsIncognito] = useState(false);
+  const [incognitoEnabled, setIncognitoEnabled] = useState(false);
   const [isTogglingIncognito, setIsTogglingIncognito] = useState(false);
 
   interface BlockedEntry {
@@ -146,14 +147,21 @@ export default function SettingsPage() {
         },
         body: JSON.stringify({ is_incognito: next }),
       });
-      if (!res.ok) throw new Error("Failed to update");
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "Failed to update");
       setIsIncognito(next);
       toast({
         title: next ? "Incognito mode on" : "Incognito mode off",
-        description: next ? "You're now hidden from Discover and Search." : "You're visible in Discover and Search again.",
+        description: next
+          ? "You're now hidden from Discover and Search. This costs 5 Sparks per day while active."
+          : "You're visible in Discover and Search again.",
       });
-    } catch {
-      toast({ title: "Error", description: "Failed to update incognito mode.", variant: "destructive" });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to update incognito mode.",
+        variant: "destructive",
+      });
     } finally {
       setIsTogglingIncognito(false);
     }
@@ -171,6 +179,12 @@ export default function SettingsPage() {
       .then((res) => (res.ok ? res.json() : null))
       .then((body) => {
         if (body) setIsIncognito(!!body.is_incognito);
+      })
+      .catch(() => {});
+    fetch("/api/app-settings", { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (body) setIncognitoEnabled(body.incognito_enabled === true);
       })
       .catch(() => {});
     fetchBlockedUsers();
@@ -383,24 +397,26 @@ export default function SettingsPage() {
         <div className="space-y-3">
           <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">Privacy & Safety</h3>
 
-          <button
-            onClick={handleToggleIncognito}
-            disabled={isTogglingIncognito}
-            className="w-full flex items-center justify-between bg-card border border-card-border rounded-2xl p-4 disabled:opacity-60"
-          >
-            <div className="flex items-center gap-3">
-              <IncognitoIcon size={18} className="text-muted-foreground" />
-              <div className="text-left">
-                <p className="text-sm font-medium">Incognito Mode</p>
-                <p className="text-xs text-muted-foreground">
-                  {isIncognito ? "Hidden from Discover & Search" : "Visible in Discover & Search"}
-                </p>
+          {incognitoEnabled && (
+            <button
+              onClick={handleToggleIncognito}
+              disabled={isTogglingIncognito}
+              className="w-full flex items-center justify-between bg-card border border-card-border rounded-2xl p-4 disabled:opacity-60"
+            >
+              <div className="flex items-center gap-3">
+                <IncognitoIcon size={18} className="text-muted-foreground" />
+                <div className="text-left">
+                  <p className="text-sm font-medium">Incognito Mode</p>
+                  <p className="text-xs text-muted-foreground">
+                    {isIncognito ? "Hidden from Discover & Search · 5 Sparks/day" : "Visible in Discover & Search"}
+                  </p>
+                </div>
               </div>
-            </div>
-            <div className={`h-6 w-10 rounded-full relative transition-colors ${isIncognito ? "bg-primary" : "bg-secondary"}`}>
-              <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${isIncognito ? "right-1" : "left-1"}`} />
-            </div>
-          </button>
+              <div className={`h-6 w-10 rounded-full relative transition-colors ${isIncognito ? "bg-primary" : "bg-secondary"}`}>
+                <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${isIncognito ? "right-1" : "left-1"}`} />
+              </div>
+            </button>
+          )}
 
           <div className="bg-card border border-card-border rounded-2xl overflow-hidden">
             <button

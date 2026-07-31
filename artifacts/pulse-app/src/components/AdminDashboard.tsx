@@ -75,7 +75,7 @@ export function AdminDashboard({ access, onClose }: { access: AdminAccess; onClo
         </div>
 
         <div className="flex-1 overflow-y-auto p-4">
-          {section === "overview" && <OverviewSection token={token} />}
+          {section === "overview" && <OverviewSection token={token} toast={toast} />}
           {section === "reports" && <ReportsSection token={token} toast={toast} />}
           {section === "users" && <UsersSection token={token} toast={toast} isSuperAdmin={access.isSuperAdmin} />}
           {section === "sparks" && <SparksSection token={token} toast={toast} />}
@@ -89,16 +89,51 @@ export function AdminDashboard({ access, onClose }: { access: AdminAccess; onClo
 // ============================================================
 // Overview
 // ============================================================
-function OverviewSection({ token }: { token: string | null }) {
+function OverviewSection({ token, toast }: { token: string | null; toast: any }) {
   const [stats, setStats] = useState<Record<string, number> | null>(null);
   const [loading, setLoading] = useState(true);
+  const [incognitoEnabled, setIncognitoEnabled] = useState(false);
+  const [isTogglingIncognito, setIsTogglingIncognito] = useState(false);
 
   useEffect(() => {
     fetch("/api/admin/overview", { headers: { Authorization: `Bearer ${token}` } })
       .then((res) => (res.ok ? res.json() : null))
       .then((body) => setStats(body))
       .finally(() => setLoading(false));
+    fetch("/api/app-settings", { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (body) setIncognitoEnabled(body.incognito_enabled === true);
+      })
+      .catch(() => {});
   }, [token]);
+
+  const toggleIncognitoFeature = async () => {
+    const next = !incognitoEnabled;
+    setIsTogglingIncognito(true);
+    try {
+      const res = await fetch("/api/admin/settings", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ key: "incognito_enabled", value: next }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "Failed to update setting");
+      setIncognitoEnabled(next);
+      toast({ title: next ? "Incognito mode enabled platform-wide" : "Incognito mode disabled platform-wide" });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to update setting.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsTogglingIncognito(false);
+    }
+  };
 
   if (loading) return <CenteredLoader />;
   if (!stats) return <EmptyNote text="Could not load stats." />;
@@ -115,14 +150,35 @@ function OverviewSection({ token }: { token: string | null }) {
   ];
 
   return (
-    <div className="grid grid-cols-2 gap-3">
-      {cards.map((c) => (
-        <div key={c.label} className="bg-card border border-card-border rounded-2xl p-4">
-          <c.icon size={18} className="text-muted-foreground mb-2" />
-          <p className="text-2xl font-bold font-['Syne']">{c.value?.toLocaleString?.() ?? c.value}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">{c.label}</p>
-        </div>
-      ))}
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3">
+        {cards.map((c) => (
+          <div key={c.label} className="bg-card border border-card-border rounded-2xl p-4">
+            <c.icon size={18} className="text-muted-foreground mb-2" />
+            <p className="text-2xl font-bold font-['Syne']">{c.value?.toLocaleString?.() ?? c.value}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">{c.label}</p>
+          </div>
+        ))}
+      </div>
+
+      <div>
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2 pl-1">Platform Settings</p>
+        <button
+          onClick={toggleIncognitoFeature}
+          disabled={isTogglingIncognito}
+          className="w-full flex items-center justify-between bg-card border border-card-border rounded-2xl p-4 disabled:opacity-60"
+        >
+          <div className="text-left">
+            <p className="text-sm font-medium">Incognito Mode</p>
+            <p className="text-xs text-muted-foreground">
+              {incognitoEnabled ? "Enabled — users can go incognito (5 Sparks/day)" : "Disabled — hidden from all users"}
+            </p>
+          </div>
+          <div className={`h-6 w-10 rounded-full relative transition-colors shrink-0 ${incognitoEnabled ? "bg-primary" : "bg-secondary"}`}>
+            <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${incognitoEnabled ? "right-1" : "left-1"}`} />
+          </div>
+        </button>
+      </div>
     </div>
   );
 }
