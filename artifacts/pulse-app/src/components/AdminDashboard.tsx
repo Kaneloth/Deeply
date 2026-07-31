@@ -163,11 +163,18 @@ function ReportsSection({ token, toast }: { token: string | null; toast: any }) 
         },
         body: JSON.stringify({ notes: notes[report.id] }),
       });
-      if (!res.ok) throw new Error("Failed");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? `Failed (${res.status})`);
+      }
       toast({ title: action === "resolve" ? "Report resolved" : "Report dismissed" });
       setReports((prev) => prev.filter((r) => r.id !== report.id));
-    } catch {
-      toast({ title: "Error", description: "Failed to update report.", variant: "destructive" });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to update report.",
+        variant: "destructive",
+      });
     } finally {
       setProcessingId(null);
     }
@@ -184,11 +191,18 @@ function ReportsSection({ token, toast }: { token: string | null; toast: any }) 
         },
         body: JSON.stringify({ reason: `Reported: ${report.reason}` }),
       });
-      if (!res.ok) throw new Error("Failed");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? `Failed (${res.status})`);
+      }
       toast({ title: `${report.reported?.name ?? "User"} banned` });
       await finalize(report, "resolve");
-    } catch {
-      toast({ title: "Error", description: "Failed to ban user.", variant: "destructive" });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to ban user.",
+        variant: "destructive",
+      });
       setProcessingId(null);
     }
   };

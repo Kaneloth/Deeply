@@ -917,7 +917,7 @@ router.post("/admin/reports/:reportId/resolve", requireAuth, requireAdminScope("
     .update({ status: "actioned", admin_notes: notes ?? null })
     .eq("id", reportId);
   if (error) {
-    res.status(500).json({ error: "Failed to resolve report" });
+    res.status(500).json({ error: `Failed to resolve report: ${error.message}` });
     return;
   }
   res.sendStatus(204);
@@ -932,7 +932,7 @@ router.post("/admin/reports/:reportId/dismiss", requireAuth, requireAdminScope("
     .update({ status: "dismissed", admin_notes: notes ?? null })
     .eq("id", reportId);
   if (error) {
-    res.status(500).json({ error: "Failed to dismiss report" });
+    res.status(500).json({ error: `Failed to dismiss report: ${error.message}` });
     return;
   }
   res.sendStatus(204);
