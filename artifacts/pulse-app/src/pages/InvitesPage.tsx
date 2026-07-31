@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSparks } from "@/contexts/SparksContext";
+import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ProfileCard } from "@/components/ProfileCard";
 import { PageHeader } from "@/components/PageHeader";
 import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
+import { MatchCelebration } from "@/components/MatchCelebration";
 import { ChevronLeft, Star, Lock, Heart, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
@@ -98,28 +100,6 @@ function InviteDetailOverlay({
   );
 }
 
-function MatchCelebration({ name, onContinue }: { name: string; onContinue: () => void }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[100] bg-background/95 backdrop-blur-md flex flex-col items-center justify-center px-6 text-center"
-    >
-      <motion.div initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", damping: 12 }}>
-        <div className="text-6xl mb-6">💥</div>
-        <h1 className="text-4xl font-['Syne'] font-extrabold text-transparent bg-clip-text bg-gradient-accent mb-3">
-          It's a Match!
-        </h1>
-        <p className="text-muted-foreground mb-10">You and {name} connected. Say hi!</p>
-        <Button onClick={onContinue} className="w-full max-w-xs h-14 rounded-2xl bg-gradient-accent border-0 text-white font-bold text-lg">
-          Continue
-        </Button>
-      </motion.div>
-    </motion.div>
-  );
-}
-
 export default function InvitesPage() {
   const { token } = useAuth();
   const { refresh: refreshSparksBadge } = useSparks();
@@ -130,7 +110,8 @@ export default function InvitesPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRevealing, setIsRevealing] = useState(false);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
-  const [matchName, setMatchName] = useState<string | null>(null);
+  const [matchCelebration, setMatchCelebration] = useState<{ name: string; matchId: string; photoUrl?: string | null } | null>(null);
+  const [, setLocation] = useLocation();
   const [selectedInvite, setSelectedInvite] = useState<Invite | null>(null);
   const [mode, setMode] = useState<"received" | "sent">("received");
   const [sent, setSent] = useState<Invite[] | null>(null);
@@ -241,7 +222,7 @@ export default function InvitesPage() {
       setSelectedInvite((prev) => (prev?.id === invite.id ? null : prev));
 
       if (body.matched) {
-        setMatchName(invite.name);
+        setMatchCelebration({ name: invite.name, matchId: body.matchId, photoUrl: invite.photo_url });
       }
     } catch (err) {
       toast({
@@ -449,7 +430,14 @@ export default function InvitesPage() {
       )}
 
       <AnimatePresence>
-        {matchName && <MatchCelebration name={matchName} onContinue={() => setMatchName(null)} />}
+        {matchCelebration && (
+          <MatchCelebration
+            name={matchCelebration.name}
+            photoUrl={matchCelebration.photoUrl}
+            onContinue={() => setMatchCelebration(null)}
+            onMessage={() => setLocation(`/matches/${matchCelebration.matchId}/chat`)}
+          />
+        )}
       </AnimatePresence>
 
       {selectedInvite && (

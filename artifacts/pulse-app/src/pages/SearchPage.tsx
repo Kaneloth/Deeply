@@ -10,6 +10,7 @@ import { ProfileCard } from "@/components/ProfileCard";
 import { PageHeader } from "@/components/PageHeader";
 import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
+import { MatchCelebration } from "@/components/MatchCelebration";
 import { Search as SearchIcon, Heart, X, MessageCircle, SlidersHorizontal, Sparkles, ShieldCheck, Mic, MapPin, TrendingUp, ChevronLeft, Star } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -131,6 +132,7 @@ export default function SearchPage() {
   const [isSearching, setIsSearching] = useState(false);
   const [actioningId, setActioningId] = useState<string | null>(null);
   const [selectedProfile, setSelectedProfile] = useState<Result | null>(null);
+  const [matchCelebration, setMatchCelebration] = useState<{ name: string; matchId: string; photoUrl?: string | null } | null>(null);
   const [composeFor, setComposeFor] = useState<Result | null>(null);
   const [messageText, setMessageText] = useState("");
   const [isSendingMessage, setIsSendingMessage] = useState(false);
@@ -246,6 +248,7 @@ export default function SearchPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to record swipe");
 
+      const swipedProfile = results?.find((r) => r.id === targetId) ?? selectedProfile;
       setResults((prev) => (prev ? prev.filter((r) => r.id !== targetId) : prev));
       setSelectedProfile((prev) => (prev?.id === targetId ? null : prev));
 
@@ -258,7 +261,11 @@ export default function SearchPage() {
       }
 
       if (body.matched) {
-        toast({ title: "It's a Match!", description: "Head to Matches to say hi." });
+        setMatchCelebration({
+          name: swipedProfile?.name ?? "them",
+          matchId: body.matchId,
+          photoUrl: swipedProfile?.photo_url,
+        });
       }
     } catch (err) {
       toast({
@@ -604,6 +611,15 @@ export default function SearchPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {matchCelebration && (
+        <MatchCelebration
+          name={matchCelebration.name}
+          photoUrl={matchCelebration.photoUrl}
+          onContinue={() => setMatchCelebration(null)}
+          onMessage={() => setLocation(`/matches/${matchCelebration.matchId}/chat`)}
+        />
       )}
     </div>
   );
