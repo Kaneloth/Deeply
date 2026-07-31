@@ -323,4 +323,60 @@ router.delete("/auth/account", requireAuth, async (req, res): Promise<void> => {
   res.sendStatus(204);
 });
 
+/** POST /api/auth/forgot-password — sends a password reset email. Always
+ *  responds with success regardless of whether the email exists, so this
+ *  can't be used to enumerate registered accounts. */
+router.post("/auth/forgot-password", async (req, res): Promise<void> => {
+  const { email, redirectTo } = req.body as { email?: string; redirectTo?: string };
+
+  if (!email) {
+    res.status(400).json({ error: "email is required" });
+    return;
+  }
+
+  try {
+    await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: redirectTo || undefined,
+    });
+  } catch {
+    // Intentionally swallowed — see the doc comment above.
+  }
+
+  res.sendStatus(204);
+});
+
+/** POST /api/auth/reset-password — completes a password reset using the
+ *  access_token from the recovery email link (extracted client-side from
+ *  the URL fragment, since fragments never reach the server directly). */
+router.post("/auth/reset-password", async (req, res): Promise<void> => {
+  const { accessToken, newPassword } = req.body as { accessToken?: string; newPassword?: string };
+
+  if (!accessToken || !newPassword) {
+    res.status(400).json({ error: "accessToken and newPassword are required" });
+    return;
+  }
+  if (newPassword.length < 6) {
+    res.status(400).json({ error: "New password must be at least 6 characters" });
+    return;
+  }
+
+  const {
+    data: { user },
+    error: getUserError,
+  } = await supabase.auth.getUser(accessToken);
+
+  if (getUserError || !user) {
+    res.status(401).json({ error: "This reset link is invalid or has expired. Please request a new one." });
+    return;
+  }
+
+  const { error: updateError } = await supabase.auth.admin.updateUserById(user.id, { password: newPassword });
+  if (updateError) {
+    res.status(500).json({ error: `Failed to reset password: ${updateError.message}` });
+    return;
+  }
+
+  res.sendStatus(204);
+});
+
 export default router;

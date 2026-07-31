@@ -56,6 +56,10 @@ function PasswordInput({ field }: { field: any }) {
 
 export default function AuthPage() {
   const [isLogin, setIsLogin] = useState(true);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [isSendingReset, setIsSendingReset] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
   const [pendingEmail, setPendingEmail] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [isVerifying, setIsVerifying] = useState(false);
@@ -137,6 +141,37 @@ export default function AuthPage() {
     }
   };
 
+  const handleForgotPassword = async () => {
+    if (!forgotEmail.trim()) {
+      toast({ title: "Enter your email first", variant: "destructive" });
+      return;
+    }
+    setIsSendingReset(true);
+    try {
+      const res = await fetch("/api/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: forgotEmail.trim(),
+          redirectTo: `${window.location.origin}/reset-password`,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to send reset email");
+      }
+      setResetSent(true);
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to send reset email.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSendingReset(false);
+    }
+  };
+
   const onVerifyCode = async () => {
     if (!pendingEmail || code.length !== 6) return;
     setIsVerifying(true);
@@ -188,6 +223,59 @@ export default function AuthPage() {
 
   if (blockInfo) {
     return <BlockedAccountScreen blockInfo={blockInfo} onBack={() => setBlockInfo(null)} />;
+  }
+
+  if (showForgotPassword) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[100dvh] px-6 w-full relative text-center">
+        <div className="absolute top-[-10%] left-[-20%] w-[150%] h-[50%] bg-primary/20 blur-[120px] rounded-full pointer-events-none" />
+        <div className="z-10 w-full max-w-sm">
+          <HeartbeatVisual />
+          {resetSent ? (
+            <>
+              <h1 className="text-2xl font-['Syne'] font-extrabold mt-6 mb-3">Check your email</h1>
+              <p className="text-muted-foreground text-sm mb-6">
+                If an account exists for <span className="text-foreground font-medium">{forgotEmail}</span>, we've sent a link to
+                reset your password.
+              </p>
+              <button
+                onClick={() => setShowForgotPassword(false)}
+                className="text-muted-foreground text-sm hover:text-primary transition-colors font-medium"
+              >
+                ← Back to sign in
+              </button>
+            </>
+          ) : (
+            <>
+              <h1 className="text-2xl font-['Syne'] font-extrabold mt-6 mb-3">Reset your password</h1>
+              <p className="text-muted-foreground text-sm mb-6">
+                Enter your email and we'll send you a link to set a new password.
+              </p>
+              <Input
+                value={forgotEmail}
+                onChange={(e) => setForgotEmail(e.target.value)}
+                placeholder="you@example.com"
+                type="email"
+                className="bg-card border-card-border h-12 mb-4"
+              />
+              <Button
+                className="w-full h-12 rounded-xl text-base font-semibold bg-gradient-accent border-0 mb-3"
+                disabled={isSendingReset}
+                onClick={handleForgotPassword}
+              >
+                {isSendingReset ? "Sending..." : "Send Reset Link"}
+              </Button>
+              <button
+                onClick={() => setShowForgotPassword(false)}
+                className="text-muted-foreground text-sm hover:text-primary transition-colors font-medium"
+              >
+                ← Back to sign in
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    );
   }
 
   if (pendingEmail) {
@@ -285,6 +373,19 @@ export default function AuthPage() {
                       </FormItem>
                     )}
                   />
+                  <div className="text-right -mt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setForgotEmail(loginForm.getValues("email") || "");
+                        setResetSent(false);
+                        setShowForgotPassword(true);
+                      }}
+                      className="text-xs text-muted-foreground hover:text-primary transition-colors font-medium"
+                    >
+                      Forgot password?
+                    </button>
+                  </div>
                   <Button type="submit" className="w-full h-12 rounded-xl text-base font-semibold bg-gradient-accent border-0" disabled={isLoading}>
                     {isLoading ? "Logging in..." : "Log In"}
                   </Button>

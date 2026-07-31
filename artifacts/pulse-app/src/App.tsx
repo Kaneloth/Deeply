@@ -18,6 +18,7 @@ import SparksPage from '@/pages/SparksPage';
 import ProfilePage from '@/pages/ProfilePage';
 import SettingsPage from '@/pages/SettingsPage';
 import AdminPage from '@/pages/AdminPage';
+import ResetPasswordPage from '@/pages/ResetPasswordPage';
 const queryClient = new QueryClient();
 function ProtectedRoute({ component: Component, ...rest }: any) {
   const { isAuthenticated } = useAuth();
@@ -43,6 +44,7 @@ function Router() {
       <Switch>
         {/* Public Routes */}
         <Route path="/" component={() => <PublicRoute component={AuthPage} />} />
+        <Route path="/reset-password" component={ResetPasswordPage} />
         
         {/* Protected Routes */}
         <Route path="/onboarding" component={() => <ProtectedRoute component={OnboardingPage} />} />
