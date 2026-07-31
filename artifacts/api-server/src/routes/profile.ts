@@ -979,14 +979,22 @@ router.post("/admin/users/:userId/ban", requireAuth, requireAdminScope("manage_u
     res.status(400).json({ error: MODERATION_REASONS_NOTE });
     return;
   }
-  await supabase.from("profiles").update({ banned: true, ban_reason: reason }).eq("id", userId);
+  const { error } = await supabase.from("profiles").update({ banned: true, ban_reason: reason }).eq("id", userId);
+  if (error) {
+    res.status(500).json({ error: `Failed to ban user: ${error.message}` });
+    return;
+  }
   res.sendStatus(204);
 });
 
 /** POST /api/admin/users/:userId/unban */
 router.post("/admin/users/:userId/unban", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
   const userId = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
-  await supabase.from("profiles").update({ banned: false, ban_reason: null }).eq("id", userId);
+  const { error } = await supabase.from("profiles").update({ banned: false, ban_reason: null }).eq("id", userId);
+  if (error) {
+    res.status(500).json({ error: `Failed to unban user: ${error.message}` });
+    return;
+  }
   res.sendStatus(204);
 });
 
@@ -999,14 +1007,28 @@ router.post("/admin/users/:userId/suspend", requireAuth, requireAdminScope("mana
     return;
   }
   const until = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
-  await supabase.from("profiles").update({ suspended_until: until, suspension_reason: reason }).eq("id", userId);
+  const { error } = await supabase
+    .from("profiles")
+    .update({ suspended_until: until, suspension_reason: reason })
+    .eq("id", userId);
+  if (error) {
+    res.status(500).json({ error: `Failed to suspend user: ${error.message}` });
+    return;
+  }
   res.json({ suspended_until: until });
 });
 
 /** POST /api/admin/users/:userId/unsuspend */
 router.post("/admin/users/:userId/unsuspend", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
   const userId = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
-  await supabase.from("profiles").update({ suspended_until: null, suspension_reason: null }).eq("id", userId);
+  const { error } = await supabase
+    .from("profiles")
+    .update({ suspended_until: null, suspension_reason: null })
+    .eq("id", userId);
+  if (error) {
+    res.status(500).json({ error: `Failed to lift suspension: ${error.message}` });
+    return;
+  }
   res.sendStatus(204);
 });
 
@@ -1028,13 +1050,27 @@ router.post("/admin/users/:userId/sparks", requireAuth, requireAdminScope("manag
   }
 
   const newBalance = Math.max(0, (profile.free_sparks_balance ?? 0) + amount);
-  await supabase.from("profiles").update({ free_sparks_balance: newBalance }).eq("id", userId);
-  await supabase.from("sparks_transactions").insert({
+  const { error: updateError } = await supabase
+    .from("profiles")
+    .update({ free_sparks_balance: newBalance })
+    .eq("id", userId);
+  if (updateError) {
+    res.status(500).json({ error: `Failed to update balance: ${updateError.message}` });
+    return;
+  }
+
+  const { error: insertError } = await supabase.from("sparks_transactions").insert({
     user_id: userId,
     amount,
     type: "admin_adjustment",
     description: description || (amount > 0 ? "Admin credit" : "Admin deduction"),
   });
+  if (insertError) {
+    // The balance update already succeeded — don't fail the whole request
+    // over the ledger entry, but do surface it so it's not silently lost.
+    res.json({ balance: newBalance, warning: `Balance updated but not logged to ledger: ${insertError.message}` });
+    return;
+  }
 
   res.json({ balance: newBalance });
 });
@@ -1109,14 +1145,22 @@ router.post("/admin/announcements", requireAuth, requireAdminScope("manage_users
 router.put("/admin/announcements/:announcementId", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
   const announcementId = Array.isArray(req.params.announcementId) ? req.params.announcementId[0] : req.params.announcementId;
   const { isActive } = req.body as { isActive?: boolean };
-  await supabase.from("announcements").update({ is_active: !!isActive }).eq("id", announcementId);
+  const { error } = await supabase.from("announcements").update({ is_active: !!isActive }).eq("id", announcementId);
+  if (error) {
+    res.status(500).json({ error: `Failed to update announcement: ${error.message}` });
+    return;
+  }
   res.sendStatus(204);
 });
 
 /** DELETE /api/admin/announcements/:id */
 router.delete("/admin/announcements/:announcementId", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
   const announcementId = Array.isArray(req.params.announcementId) ? req.params.announcementId[0] : req.params.announcementId;
-  await supabase.from("announcements").delete().eq("id", announcementId);
+  const { error } = await supabase.from("announcements").delete().eq("id", announcementId);
+  if (error) {
+    res.status(500).json({ error: `Failed to delete announcement: ${error.message}` });
+    return;
+  }
   res.sendStatus(204);
 });
 

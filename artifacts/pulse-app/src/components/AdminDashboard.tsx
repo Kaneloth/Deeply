@@ -452,19 +452,23 @@ function UserDetailSheet({
   };
 
   const handleBan = async () => {
-    if (user.banned) {
-      await call(`/api/admin/users/${user.id}/unban`);
-      onUpdated({ banned: false, ban_reason: null });
-      toast({ title: "User unbanned" });
-      return;
+    try {
+      if (user.banned) {
+        await call(`/api/admin/users/${user.id}/unban`);
+        onUpdated({ banned: false, ban_reason: null });
+        toast({ title: "User unbanned" });
+        return;
+      }
+      if (!banReason) {
+        toast({ title: "Pick a reason first", variant: "destructive" });
+        return;
+      }
+      await call(`/api/admin/users/${user.id}/ban`, { reason: banReason });
+      onUpdated({ banned: true, ban_reason: banReason });
+      toast({ title: "User banned" });
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Action failed.", variant: "destructive" });
     }
-    if (!banReason) {
-      toast({ title: "Pick a reason first", variant: "destructive" });
-      return;
-    }
-    await call(`/api/admin/users/${user.id}/ban`, { reason: banReason });
-    onUpdated({ banned: true, ban_reason: banReason });
-    toast({ title: "User banned" });
   };
 
   const handleSuspend = async () => {
@@ -472,26 +476,38 @@ function UserDetailSheet({
       toast({ title: "Pick a reason first", variant: "destructive" });
       return;
     }
-    const result = await call(`/api/admin/users/${user.id}/suspend`, {
-      days: parseInt(suspendDays, 10) || 1,
-      reason: suspendReason,
-    });
-    onUpdated({ suspended_until: result.suspended_until, suspension_reason: suspendReason });
-    toast({ title: "User suspended" });
+    try {
+      const result = await call(`/api/admin/users/${user.id}/suspend`, {
+        days: parseInt(suspendDays, 10) || 1,
+        reason: suspendReason,
+      });
+      onUpdated({ suspended_until: result.suspended_until, suspension_reason: suspendReason });
+      toast({ title: "User suspended" });
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to suspend user.", variant: "destructive" });
+    }
   };
 
   const handleUnsuspend = async () => {
-    await call(`/api/admin/users/${user.id}/unsuspend`);
-    onUpdated({ suspended_until: null, suspension_reason: null });
-    toast({ title: "Suspension lifted" });
+    try {
+      await call(`/api/admin/users/${user.id}/unsuspend`);
+      onUpdated({ suspended_until: null, suspension_reason: null });
+      toast({ title: "Suspension lifted" });
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to lift suspension.", variant: "destructive" });
+    }
   };
 
   const handleSparks = async (sign: 1 | -1) => {
     const amount = (parseInt(sparksAmount, 10) || 0) * sign;
     if (!amount) return;
-    const result = await call(`/api/admin/users/${user.id}/sparks`, { amount, description: "Admin adjustment" });
-    onUpdated({ free_sparks_balance: result.balance });
-    toast({ title: `Balance updated to ${result.balance}` });
+    try {
+      const result = await call(`/api/admin/users/${user.id}/sparks`, { amount, description: "Admin adjustment" });
+      onUpdated({ free_sparks_balance: result.balance });
+      toast({ title: `Balance updated to ${result.balance}` });
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to adjust balance.", variant: "destructive" });
+    }
   };
 
   const handleGrantScopes = async () => {
