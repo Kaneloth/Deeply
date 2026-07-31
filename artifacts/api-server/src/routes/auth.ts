@@ -145,6 +145,31 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     .eq("id", data.user.id)
     .single();
 
+  // A session was just issued by signInWithPassword above — if this
+  // account is banned/suspended, invalidate it immediately and refuse the
+  // login outright, rather than letting them in and only blocking their
+  // next request (which requireAuth also enforces, but with a much less
+  // clear error for the person trying to sign in).
+  if (profile?.banned) {
+    await supabase.auth.admin.signOut(data.session.access_token);
+    res.status(403).json({
+      error: "This account has been banned.",
+      code: "BANNED",
+      reason: profile.ban_reason ?? undefined,
+    });
+    return;
+  }
+  if (profile?.suspended_until && new Date(profile.suspended_until) > new Date()) {
+    await supabase.auth.admin.signOut(data.session.access_token);
+    res.status(403).json({
+      error: "This account is temporarily suspended.",
+      code: "SUSPENDED",
+      reason: profile.suspension_reason ?? undefined,
+      suspendedUntil: profile.suspended_until,
+    });
+    return;
+  }
+
   res.json({
     access_token: data.session.access_token,
     refresh_token: data.session.refresh_token,

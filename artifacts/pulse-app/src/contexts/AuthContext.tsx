@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useRef, useState, ReactNode } from "react";
 import { setAuthTokenGetter } from "@workspace/api-client-react";
 import { useLocation } from "wouter";
+import type { BlockInfo } from "@/components/BlockedAccountScreen";
 
 const ACCESS_TOKEN_KEY = "deeply_access_token";
 const REFRESH_TOKEN_KEY = "deeply_refresh_token";
@@ -17,6 +18,8 @@ interface AuthContextType {
   login: (accessToken: string, refreshToken: string, expiresIn: number) => void;
   logout: () => void;
   isAuthenticated: boolean;
+  blockInfo: BlockInfo | null;
+  clearBlockInfo: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -32,6 +35,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // The real, unpatched fetch — used internally so our own refresh/retry
   // calls never recursively re-enter the interceptor below.
   const originalFetchRef = useRef<typeof window.fetch>(window.fetch.bind(window));
+  const [blockInfo, setBlockInfo] = useState<BlockInfo | null>(null);
 
   const clearRefreshTimer = () => {
     if (refreshTimer.current) {
@@ -138,6 +142,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const response = await original(input, init);
 
+      // Detect a ban/suspension taking effect mid-session — requireAuth
+      // returns this on EVERY request once an account is blocked, so this
+      // catches it immediately regardless of which page/action triggered
+      // it, rather than leaving the user on a broken page with no
+      // explanation. Clone the response so the original body can still be
+      // read normally by whatever code made this request.
+      if (response.status === 403) {
+        try {
+          const cloned = response.clone();
+          const body = await cloned.json();
+          if (body?.code === "BANNED" || body?.code === "SUSPENDED") {
+            setBlockInfo({ code: body.code, reason: body.reason, suspendedUntil: body.suspendedUntil });
+            logout();
+            return response;
+          }
+        } catch {
+          // Not JSON, or some other unrelated 403 (e.g. blocked-user
+          // messaging, insufficient admin scope) — ignore and fall through.
+        }
+      }
+
       if (response.status !== 401) return response;
       if ((init as { __isRetry?: boolean } | undefined)?.__isRetry) return response;
 
@@ -174,6 +199,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         login,
         logout,
         isAuthenticated: !!token,
+        blockInfo,
+        clearBlockInfo: () => setBlockInfo(null),
       }}
     >
       {children}

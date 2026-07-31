@@ -12,6 +12,7 @@ import { useLocation } from "wouter";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { Eye, EyeOff } from "lucide-react";
+import { BlockedAccountScreen, type BlockInfo } from "@/components/BlockedAccountScreen";
 
 const loginSchema = z.object({
   email: z.string().email({ message: "Invalid email address" }),
@@ -63,6 +64,7 @@ export default function AuthPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
+  const [blockInfo, setBlockInfo] = useState<BlockInfo | null>(null);
 
   const loginForm = useForm<z.infer<typeof loginSchema>>({
     resolver: zodResolver(loginSchema),
@@ -83,6 +85,12 @@ export default function AuthPage() {
         body: JSON.stringify(data),
       });
       const body = await res.json();
+
+      if (res.status === 403 && (body.code === "BANNED" || body.code === "SUSPENDED")) {
+        setBlockInfo({ code: body.code, reason: body.reason, suspendedUntil: body.suspendedUntil });
+        return;
+      }
+
       if (!res.ok) throw new Error(body.error ?? "Login failed");
       login(body.access_token, body.refresh_token, body.expires_in);
       setLocation("/discover");
@@ -177,6 +185,10 @@ export default function AuthPage() {
       setIsResending(false);
     }
   };
+
+  if (blockInfo) {
+    return <BlockedAccountScreen blockInfo={blockInfo} onBack={() => setBlockInfo(null)} />;
+  }
 
   if (pendingEmail) {
     return (

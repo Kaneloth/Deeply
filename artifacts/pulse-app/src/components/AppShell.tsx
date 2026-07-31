@@ -5,6 +5,8 @@ import { BottomNav } from "@/components/BottomNav";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { TextSizeProvider } from "@/contexts/TextSizeContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { BlockedAccountScreen } from "@/components/BlockedAccountScreen";
 
 interface AppShellProps {
   children: ReactNode;
@@ -12,6 +14,15 @@ interface AppShellProps {
 
 function AppShellInner({ children }: AppShellProps) {
   const [location] = useLocation();
+  const { blockInfo, clearBlockInfo } = useAuth();
+
+  // A ban/suspension can be detected mid-session, on any route — this
+  // takes over the entire screen regardless of what would otherwise
+  // render, since continuing to show the underlying page while a "you've
+  // been banned" state exists would be confusing.
+  if (blockInfo) {
+    return <BlockedAccountScreen blockInfo={blockInfo} onBack={clearBlockInfo} />;
+  }
 
   // Hide nav and top bar on auth and onboarding routes
   const hideChrome = location === "/" || location === "/onboarding";
