@@ -1,7 +1,6 @@
 import { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { Compass, Search, Mail, Heart, HeartHandshake, Zap } from "lucide-react";
-import { useSparks } from "@/contexts/SparksContext";
+import { Compass, Search, Mail, Heart, HeartHandshake } from "lucide-react";
 
 function InvitesIcon({ size }: { size: number }) {
   return (
@@ -17,7 +16,6 @@ function InvitesIcon({ size }: { size: number }) {
 
 export function BottomNav() {
   const [location] = useLocation();
-  const { balance } = useSparks();
 
   return (
     <nav className="fixed bottom-0 w-full max-w-[430px] bg-background/80 backdrop-blur-xl border-t border-border z-50 px-4 py-4 flex items-center justify-between">
@@ -25,13 +23,6 @@ export function BottomNav() {
       <NavItem href="/search" icon={<Search size={22} />} active={location === "/search"} label="Search" />
       <NavItem href="/invites" icon={<InvitesIcon size={22} />} active={location === "/invites"} label="Invites" />
       <NavItem href="/matches" icon={<HeartHandshake size={22} />} active={location.startsWith("/matches")} label="Matches" />
-      <NavItem
-        href="/sparks"
-        icon={<Zap size={22} />}
-        active={location === "/sparks"}
-        label="Sparks"
-        badge={balance !== null ? balance : undefined}
-      />
     </nav>
   );
 }

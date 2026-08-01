@@ -14,7 +14,6 @@ import InvitesPage from '@/pages/InvitesPage';
 import MatchesPage from '@/pages/MatchesPage';
 import MatchDetailPage from '@/pages/MatchDetailPage';
 import ChatPage from '@/pages/ChatPage';
-import SparksPage from '@/pages/SparksPage';
 import ProfilePage from '@/pages/ProfilePage';
 import SettingsPage from '@/pages/SettingsPage';
 import AdminPage from '@/pages/AdminPage';
@@ -54,7 +53,6 @@ function Router() {
         <Route path="/matches" component={() => <ProtectedRoute component={MatchesPage} />} />
         <Route path="/matches/:matchId" component={() => <ProtectedRoute component={MatchDetailPage} />} />
         <Route path="/matches/:matchId/chat" component={() => <ProtectedRoute component={ChatPage} />} />
-        <Route path="/sparks" component={() => <ProtectedRoute component={SparksPage} />} />
         <Route path="/profile" component={() => <ProtectedRoute component={ProfilePage} />} />
         <Route path="/settings" component={() => <ProtectedRoute component={SettingsPage} />} />
         <Route path="/admin" component={() => <ProtectedRoute component={AdminPage} />} />

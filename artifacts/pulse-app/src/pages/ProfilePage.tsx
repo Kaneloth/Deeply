@@ -7,6 +7,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { CheckCircle2, AlertCircle, Rocket, Plus, X, ImageIcon, Camera, Video, Mic, Play, Pause } from "lucide-react";
+import { SparkIcon } from "@/components/Icons";
+import { SparksModal } from "@/components/SparksModal";
 import { motion, AnimatePresence } from "framer-motion";
 import { PageHeader } from "@/components/PageHeader";
 import { ChipGrid } from "@/components/SelectorControls";
@@ -85,7 +87,8 @@ const MIN_BIRTHDATE = new Date(_today.getFullYear() - 100, _today.getMonth(), _t
 
 export default function ProfilePage() {
   const { token } = useAuth();
-  const { refresh: refreshSparksBadge } = useSparks();
+  const { balance, refresh: refreshSparksBadge } = useSparks();
+  const [showSparksModal, setShowSparksModal] = useState(false);
   const { toast } = useToast();
   const [profile, setProfile] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -846,6 +849,22 @@ export default function ProfilePage() {
         </div>
       </div>
 
+      {/* Sparks */}
+      <button
+        onClick={() => setShowSparksModal(true)}
+        className="w-full flex items-center justify-between bg-card border border-card-border rounded-2xl p-4 mb-8"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center shrink-0">
+            <SparkIcon size={18} className="text-primary" />
+          </div>
+          <div className="text-left">
+            <p className="font-['Syne'] font-bold text-base">{balance ?? 0} Sparks</p>
+            <p className="text-xs text-muted-foreground">Tap to recharge or see what they're for</p>
+          </div>
+        </div>
+      </button>
+
       {/* Boost Section */}
       <div className="bg-card border border-card-border rounded-2xl p-5 mb-8">
         <div className="flex items-center gap-3 mb-3">
@@ -1268,6 +1287,8 @@ export default function ProfilePage() {
           </Button>
         </div>
       )}
+
+      {showSparksModal && <SparksModal onClose={() => setShowSparksModal(false)} />}
     </div>
   );
 }

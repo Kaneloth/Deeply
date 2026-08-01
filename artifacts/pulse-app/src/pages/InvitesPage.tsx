@@ -86,7 +86,7 @@ function InviteDetailOverlay({
                 className="flex-1 h-11 rounded-full bg-card border border-card-border flex items-center justify-center gap-1.5 text-muted-foreground hover:border-destructive hover:text-destructive transition-colors font-semibold text-sm"
               >
                 <X size={16} />
-                {isActioning ? "Withdrawing..." : "Withdraw Invite (5 Sparks)"}
+                {isActioning ? "Withdrawing..." : "Withdraw Invite"}
               </button>
             ) : (
               <p className="text-sm text-muted-foreground">Waiting for them to respond</p>
