@@ -93,10 +93,16 @@ export default function DiscoverPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to reshuffle");
       setCandidates(body.candidates ?? []);
-      toast({
-        title: "Deck reshuffled",
-        description: body.wasFree ? "That was your free reshuffle for the week." : "10 Sparks used.",
-      });
+
+      // No toast on every reshuffle — the button label itself ("Reshuffle
+      // (Free)" vs "Reshuffle") already communicates the state. The one
+      // exception: the very first time someone uses a paid reshuffle, a
+      // single explanatory note, never shown again after that.
+      if (!body.wasFree && !localStorage.getItem("deeply_seen_reshuffle_cost_notice")) {
+        localStorage.setItem("deeply_seen_reshuffle_cost_notice", "1");
+        toast({ title: "10 Sparks used", description: "Your free reshuffle refreshes weekly — extra reshuffles cost 10 Sparks." });
+      }
+
       fetchReshuffleStatus();
     } catch (err) {
       toast({
@@ -187,8 +193,9 @@ export default function DiscoverPage() {
       if (direction === "super_like" || body.sparksCharged) {
         refreshSparksBadge();
       }
-      if (direction === "like" && body.sparksCharged) {
-        toast({ title: "5 Sparks used", description: "You've used today's 15 free invites." });
+      if (direction === "like" && body.sparksCharged && !localStorage.getItem("deeply_seen_invite_quota_cost_notice")) {
+        localStorage.setItem("deeply_seen_invite_quota_cost_notice", "1");
+        toast({ title: "5 Sparks used", description: "You've used today's 15 free invites — extra invites cost 5 Sparks each." });
       }
       if (body.matched) {
         setMatchCelebration({ name: target.name, matchId: body.matchId, photoUrl: target.photo_url ?? undefined });

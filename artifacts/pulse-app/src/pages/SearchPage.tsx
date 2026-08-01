@@ -253,7 +253,10 @@ export default function SearchPage() {
       setSelectedProfile((prev) => (prev?.id === targetId ? null : prev));
 
       if (direction === "like" && body.sparksCharged) {
-        toast({ title: "5 Sparks used", description: "You've used today's 15 free invites." });
+        if (!localStorage.getItem("deeply_seen_invite_quota_cost_notice")) {
+          localStorage.setItem("deeply_seen_invite_quota_cost_notice", "1");
+          toast({ title: "5 Sparks used", description: "You've used today's 15 free invites — extra invites cost 5 Sparks each." });
+        }
         refreshSparksBadge();
       }
       if (direction === "super_like") {
