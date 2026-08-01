@@ -14,16 +14,14 @@ const SUPER_LIKE_COST = 10;
 const UNDO_COST = 5;
 const REVEAL_LIKES_COST = 30;
 const MESSAGE_REQUEST_COST = 30;
+const RESHUFFLE_COST = 10;
+const RESHUFFLE_FREE_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** GET /api/discover/queue — return a batch of candidate profiles the user
- *  hasn't swiped on yet, ready to swipe through Tinder-style. */
-router.get("/discover/queue", requireAuth, async (req, res): Promise<void> => {
-  const userId = req.user!.id;
-
+/** Shared by /discover/queue and /discover/reshuffle — builds a fresh,
+ *  randomized batch of candidates, boosted profiles prioritized. */
+async function buildDiscoverQueue(userId: string) {
   const excludedIds = await getExcludedCandidateIds(userId);
 
-  // Fetch a larger pool than we'll return, so we can prioritize active
-  // boosts before trimming down to the final page size.
   const { data: candidates, error } = await supabase
     .from("profiles")
     .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, boosted_until, num_kids, family_plans, smoking_status, drinking_status")
@@ -31,22 +29,14 @@ router.get("/discover/queue", requireAuth, async (req, res): Promise<void> => {
     .eq("is_incognito", false)
     .limit(60);
 
-  if (error) {
-    res.status(500).json({ error: "Failed to load discover queue" });
-    return;
-  }
-
-  if (!candidates || candidates.length === 0) {
-    res.json({ candidates: [] });
-    return;
+  if (error || !candidates || candidates.length === 0) {
+    return { candidates: [], error };
   }
 
   const now = Date.now();
   const boosted = candidates.filter((c) => c.boosted_until && new Date(c.boosted_until).getTime() > now);
   const rest = candidates.filter((c) => !c.boosted_until || new Date(c.boosted_until).getTime() <= now);
 
-  // Shuffle each group independently so it's not always the same order,
-  // then boosted profiles first.
   const shuffle = <T,>(arr: T[]) => arr.sort(() => Math.random() - 0.5);
   const prioritized = [...shuffle(boosted), ...shuffle(rest)].slice(0, 20);
 
@@ -55,7 +45,71 @@ router.get("/discover/queue", requireAuth, async (req, res): Promise<void> => {
   const withPhotos = await attachPhotoGalleries(strippedCandidates);
   const withAudio = await attachAudioPrompts(withPhotos);
 
-  res.json({ candidates: withComputedAges(withAudio) });
+  return { candidates: withComputedAges(withAudio), error: null };
+}
+
+/** GET /api/discover/queue — return a batch of candidate profiles the user
+ *  hasn't swiped on yet, ready to swipe through Tinder-style. */
+router.get("/discover/queue", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const { candidates, error } = await buildDiscoverQueue(userId);
+
+  if (error) {
+    res.status(500).json({ error: "Failed to load discover queue" });
+    return;
+  }
+
+  res.json({ candidates });
+});
+
+/** GET /api/discover/reshuffle-status — tells the frontend whether the
+ *  next reshuffle is free or will cost Sparks, so the button can show
+ *  the right label before the person taps it. */
+router.get("/discover/reshuffle-status", requireAuth, async (req, res): Promise<void> => {
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("last_free_reshuffle_at")
+    .eq("id", req.user!.id)
+    .single();
+
+  const lastFree = profile?.last_free_reshuffle_at ? new Date(profile.last_free_reshuffle_at) : null;
+  const isFree = !lastFree || Date.now() - lastFree.getTime() >= RESHUFFLE_FREE_INTERVAL_MS;
+  const nextFreeAt = lastFree ? new Date(lastFree.getTime() + RESHUFFLE_FREE_INTERVAL_MS).toISOString() : null;
+
+  res.json({ isFree, cost: RESHUFFLE_COST, nextFreeAt: isFree ? null : nextFreeAt });
+});
+
+/** POST /api/discover/reshuffle — re-randomizes the discover queue on
+ *  demand. Free once every 7 days, 10 Sparks otherwise. */
+router.post("/discover/reshuffle", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("last_free_reshuffle_at")
+    .eq("id", userId)
+    .single();
+
+  const lastFree = profile?.last_free_reshuffle_at ? new Date(profile.last_free_reshuffle_at) : null;
+  const isFree = !lastFree || Date.now() - lastFree.getTime() >= RESHUFFLE_FREE_INTERVAL_MS;
+
+  if (isFree) {
+    await supabase.from("profiles").update({ last_free_reshuffle_at: new Date().toISOString() }).eq("id", userId);
+  } else {
+    const spend = await spendSparks(userId, RESHUFFLE_COST, "Discover reshuffle");
+    if (!spend.success) {
+      res.status(400).json({ error: "Not enough Sparks to reshuffle" });
+      return;
+    }
+  }
+
+  const { candidates, error } = await buildDiscoverQueue(userId);
+  if (error) {
+    res.status(500).json({ error: "Failed to reshuffle" });
+    return;
+  }
+
+  res.json({ candidates, wasFree: isFree });
 });
 
 /** POST /api/discover/swipe — record a like / pass / super_like and report

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ProfileCard, type ProfileCardData } from "@/components/ProfileCard";
-import { X, Heart, MessageCircle, Star, RotateCcw } from "lucide-react";
+import { X, Heart, MessageCircle, Star, RotateCcw, Shuffle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useSparks } from "@/contexts/SparksContext";
 
@@ -69,6 +69,45 @@ export default function DiscoverPage() {
   const [composeFor, setComposeFor] = useState<Candidate | null>(null);
   const [messageText, setMessageText] = useState("");
   const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [reshuffleStatus, setReshuffleStatus] = useState<{ isFree: boolean; cost: number } | null>(null);
+  const [isReshuffling, setIsReshuffling] = useState(false);
+
+  const fetchReshuffleStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/discover/reshuffle-status", { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return;
+      const body = await res.json();
+      setReshuffleStatus({ isFree: body.isFree, cost: body.cost });
+    } catch {
+      // Silent — non-critical, the button just won't know its state yet.
+    }
+  }, [token]);
+
+  const handleReshuffle = async () => {
+    setIsReshuffling(true);
+    try {
+      const res = await fetch("/api/discover/reshuffle", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to reshuffle");
+      setCandidates(body.candidates ?? []);
+      toast({
+        title: "Deck reshuffled",
+        description: body.wasFree ? "That was your free reshuffle for the week." : "10 Sparks used.",
+      });
+      fetchReshuffleStatus();
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to reshuffle.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsReshuffling(false);
+    }
+  };
 
   const fetchInvitesCount = useCallback(async () => {
     try {
@@ -106,7 +145,8 @@ export default function DiscoverPage() {
   useEffect(() => {
     fetchQueue();
     fetchInvitesCount();
-  }, [fetchQueue, fetchInvitesCount]);
+    fetchReshuffleStatus();
+  }, [fetchQueue, fetchInvitesCount, fetchReshuffleStatus]);
 
   const { refresh: refreshSparksBadge } = useSparks();
 
@@ -255,8 +295,17 @@ export default function DiscoverPage() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden px-4 pb-2 pt-6">
-      {invitesCount > 0 && (
-        <div className="flex justify-end mb-3 px-2">
+      <div className="flex items-center justify-between mb-3 px-2">
+        <button
+          onClick={handleReshuffle}
+          disabled={isReshuffling}
+          className="flex items-center gap-1.5 bg-card/80 backdrop-blur border border-card-border px-3 py-1.5 rounded-full text-sm font-semibold text-muted-foreground hover:border-primary/50 hover:text-foreground transition-colors disabled:opacity-60"
+        >
+          <Shuffle size={14} className={isReshuffling ? "animate-spin" : ""} />
+          <span>{isReshuffling ? "Shuffling..." : reshuffleStatus?.isFree ? "Reshuffle (Free)" : "Reshuffle"}</span>
+        </button>
+
+        {invitesCount > 0 && (
           <Link
             href="/invites"
             className="flex items-center gap-1.5 bg-card/80 backdrop-blur border border-card-border px-3 py-1.5 rounded-full text-sm font-semibold text-primary hover:border-primary/50 transition-colors"
@@ -264,8 +313,8 @@ export default function DiscoverPage() {
             <Heart size={14} className="fill-current" />
             <span>{invitesCount} invite{invitesCount === 1 ? "" : "s"}</span>
           </Link>
-        </div>
-      )}
+        )}
+      </div>
 
       <div className="flex-1 relative min-h-0">
         {visibleCards.length === 0 ? (
