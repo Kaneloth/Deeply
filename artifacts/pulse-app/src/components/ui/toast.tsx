@@ -37,14 +37,24 @@ const toastVariants = cva(
   },
 );
 
+// Radix's ToastPrimitives.Root has its own built-in auto-dismiss timer
+// (default 5000ms) that was never being overridden anywhere in this file
+// or in use-toast.ts — TOAST_REMOVE_DELAY over there only controls when a
+// *closed* toast gets cleaned out of memory, not how long it stays
+// visible. This default only applies when a toast() call doesn't specify
+// its own `duration`, so any call site that wants a shorter/longer time
+// for a specific toast can still pass one.
+const DEFAULT_TOAST_DURATION_MS = 7000;
+
 const Toast = React.forwardRef<
   React.ElementRef<typeof ToastPrimitives.Root>,
   React.ComponentPropsWithoutRef<typeof ToastPrimitives.Root> &
     VariantProps<typeof toastVariants>
->(({ className, variant, ...props }, ref) => {
+>(({ className, variant, duration = DEFAULT_TOAST_DURATION_MS, ...props }, ref) => {
   return (
     <ToastPrimitives.Root
       ref={ref}
+      duration={duration}
       className={cn(toastVariants({ variant }), className)}
       {...props}
     />
