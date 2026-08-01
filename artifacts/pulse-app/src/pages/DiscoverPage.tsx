@@ -48,7 +48,7 @@ function SwipeCard({
       }
       transition={{ duration: 0.3, ease: "easeOut" }}
     >
-      <ProfileCard profile={candidate} active={isTop} />
+      <ProfileCard profile={candidate} active={isTop} enablePullReveal={isTop} />
     </motion.div>
   );
 }

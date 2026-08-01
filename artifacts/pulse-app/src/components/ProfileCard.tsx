@@ -1,6 +1,8 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { MapPin, Baby, Users, Cigarette, Wine, Mic, Play, Pause } from "lucide-react";
 import { PhotoCarousel, type CarouselPhoto } from "@/components/PhotoCarousel";
+
+const PULL_REVEAL_THRESHOLD_PX = 50;
 
 export interface AudioPromptData {
   id: string;
@@ -52,10 +54,72 @@ const DRINKING_LABELS: Record<string, string> = {
   regularly: "Drinks regularly",
 };
 
-export function ProfileCard({ profile, active = true }: { profile: ProfileCardData; active?: boolean }) {
+export function ProfileCard({
+  profile,
+  active = true,
+  enablePullReveal = false,
+}: {
+  profile: ProfileCardData;
+  active?: boolean;
+  /** Opt-in only — makes sense on Discover, where another card is
+   *  already stacked underneath this one. Elsewhere (Search, Invites,
+   *  MatchDetail) there's nothing to reveal, so this stays off by
+   *  default. */
+  enablePullReveal?: boolean;
+}) {
   const photos = profile.photos.length > 0 ? profile.photos : [];
   const [playingPromptId, setPlayingPromptId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Pull-down-to-reveal-next-card. Only claims the gesture when: the
+  // drag is downward AND the scroll container is already at the very
+  // top — otherwise this is either a normal scroll-back-up, or a
+  // horizontal photo swipe (which PhotoCarousel's own touch handling
+  // already deals with independently; this never interferes with that,
+  // since it only acts on vertical-down-at-top drags).
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [pullY, setPullY] = useState(0);
+  const isPulling = pullY !== 0;
+  const pullStateRef = useRef({ startY: 0, active: false, axisLocked: false, isPullGesture: false });
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !active || !enablePullReveal) return;
+
+    const onMove = (e: TouchEvent) => {
+      const s = pullStateRef.current;
+      if (!s.active) return;
+
+      const dy = e.touches[0].clientY - s.startY;
+
+      if (!s.axisLocked) {
+        if (Math.abs(dy) < 8) return;
+        s.axisLocked = true;
+        s.isPullGesture = dy > 0 && el.scrollTop <= 0;
+      }
+
+      if (!s.isPullGesture) return;
+      e.preventDefault();
+      const eased = dy < PULL_REVEAL_THRESHOLD_PX ? dy : PULL_REVEAL_THRESHOLD_PX + (dy - PULL_REVEAL_THRESHOLD_PX) * 0.35;
+      setPullY(eased);
+    };
+
+    el.addEventListener("touchmove", onMove, { passive: false });
+    return () => el.removeEventListener("touchmove", onMove);
+  }, [active, enablePullReveal]);
+
+  const handlePullTouchStart = (e: React.TouchEvent) => {
+    if (!active || !enablePullReveal) return;
+    pullStateRef.current = { startY: e.touches[0].clientY, active: true, axisLocked: false, isPullGesture: false };
+  };
+
+  const handlePullTouchEnd = () => {
+    pullStateRef.current.active = false;
+    // Always springs back — this is a peek, not a decision. The card
+    // underneath is only ever previewed, never actually swiped away by
+    // this gesture.
+    setPullY(0);
+  };
 
   const togglePlayPrompt = (prompt: AudioPromptData) => {
     if (playingPromptId === prompt.id) {
@@ -81,8 +145,20 @@ export function ProfileCard({ profile, active = true }: { profile: ProfileCardDa
     (profile.audio_prompts?.length ?? 0) > 0;
 
   return (
-    <div className="w-full h-full bg-card border border-card-border rounded-3xl overflow-hidden shadow-2xl relative">
-      <div className="w-full h-full overflow-y-auto">
+    <div
+      className="w-full h-full bg-card border border-card-border rounded-3xl overflow-hidden shadow-2xl relative"
+      style={{
+        transform: pullY !== 0 ? `translateY(${pullY}px) scale(${1 - Math.min(pullY, 100) / 800})` : undefined,
+        opacity: pullY !== 0 ? Math.max(0.4, 1 - pullY / 150) : 1,
+        transition: isPulling ? "none" : "transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 0.3s ease-out",
+      }}
+    >
+      <div
+        ref={scrollRef}
+        className="w-full h-full overflow-y-auto"
+        onTouchStart={handlePullTouchStart}
+        onTouchEnd={handlePullTouchEnd}
+      >
         {/* Photo — fills the entire card by default (edge to edge), so
             it's the only thing visible until the user scrolls down.
             Name/age/location sit in a compact overlay strictly at the
