@@ -7,6 +7,8 @@ import { spendSparks } from "../lib/sparks-helper";
 import { withComputedAge, withComputedAges } from "../lib/age";
 import { isSuperAdmin, requireSuperAdmin, requireAdminScope, type AdminScope } from "../lib/admin-auth";
 import { createNotification, createNotificationForUsers, recordProfileView } from "../lib/notifications-helper";
+import { attachPhotoGalleries } from "../lib/photo-galleries";
+import { attachAudioPrompts } from "../lib/audio-prompts-helper";
 
 const router: IRouter = Router();
 
@@ -1484,7 +1486,10 @@ router.get("/profile-views/who-viewed-me", requireAuth, async (req, res): Promis
       .filter((p): p is NonNullable<typeof p> => p !== null),
   );
 
-  res.json(merged);
+  const withPhotos = await attachPhotoGalleries(merged);
+  const withAudio = await attachAudioPrompts(withPhotos);
+
+  res.json(withAudio);
 });
 
 export default router;
