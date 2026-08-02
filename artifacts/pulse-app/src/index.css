@@ -67,8 +67,86 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-/* Base Variables */
-:root, .dark {
+/* Base Variables — LIGHT theme (default, applies whenever .dark is not
+   present on <html>). Previously this block was shared verbatim between
+   :root and .dark, meaning there was no actual light theme to switch to
+   — toggling the .dark class off did nothing visually, since :root alone
+   already supplied identical dark colors. */
+:root {
+  --background: 0 0% 100%;
+  --foreground: 240 20% 10%;
+
+  --card: 0 0% 100%;
+  --card-foreground: 240 20% 10%;
+  --card-border: 240 15% 91%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 20% 10%;
+  --popover-border: 240 15% 91%;
+
+  --primary: 300 80% 45%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 240 15% 95%;
+  --secondary-foreground: 240 10% 20%;
+
+  --muted: 240 15% 96%;
+  --muted-foreground: 240 5% 45%;
+
+  --accent: 338 80% 48%;
+  --accent-foreground: 0 0% 100%;
+
+  --destructive: 0 75% 50%;
+  --destructive-foreground: 0 0% 100%;
+
+  --border: 240 15% 91%;
+  --input: 240 15% 93%;
+  --ring: 300 80% 45%;
+
+  --sidebar: 0 0% 100%;
+  --sidebar-foreground: 240 20% 10%;
+  --sidebar-border: 240 15% 91%;
+  --sidebar-primary: 300 80% 45%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 240 15% 95%;
+  --sidebar-accent-foreground: 240 10% 20%;
+  --sidebar-ring: 300 80% 45%;
+
+  --chart-1: 300 80% 45%;
+  --chart-2: 338 80% 48%;
+  --chart-3: 280 80% 45%;
+  --chart-4: 260 80% 45%;
+  --chart-5: 320 80% 45%;
+
+  --app-font-sans: 'Inter', sans-serif;
+  --app-font-serif: 'Syne', sans-serif;
+  --app-font-mono: Menlo, monospace;
+
+  --radius: 0.75rem;
+
+  --shadow-2xs: 0px 0px 0px 0px rgba(0,0,0,0);
+  --shadow-xs: 0px 0px 0px 0px rgba(0,0,0,0);
+  --shadow-sm: 0px 0px 0px 0px rgba(0,0,0,0);
+  --shadow: 0px 0px 0px 0px rgba(0,0,0,0);
+  --shadow-md: 0px 0px 0px 0px rgba(0,0,0,0);
+  --shadow-lg: 0px 0px 0px 0px rgba(0,0,0,0);
+  --shadow-xl: 0px 0px 0px 0px rgba(0,0,0,0);
+  --shadow-2xl: 0px 0px 0px 0px rgba(0,0,0,0);
+
+  --opaque-button-border-intensity: 0;
+  --primary-border: hsl(var(--primary));
+  --secondary-border: hsl(var(--secondary));
+  --muted-border: hsl(var(--muted));
+  --accent-border: hsl(var(--accent));
+  --destructive-border: hsl(var(--destructive));
+  --sidebar-primary-border: hsl(var(--sidebar-primary));
+  --sidebar-accent-border: hsl(var(--sidebar-accent));
+}
+
+/* DARK theme — overrides the color variables above whenever .dark is
+   present on <html>. Font/radius/shadow variables aren't redefined here
+   since they don't change between themes; they're inherited from :root. */
+.dark {
   --background: 240 20% 5%;
   --foreground: 0 0% 95%;
 
@@ -114,22 +192,6 @@
   --chart-4: 260 80% 50%;
   --chart-5: 320 80% 50%;
 
-  --app-font-sans: 'Inter', sans-serif;
-  --app-font-serif: 'Syne', sans-serif;
-  --app-font-mono: Menlo, monospace;
-  
-  --radius: 0.75rem;
-
-  --shadow-2xs: 0px 0px 0px 0px rgba(0,0,0,0);
-  --shadow-xs: 0px 0px 0px 0px rgba(0,0,0,0);
-  --shadow-sm: 0px 0px 0px 0px rgba(0,0,0,0);
-  --shadow: 0px 0px 0px 0px rgba(0,0,0,0);
-  --shadow-md: 0px 0px 0px 0px rgba(0,0,0,0);
-  --shadow-lg: 0px 0px 0px 0px rgba(0,0,0,0);
-  --shadow-xl: 0px 0px 0px 0px rgba(0,0,0,0);
-  --shadow-2xl: 0px 0px 0px 0px rgba(0,0,0,0);
-
-  --opaque-button-border-intensity: 0;
   --primary-border: hsl(var(--primary));
   --secondary-border: hsl(var(--secondary));
   --muted-border: hsl(var(--muted));
