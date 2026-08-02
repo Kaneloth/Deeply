@@ -9,6 +9,7 @@ import { isSuperAdmin, requireSuperAdmin, requireAdminScope, type AdminScope } f
 import { createNotification, createNotificationForUsers, recordProfileView } from "../lib/notifications-helper";
 import { attachPhotoGalleries } from "../lib/photo-galleries";
 import { attachAudioPrompts } from "../lib/audio-prompts-helper";
+import { checkImageSafety } from "../lib/content-moderation";
 
 const router: IRouter = Router();
 
@@ -477,6 +478,16 @@ router.post(
     if (currentCount >= MAX_GALLERY_ITEMS) {
       res.status(400).json({ error: `Maximum ${MAX_GALLERY_ITEMS} gallery items reached` });
       return;
+    }
+
+    // Content moderation — images only (see doc comment in
+    // content-moderation.ts for why video isn't covered here).
+    if (!isVideo) {
+      const safety = await checkImageSafety(req.file.buffer);
+      if (!safety.safe) {
+        res.status(400).json({ error: safety.reason ?? "This photo can't be uploaded." });
+        return;
+      }
     }
 
     let sparksCharged = 0;
