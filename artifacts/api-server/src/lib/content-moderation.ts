@@ -6,9 +6,9 @@ const GOOGLE_VISION_API_KEY = process.env.GOOGLE_CLOUD_VISION_API_KEY;
 // POSSIBLE, LIKELY, VERY_LIKELY. Rejecting at LIKELY/VERY_LIKELY is a
 // fairly standard threshold — strict enough to catch real explicit
 // content, loose enough to avoid false-positiving on things like beach
-// photos or fitness pics. If false positives turn out to be a problem in
-// practice, tighten REJECT_LIKELIHOODS to only VERY_LIKELY; if explicit
-// content is slipping through, loosen it to include POSSIBLE too.
+// photos or fitness pics. If explicit content is slipping through,
+// tighten this further (e.g. reject at POSSIBLE too); if legitimate
+// photos keep getting blocked, loosen it to only VERY_LIKELY.
 const REJECT_LIKELIHOODS = new Set(["LIKELY", "VERY_LIKELY"]);
 
 export interface SafetyCheckResult {
@@ -69,10 +69,15 @@ export async function checkImageSafety(buffer: Buffer): Promise<SafetyCheckResul
       return { safe: true };
     }
 
-    if (REJECT_LIKELIHOODS.has(safeSearch.adult) || REJECT_LIKELIHOODS.has(safeSearch.racy)) {
+    // Deliberately checking `adult` only, not `racy`. Vision's `racy`
+    // signal fires on completely normal dating-app content — bikinis,
+    // lingerie, beach photos — none of which should be blocked here.
+    // `adult` specifically targets actual nudity/explicit sexual content,
+    // which is what this check is meant to catch.
+    if (REJECT_LIKELIHOODS.has(safeSearch.adult)) {
       return {
         safe: false,
-        reason: "This photo appears to contain explicit or suggestive content and can't be uploaded. Please choose a different photo.",
+        reason: "This photo appears to contain explicit content and can't be uploaded. Please choose a different photo.",
       };
     }
 
