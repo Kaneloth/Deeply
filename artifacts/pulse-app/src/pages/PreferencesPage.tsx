@@ -22,6 +22,7 @@ import {
   VAPING_PREFERENCE_OPTIONS,
   PETS_PREFERENCE_OPTIONS,
   ACTIVITY_LEVEL_PREFERENCE_OPTIONS,
+  NIGHTLIFE_PREFERENCE_OPTIONS,
 } from "@/lib/lifestylePreferenceOptions";
 
 // Preference variants of the "about me" dropdowns, adding a leading
@@ -82,6 +83,7 @@ export default function PreferencesPage() {
   const [prefHasTattoos, setPrefHasTattoos] = useState("");
   const [prefPets, setPrefPets] = useState("");
   const [prefActivityLevel, setPrefActivityLevel] = useState("");
+  const [prefNightlifeFrequency, setPrefNightlifeFrequency] = useState("");
   const [prefHeightMinCm, setPrefHeightMinCm] = useState<number | null>(null);
   const [prefHeightMaxCm, setPrefHeightMaxCm] = useState<number | null>(null);
 
@@ -103,6 +105,7 @@ export default function PreferencesPage() {
       setPrefHasTattoos(profile.pref_has_tattoos || "");
       setPrefPets(profile.pref_pets || "");
       setPrefActivityLevel(profile.pref_activity_level || "");
+      setPrefNightlifeFrequency(profile.pref_nightlife_frequency || "");
       setPrefHeightMinCm(profile.pref_height_min_cm ?? null);
       setPrefHeightMaxCm(profile.pref_height_max_cm ?? null);
     }
@@ -122,7 +125,8 @@ export default function PreferencesPage() {
     prefPets !== (profile.pref_pets || "") ||
     prefActivityLevel !== (profile.pref_activity_level || "") ||
     prefHeightMinCm !== (profile.pref_height_min_cm ?? null) ||
-    prefHeightMaxCm !== (profile.pref_height_max_cm ?? null)
+    prefHeightMaxCm !== (profile.pref_height_max_cm ?? null) ||
+    prefNightlifeFrequency !== (profile.pref_nightlife_frequency || "")
   );
 
   const handleSave = async () => {
@@ -150,6 +154,7 @@ export default function PreferencesPage() {
           pref_activity_level: prefActivityLevel,
           pref_height_min_cm: prefHeightMinCm,
           pref_height_max_cm: prefHeightMaxCm,
+          pref_nightlife_frequency: prefNightlifeFrequency,
         }),
       });
       const body = await res.json();
@@ -204,6 +209,7 @@ export default function PreferencesPage() {
         <Dropdown label="Tattoos" value={prefHasTattoos} onChange={setPrefHasTattoos} options={TATTOO_PREFERENCE_OPTIONS} />
         <Dropdown label="Pets" value={prefPets} onChange={setPrefPets} options={PETS_PREFERENCE_OPTIONS} />
         <Dropdown label="Physical activity" value={prefActivityLevel} onChange={setPrefActivityLevel} options={ACTIVITY_LEVEL_PREFERENCE_OPTIONS} />
+        <Dropdown label="Nightlife" value={prefNightlifeFrequency} onChange={setPrefNightlifeFrequency} options={NIGHTLIFE_PREFERENCE_OPTIONS} />
 
         <div className="space-y-2">
           <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">Height range</label>

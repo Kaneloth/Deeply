@@ -70,10 +70,10 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     languages_other, love_language, education, family_plans,
     notify_messages, notify_matches, notify_likes, notify_sparks,
     is_incognito,
-    has_tattoos, vaping_status, pets, height_cm, activity_level,
+    has_tattoos, vaping_status, pets, height_cm, activity_level, nightlife_frequency,
     pref_num_kids, pref_family_plans, pref_smoking_status, pref_drinking_status,
     pref_vaping_status, pref_has_tattoos, pref_pets, pref_activity_level,
-    pref_height_min_cm, pref_height_max_cm,
+    pref_height_min_cm, pref_height_max_cm, pref_nightlife_frequency,
   } = req.body as {
     name?: string;
     age?: number;
@@ -106,6 +106,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     pets?: string;
     height_cm?: number;
     activity_level?: string;
+    nightlife_frequency?: string;
     pref_num_kids?: string;
     pref_family_plans?: string;
     pref_smoking_status?: string;
@@ -116,6 +117,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     pref_activity_level?: string;
     pref_height_min_cm?: number;
     pref_height_max_cm?: number;
+    pref_nightlife_frequency?: string;
   };
   if (birthday) {
     const dob = new Date(birthday);
@@ -163,6 +165,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   if (pets !== undefined) updates.pets = pets || null;
   if (height_cm !== undefined) updates.height_cm = height_cm;
   if (activity_level !== undefined) updates.activity_level = activity_level || null;
+  if (nightlife_frequency !== undefined) updates.nightlife_frequency = nightlife_frequency || null;
   if (pref_num_kids !== undefined) updates.pref_num_kids = pref_num_kids || null;
   if (pref_family_plans !== undefined) updates.pref_family_plans = pref_family_plans || null;
   if (pref_smoking_status !== undefined) updates.pref_smoking_status = pref_smoking_status || null;
@@ -173,6 +176,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   if (pref_activity_level !== undefined) updates.pref_activity_level = pref_activity_level || null;
   if (pref_height_min_cm !== undefined) updates.pref_height_min_cm = pref_height_min_cm;
   if (pref_height_max_cm !== undefined) updates.pref_height_max_cm = pref_height_max_cm;
+  if (pref_nightlife_frequency !== undefined) updates.pref_nightlife_frequency = pref_nightlife_frequency || null;
   if (notify_messages !== undefined) updates.notify_messages = notify_messages;
   if (notify_matches !== undefined) updates.notify_matches = notify_matches;
   if (notify_likes !== undefined) updates.notify_likes = notify_likes;

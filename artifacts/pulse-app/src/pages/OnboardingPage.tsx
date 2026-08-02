@@ -10,6 +10,7 @@ import { Image as ImageIcon, Bell, Check, ChevronLeft, Play, Pause } from "lucid
 import { RadioList, ChipGrid } from "@/components/SelectorControls";
 import { RadiusSlider } from "@/components/DropdownControls";
 import { AudioRecorderControl } from "@/components/AudioRecorderControl";
+import { HeightInput } from "@/components/HeightInput";
 import {
   INTERESTS,
   DATING_INTENTIONS,
@@ -25,13 +26,18 @@ import {
   LANGUAGES,
   AUDIO_PROMPT_QUESTIONS,
 } from "@/lib/preferenceOptions";
+import {
+  VAPING_OPTIONS,
+  TATTOO_OPTIONS,
+  PETS_OPTIONS,
+  ACTIVITY_LEVEL_OPTIONS,
+  NIGHTLIFE_OPTIONS,
+} from "@/lib/lifestylePreferenceOptions";
 
-const TOTAL_STEPS = 18;
+const TOTAL_STEPS = 24;
 
 // Birthday picker bounds: must be at least 18, and a sane upper bound of
-// 100 years old, so the native date picker only lets you select a valid
-// range rather than allowing (and only rejecting after the fact) a date
-// that would make someone under 18.
+// 100 years old.
 const today = new Date();
 const MAX_BIRTHDATE = new Date(today.getFullYear() - 18, today.getMonth(), today.getDate())
   .toISOString()
@@ -108,7 +114,13 @@ export default function OnboardingPage() {
   const [numKids, setNumKids] = useState("");
   const [familyPlans, setFamilyPlans] = useState("");
   const [smokingStatus, setSmokingStatus] = useState("");
+  const [vapingStatus, setVapingStatus] = useState("");
   const [drinkingStatus, setDrinkingStatus] = useState("");
+  const [nightlifeFrequency, setNightlifeFrequency] = useState("");
+  const [hasTattoos, setHasTattoos] = useState("");
+  const [pets, setPets] = useState("");
+  const [heightCm, setHeightCm] = useState<number | null>(null);
+  const [activityLevel, setActivityLevel] = useState("");
   const [loveLanguage, setLoveLanguage] = useState("");
   const [education, setEducation] = useState("");
   const [languagesSpoken, setLanguagesSpoken] = useState<string[]>([]);
@@ -266,7 +278,13 @@ export default function OnboardingPage() {
           num_kids: numKids,
           family_plans: familyPlans,
           smoking_status: smokingStatus,
+          vaping_status: vapingStatus,
           drinking_status: drinkingStatus,
+          nightlife_frequency: nightlifeFrequency,
+          has_tattoos: hasTattoos,
+          pets,
+          height_cm: heightCm,
+          activity_level: activityLevel,
           love_language: loveLanguage,
           education,
           languages_spoken: languagesSpoken,
@@ -430,27 +448,70 @@ export default function OnboardingPage() {
         )}
 
         {step === 10 && (
+          <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={vapingStatus ? "Continue" : "Skip for now"}>
+            <h2 className="text-2xl font-['Syne'] font-bold mb-6">Do you vape?</h2>
+            <RadioList value={vapingStatus} onChange={setVapingStatus} options={VAPING_OPTIONS} />
+          </StepShell>
+        )}
+
+        {step === 11 && (
           <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={drinkingStatus ? "Continue" : "Skip for now"}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-6">Do you drink?</h2>
             <RadioList value={drinkingStatus} onChange={setDrinkingStatus} options={DRINKING_OPTIONS} />
           </StepShell>
         )}
 
-        {step === 11 && (
+        {step === 12 && (
+          <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={nightlifeFrequency ? "Continue" : "Skip for now"}>
+            <h2 className="text-2xl font-['Syne'] font-bold mb-2">Do you go clubbing or out at night?</h2>
+            <p className="text-sm text-muted-foreground mb-6">How often do you hit clubs or night outs?</p>
+            <RadioList value={nightlifeFrequency} onChange={setNightlifeFrequency} options={NIGHTLIFE_OPTIONS} />
+          </StepShell>
+        )}
+
+        {step === 13 && (
+          <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={hasTattoos ? "Continue" : "Skip for now"}>
+            <h2 className="text-2xl font-['Syne'] font-bold mb-6">Do you have any tattoos?</h2>
+            <RadioList value={hasTattoos} onChange={setHasTattoos} options={TATTOO_OPTIONS} />
+          </StepShell>
+        )}
+
+        {step === 14 && (
+          <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={pets ? "Continue" : "Skip for now"}>
+            <h2 className="text-2xl font-['Syne'] font-bold mb-6">Do you have pets?</h2>
+            <RadioList value={pets} onChange={setPets} options={PETS_OPTIONS} />
+          </StepShell>
+        )}
+
+        {step === 15 && (
+          <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={heightCm ? "Continue" : "Skip for now"}>
+            <h2 className="text-2xl font-['Syne'] font-bold mb-6">How tall are you?</h2>
+            <HeightInput valueCm={heightCm} onChange={setHeightCm} />
+          </StepShell>
+        )}
+
+        {step === 16 && (
+          <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={activityLevel ? "Continue" : "Skip for now"}>
+            <h2 className="text-2xl font-['Syne'] font-bold mb-6">How active are you?</h2>
+            <RadioList value={activityLevel} onChange={setActivityLevel} options={ACTIVITY_LEVEL_OPTIONS} />
+          </StepShell>
+        )}
+
+        {step === 17 && (
           <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={loveLanguage ? "Continue" : "Skip for now"}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-6">What's your love language?</h2>
             <RadioList value={loveLanguage} onChange={setLoveLanguage} options={LOVE_LANGUAGE_OPTIONS} />
           </StepShell>
         )}
 
-        {step === 12 && (
+        {step === 18 && (
           <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={education ? "Continue" : "Skip for now"}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-6">Highest level of education?</h2>
             <RadioList value={education} onChange={setEducation} options={EDUCATION_OPTIONS} />
           </StepShell>
         )}
 
-        {step === 13 && (
+        {step === 19 && (
           <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={languagesSpoken.length > 0 ? "Continue" : "Skip for now"}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-2">What languages do you speak?</h2>
             <p className="text-sm text-muted-foreground mb-6">Select up to 5.</p>
@@ -469,7 +530,7 @@ export default function OnboardingPage() {
           </StepShell>
         )}
 
-        {step === 14 && (
+        {step === 20 && (
           <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={photoCount > 0 ? "Continue" : "Skip for now"}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-2">📸 Photos & Video</h2>
             <p className="text-sm text-muted-foreground mb-6">
@@ -501,7 +562,7 @@ export default function OnboardingPage() {
           </StepShell>
         )}
 
-        {step === 15 && (
+        {step === 21 && (
           <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={audioSaved ? "Continue" : "Skip for now"}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-2">🎙️ Record an audio prompt.</h2>
             <p className="text-sm text-muted-foreground mb-6">Your voice helps people connect with you on a deeper level.</p>
@@ -572,7 +633,7 @@ export default function OnboardingPage() {
           </StepShell>
         )}
 
-        {step === 16 && (
+        {step === 22 && (
           <StepShell step={step} onBack={goBack} onContinue={requestNotifications} continueLabel="Allow Notifications">
             <div className="flex flex-col items-center text-center mb-6">
               <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-6">
@@ -586,7 +647,6 @@ export default function OnboardingPage() {
                 { key: "messages", label: "💬 Someone messages you", value: notifyMessages, set: setNotifyMessages },
                 { key: "matches", label: "❤️ You get a new match", value: notifyMatches, set: setNotifyMatches },
                 { key: "likes", label: "🔥 Someone likes your profile", value: notifyLikes, set: setNotifyLikes },
-                { key: "sparks", label: "🎁 Your free Sparks are granted", value: notifySparks, set: setNotifySparks },
               ].map((item) => (
                 <button
                   key={item.key}
@@ -608,13 +668,12 @@ export default function OnboardingPage() {
           </StepShell>
         )}
 
-        {step === 17 && (
+        {step === 23 && (
           <motion.div key={step} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex-1 flex flex-col">
             <div className="flex-1 flex flex-col items-center justify-center text-center">
               <div className="text-5xl mb-6">🎉</div>
               <h1 className="text-3xl font-['Syne'] font-bold mb-3">You're all set!</h1>
-              <p className="text-muted-foreground mb-1">Welcome to Deeply.</p>
-              <p className="text-muted-foreground mb-6">You have 300 free Sparks to get started.</p>
+              <p className="text-muted-foreground mb-6">Welcome to Deeply.</p>
               <p className="text-xs text-muted-foreground max-w-xs">💡 Tip: Add more photos and record an audio prompt to stand out.</p>
             </div>
             <Button

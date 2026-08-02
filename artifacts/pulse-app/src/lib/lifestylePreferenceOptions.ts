@@ -33,6 +33,13 @@ export const ACTIVITY_LEVEL_OPTIONS = [
   { value: "very_active", label: "Very active / athlete" },
 ];
 
+export const NIGHTLIFE_OPTIONS = [
+  { value: "never", label: "Never goes out" },
+  { value: "rarely", label: "Rarely goes out" },
+  { value: "sometimes", label: "Goes out sometimes" },
+  { value: "often", label: "Often goes out" },
+];
+
 // Preference variants — same vocabulary, plus a leading "doesn't matter"
 // option. Kept as separate constants (rather than prepending at render
 // time everywhere) so every preference dropdown is guaranteed consistent.
@@ -45,6 +52,7 @@ export const TATTOO_PREFERENCE_OPTIONS = withNoPreference(TATTOO_OPTIONS);
 export const VAPING_PREFERENCE_OPTIONS = withNoPreference(VAPING_OPTIONS);
 export const PETS_PREFERENCE_OPTIONS = withNoPreference(PETS_OPTIONS);
 export const ACTIVITY_LEVEL_PREFERENCE_OPTIONS = withNoPreference(ACTIVITY_LEVEL_OPTIONS);
+export const NIGHTLIFE_PREFERENCE_OPTIONS = withNoPreference(NIGHTLIFE_OPTIONS);
 
 // Height unit conversion helpers — canonical storage is always cm.
 export type HeightUnit = "cm" | "in" | "ft";

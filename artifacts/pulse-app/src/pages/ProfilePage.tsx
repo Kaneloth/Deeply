@@ -26,7 +26,7 @@ import {
   LANGUAGES,
   AUDIO_PROMPT_QUESTIONS,
 } from "@/lib/preferenceOptions";
-import { TATTOO_OPTIONS, VAPING_OPTIONS, PETS_OPTIONS, ACTIVITY_LEVEL_OPTIONS } from "@/lib/lifestylePreferenceOptions";
+import { TATTOO_OPTIONS, VAPING_OPTIONS, PETS_OPTIONS, ACTIVITY_LEVEL_OPTIONS, NIGHTLIFE_OPTIONS } from "@/lib/lifestylePreferenceOptions";
 import { HeightInput } from "@/components/HeightInput";
 
 interface BoostStatus {
@@ -149,6 +149,7 @@ export default function ProfilePage() {
   const [pets, setPets] = useState("");
   const [heightCm, setHeightCm] = useState<number | null>(null);
   const [activityLevel, setActivityLevel] = useState("");
+  const [nightlifeFrequency, setNightlifeFrequency] = useState("");
 
   const toggleInterest = (v: string) => {
     setInterests((prev) => (prev.includes(v) ? prev.filter((i) => i !== v) : prev.length < 10 ? [...prev, v] : prev));
@@ -737,6 +738,7 @@ export default function ProfilePage() {
       setPets(profile.pets || "");
       setHeightCm(profile.height_cm ?? null);
       setActivityLevel(profile.activity_level || "");
+      setNightlifeFrequency(profile.nightlife_frequency || "");
     }
   }, [profile]);
 
@@ -759,7 +761,8 @@ export default function ProfilePage() {
     vapingStatus !== (profile.vaping_status || "") ||
     pets !== (profile.pets || "") ||
     heightCm !== (profile.height_cm ?? null) ||
-    activityLevel !== (profile.activity_level || "")
+    activityLevel !== (profile.activity_level || "") ||
+    nightlifeFrequency !== (profile.nightlife_frequency || "")
   );
 
   const handleSave = async () => {
@@ -792,6 +795,7 @@ export default function ProfilePage() {
           pets,
           height_cm: heightCm,
           activity_level: activityLevel,
+          nightlife_frequency: nightlifeFrequency,
         }),
       });
       const body = await res.json();
@@ -1240,6 +1244,7 @@ export default function ProfilePage() {
         <Dropdown label="Tattoos" value={hasTattoos} onChange={setHasTattoos} options={TATTOO_OPTIONS} />
         <Dropdown label="Pets" value={pets} onChange={setPets} options={PETS_OPTIONS} />
         <Dropdown label="Physical activity" value={activityLevel} onChange={setActivityLevel} options={ACTIVITY_LEVEL_OPTIONS} />
+        <Dropdown label="Nightlife" value={nightlifeFrequency} onChange={setNightlifeFrequency} options={NIGHTLIFE_OPTIONS} />
 
         <div className="space-y-2">
           <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">Height</label>
