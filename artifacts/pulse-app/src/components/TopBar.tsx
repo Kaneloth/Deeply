@@ -2,7 +2,6 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { Link, useLocation } from "wouter";
 import { User, Settings, LogOut, Bell } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { AppBrand } from "@/components/AppBrand";
 
 const UNREAD_POLL_INTERVAL_MS = 45_000;
 
@@ -49,7 +48,7 @@ export function TopBar() {
       className="sticky top-0 z-40 flex items-center justify-between bg-background/90 backdrop-blur-xl border-b border-border px-4 shrink-0"
       style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 12px)", paddingBottom: "12px" }}
     >
-      <AppBrand />
+      <img src="/deeply-logo.png" alt="Deeply" className="h-8 w-auto" />
       <div className="flex items-center gap-2">
         <button
           onClick={() => setLocation("/notifications")}

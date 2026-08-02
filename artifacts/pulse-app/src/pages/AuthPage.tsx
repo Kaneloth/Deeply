@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { HeartbeatVisual } from "@/components/Icons";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -230,7 +229,7 @@ export default function AuthPage() {
       <div className="flex flex-col items-center justify-center min-h-[100dvh] px-6 w-full relative text-center">
         <div className="absolute top-[-10%] left-[-20%] w-[150%] h-[50%] bg-primary/20 blur-[120px] rounded-full pointer-events-none" />
         <div className="z-10 w-full max-w-sm">
-          <HeartbeatVisual />
+          <img src="/deeply-logo.png" alt="Deeply" className="h-14 w-auto mx-auto" />
           {resetSent ? (
             <>
               <h1 className="text-2xl font-['Syne'] font-extrabold mt-6 mb-3">Check your email</h1>
@@ -283,7 +282,7 @@ export default function AuthPage() {
       <div className="flex flex-col items-center justify-center min-h-[100dvh] px-6 w-full relative text-center">
         <div className="absolute top-[-10%] left-[-20%] w-[150%] h-[50%] bg-primary/20 blur-[120px] rounded-full pointer-events-none" />
         <div className="z-10 w-full max-w-sm">
-          <HeartbeatVisual />
+          <img src="/deeply-logo.png" alt="Deeply" className="h-14 w-auto mx-auto" />
           <h1 className="text-2xl font-['Syne'] font-extrabold mt-6 mb-3">
             Enter your code
           </h1>
@@ -326,11 +325,8 @@ export default function AuthPage() {
       <div className="absolute top-[-10%] left-[-20%] w-[150%] h-[50%] bg-primary/20 blur-[120px] rounded-full pointer-events-none" />
       
       <div className="w-full z-10 flex flex-col items-center mt-[-10vh] mb-12">
-        <HeartbeatVisual />
-        <h1 className="text-5xl font-['Syne'] font-extrabold text-primary mt-4 tracking-tighter">
-          DEEPLY
-        </h1>
-        <p className="text-muted-foreground text-sm mt-2 text-center max-w-[280px]">
+        <img src="/deeply-logo.png" alt="Deeply" className="h-16 w-auto" />
+        <p className="text-muted-foreground text-sm mt-4 text-center max-w-[280px]">
           Deep connections begin with a spark.
         </p>
       </div>
