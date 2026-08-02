@@ -285,6 +285,22 @@ export default function OnboardingPage() {
           pets,
           height_cm: heightCm,
           activity_level: activityLevel,
+          // Default every lifestyle preference to "doesn't matter" —
+          // onboarding only ever asks about the user themselves for
+          // these, never what they want in a partner, so without this
+          // the Preferences page would show them all as blank/unset
+          // until the user visits it manually. They can narrow any of
+          // these down later; this just gives a sensible starting point
+          // rather than nothing at all.
+          pref_num_kids: "any",
+          pref_family_plans: "any",
+          pref_smoking_status: "any",
+          pref_vaping_status: "any",
+          pref_drinking_status: "any",
+          pref_nightlife_frequency: "any",
+          pref_has_tattoos: "any",
+          pref_pets: "any",
+          pref_activity_level: "any",
           love_language: loveLanguage,
           education,
           languages_spoken: languagesSpoken,
