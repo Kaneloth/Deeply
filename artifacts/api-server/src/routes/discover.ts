@@ -155,17 +155,24 @@ router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
     inviteBalanceAfter = quota.balance;
   }
 
-  const { error: insertError } = await supabase.from("swipes").insert({
-    swiper_id: userId,
-    target_id: targetId,
-    direction,
-  });
+  // Upsert rather than insert — this lets someone swipe again on a
+  // profile they'd already swiped on before (e.g. inviting back someone
+  // from "Who Viewed You" who they'd invited earlier, before Discover's
+  // exclusion filter hid them). A plain insert would hit the unique
+  // constraint on (swiper_id, target_id) and fail — and since the
+  // Sparks/quota charge above already happened by this point, that
+  // failure meant the person was charged for a swipe that never actually
+  // recorded. Upserting avoids that entirely.
+  const { error: insertError } = await supabase.from("swipes").upsert(
+    {
+      swiper_id: userId,
+      target_id: targetId,
+      direction,
+    },
+    { onConflict: "swiper_id,target_id" },
+  );
 
   if (insertError) {
-    if (insertError.code === "23505") {
-      res.status(409).json({ error: "You've already swiped on this profile" });
-      return;
-    }
     res.status(500).json({ error: `Failed to record swipe: ${insertError.message}` });
     return;
   }
