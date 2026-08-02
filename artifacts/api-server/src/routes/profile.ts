@@ -521,7 +521,7 @@ router.post(
       .single();
 
     if (insertError || !photo) {
-      res.status(500).json({ error: "Failed to save photo" });
+      res.status(500).json({ error: `Failed to save photo: ${insertError?.message ?? "unknown error"}` });
       return;
     }
 
