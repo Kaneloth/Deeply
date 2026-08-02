@@ -94,10 +94,6 @@ export default function DiscoverPage() {
       if (!res.ok) throw new Error(body.error ?? "Failed to reshuffle");
       setCandidates(body.candidates ?? []);
 
-      // No toast on every reshuffle — the button label itself ("Reshuffle
-      // (Free)" vs "Reshuffle") already communicates the state. The one
-      // exception: the very first time someone uses a paid reshuffle, a
-      // single explanatory note, never shown again after that.
       if (!body.wasFree && !localStorage.getItem("deeply_seen_reshuffle_cost_notice")) {
         localStorage.setItem("deeply_seen_reshuffle_cost_notice", "1");
         toast({ title: "10 Sparks used", description: "Your free reshuffle refreshes weekly — extra reshuffles cost 10 Sparks." });
@@ -148,11 +144,23 @@ export default function DiscoverPage() {
     }
   }, [token, toast]);
 
+  // Intentionally run once on mount only — NOT whenever fetchQueue/
+  // fetchInvitesCount/fetchReshuffleStatus's identity changes. Those
+  // useCallbacks include `token` in their deps, and token changes every
+  // time AuthContext silently refreshes the session in the background
+  // (which happens routinely, well before actual expiry). Depending on
+  // the callback references here meant every background token refresh
+  // re-ran this effect: isLoading flips back to true (page flashes back
+  // to the skeleton, scroll resets to top), and /discover/queue gets
+  // re-fetched from scratch — which also re-randomizes the queue, since
+  // that endpoint deliberately shuffles on every call. None of that was
+  // ever supposed to happen just because a token silently rotated.
   useEffect(() => {
     fetchQueue();
     fetchInvitesCount();
     fetchReshuffleStatus();
-  }, [fetchQueue, fetchInvitesCount, fetchReshuffleStatus]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const { refresh: refreshSparksBadge } = useSparks();
 

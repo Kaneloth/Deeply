@@ -114,9 +114,19 @@ export default function ProfilePage() {
     }
   }, [token, toast]);
 
+  // Run once on mount only. fetchProfile depends on `token`, and token
+  // changes every time AuthContext silently refreshes the session in the
+  // background — which happens routinely, well before actual expiry, and
+  // again reactively on any 401. Depending on fetchProfile's identity
+  // here meant every one of those background refreshes reset isLoading
+  // to true, flashing the whole page back to its skeleton and resetting
+  // scroll to the top — even if you were scrolled to the bottom editing
+  // preferences. None of that was supposed to happen just because a
+  // token silently rotated in the background.
   useEffect(() => {
     fetchProfile();
-  }, [fetchProfile]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [activeTab, setActiveTab] = useState<"profile" | "preferences">("profile");
 
@@ -177,9 +187,11 @@ export default function ProfilePage() {
     }
   }, [token]);
 
+  // Run once on mount only — same reasoning as fetchProfile above.
   useEffect(() => {
     fetchPhotos();
-  }, [fetchPhotos]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   interface AudioPrompt {
     id: string;
@@ -216,9 +228,11 @@ export default function ProfilePage() {
     }
   }, [token]);
 
+  // Run once on mount only — same reasoning as fetchProfile above.
   useEffect(() => {
     fetchPrompts();
-  }, [fetchPrompts]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const togglePlayPrompt = (prompt: AudioPrompt) => {
     if (playingPromptId === prompt.id) {
@@ -654,9 +668,11 @@ export default function ProfilePage() {
     }
   }, [token]);
 
+  // Run once on mount only — same reasoning as fetchProfile above.
   useEffect(() => {
     fetchBoostStatus();
-  }, [fetchBoostStatus]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleBoost = async () => {
     setIsBoosting(true);
