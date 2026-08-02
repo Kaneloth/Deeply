@@ -494,7 +494,20 @@ export default function SearchPage() {
           {results.map((r) => (
             <div
               key={r.id}
-              onClick={() => setSelectedProfile(r)}
+              onClick={() => {
+                setSelectedProfile(r);
+                // Fire-and-forget — a deliberate open of the full profile
+                // view counts as a "view" for the profile-views feature.
+                // Not awaited: no need to block opening the overlay on it.
+                fetch("/api/profile-views", {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${token}`,
+                  },
+                  body: JSON.stringify({ viewedId: r.id }),
+                }).catch(() => {});
+              }}
               className="flex items-center gap-3 p-3 rounded-2xl bg-card border border-card-border cursor-pointer hover:border-primary/40 transition-colors active:scale-[0.99]"
             >
               <div className="w-16 h-16 rounded-xl bg-muted overflow-hidden shrink-0">

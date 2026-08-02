@@ -1,7 +1,9 @@
 import { supabase } from "./supabase";
 import { logger } from "./logger";
+import { createNotification } from "./notifications-helper";
 
 const MONTHLY_GRANT_AMOUNT = 300;
+const LOW_BALANCE_THRESHOLD = 30;
 
 interface SparksProfile {
   free_sparks_balance: number;
@@ -60,6 +62,15 @@ export async function checkAndApplyMonthlyGrant(userId: string): Promise<SparksP
     reason: "Monthly free Sparks grant",
     balance_after: updated.free_sparks_balance + updated.paid_sparks_balance,
   });
+
+  // Fire-and-forget — a notification failure shouldn't block the grant
+  // itself from applying.
+  createNotification(
+    userId,
+    "spark_grant",
+    "Your free Sparks have arrived",
+    `${MONTHLY_GRANT_AMOUNT} free Sparks were just added to your balance.`,
+  ).catch(() => {});
 
   return updated as SparksProfile;
 }
@@ -131,6 +142,18 @@ export async function spendSparks(
     reason,
     balance_after: newTotal,
   });
+
+  // Only fire on the actual crossing (was above threshold, now at/below
+  // it) — not on every subsequent spend while already low, which would
+  // spam a notification per message sent.
+  if (total > LOW_BALANCE_THRESHOLD && newTotal <= LOW_BALANCE_THRESHOLD) {
+    createNotification(
+      userId,
+      "spark_low",
+      "You're running low on Sparks",
+      `You have ${newTotal} Sparks left. Recharge to keep chatting and inviting.`,
+    ).catch(() => {});
+  }
 
   return { success: true, balance: newTotal };
 }

@@ -16,6 +16,8 @@ import MatchDetailPage from '@/pages/MatchDetailPage';
 import ChatPage from '@/pages/ChatPage';
 import ProfilePage from '@/pages/ProfilePage';
 import PreferencesPage from '@/pages/PreferencesPage';
+import NotificationsPage from '@/pages/NotificationsPage';
+import WhoViewedMePage from '@/pages/WhoViewedMePage';
 import SettingsPage from '@/pages/SettingsPage';
 import AdminPage from '@/pages/AdminPage';
 import ResetPasswordPage from '@/pages/ResetPasswordPage';
@@ -56,6 +58,8 @@ function Router() {
         <Route path="/matches/:matchId/chat" component={() => <ProtectedRoute component={ChatPage} />} />
         <Route path="/profile" component={() => <ProtectedRoute component={ProfilePage} />} />
         <Route path="/preferences" component={() => <ProtectedRoute component={PreferencesPage} />} />
+        <Route path="/notifications" component={() => <ProtectedRoute component={NotificationsPage} />} />
+        <Route path="/who-viewed-me" component={() => <ProtectedRoute component={WhoViewedMePage} />} />
         <Route path="/settings" component={() => <ProtectedRoute component={SettingsPage} />} />
         <Route path="/admin" component={() => <ProtectedRoute component={AdminPage} />} />
         

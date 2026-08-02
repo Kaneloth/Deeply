@@ -6,6 +6,7 @@ import { supabase } from "../lib/supabase";
 import { spendSparks } from "../lib/sparks-helper";
 import { withComputedAge, withComputedAges } from "../lib/age";
 import { isSuperAdmin, requireSuperAdmin, requireAdminScope, type AdminScope } from "../lib/admin-auth";
+import { createNotification, createNotificationForUsers, recordProfileView } from "../lib/notifications-helper";
 
 const router: IRouter = Router();
 
@@ -1259,6 +1260,25 @@ router.post("/admin/announcements", requireAuth, requireAdminScope("manage_users
       .insert(recipientIds.map((userId) => ({ announcement_id: announcement.id, user_id: userId })));
   }
 
+  // Fan out into the notifications feed too, not just the dismissible
+  // banner — best-effort, doesn't block the announcement itself.
+  if (targetType === "specific" && recipientIds) {
+    createNotificationForUsers(recipientIds, "announcement", title.trim(), body.trim(), {
+      announcement_id: announcement.id,
+    }).catch(() => {});
+  } else {
+    const { data: allUsers } = await supabase.from("profiles").select("id");
+    if (allUsers) {
+      createNotificationForUsers(
+        allUsers.map((u) => u.id),
+        "announcement",
+        title.trim(),
+        body.trim(),
+        { announcement_id: announcement.id },
+      ).catch(() => {});
+    }
+  }
+
   res.status(201).json({ id: announcement.id });
 });
 
@@ -1326,6 +1346,145 @@ router.post("/announcements/:announcementId/dismiss", requireAuth, async (req, r
     { onConflict: "announcement_id,user_id" },
   );
   res.sendStatus(204);
+});
+
+// ============================================================
+// Notifications & Profile Views
+// ============================================================
+
+/** GET /api/notifications — most recent 50, newest first. */
+router.get("/notifications", requireAuth, async (req, res): Promise<void> => {
+  const { data, error } = await supabase
+    .from("notifications")
+    .select("*")
+    .eq("user_id", req.user!.id)
+    .order("created_at", { ascending: false })
+    .limit(50);
+
+  if (error) {
+    res.status(500).json({ error: `Failed to load notifications: ${error.message}` });
+    return;
+  }
+
+  res.json(data ?? []);
+});
+
+/** GET /api/notifications/unread-count */
+router.get("/notifications/unread-count", requireAuth, async (req, res): Promise<void> => {
+  const { count, error } = await supabase
+    .from("notifications")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", req.user!.id)
+    .eq("is_read", false);
+
+  if (error) {
+    res.status(500).json({ error: `Failed to load unread count: ${error.message}` });
+    return;
+  }
+
+  res.json({ count: count ?? 0 });
+});
+
+/** POST /api/notifications/:id/read */
+router.post("/notifications/:notificationId/read", requireAuth, async (req, res): Promise<void> => {
+  const notificationId = Array.isArray(req.params.notificationId) ? req.params.notificationId[0] : req.params.notificationId;
+  const { error } = await supabase
+    .from("notifications")
+    .update({ is_read: true })
+    .eq("id", notificationId)
+    .eq("user_id", req.user!.id);
+
+  if (error) {
+    res.status(500).json({ error: `Failed to mark notification read: ${error.message}` });
+    return;
+  }
+
+  res.sendStatus(204);
+});
+
+/** POST /api/notifications/read-all */
+router.post("/notifications/read-all", requireAuth, async (req, res): Promise<void> => {
+  const { error } = await supabase
+    .from("notifications")
+    .update({ is_read: true })
+    .eq("user_id", req.user!.id)
+    .eq("is_read", false);
+
+  if (error) {
+    res.status(500).json({ error: `Failed to mark notifications read: ${error.message}` });
+    return;
+  }
+
+  res.sendStatus(204);
+});
+
+/** POST /api/profile-views — record that the caller opened someone's
+ *  detailed profile view. */
+router.post("/profile-views", requireAuth, async (req, res): Promise<void> => {
+  const { viewedId } = req.body as { viewedId?: string };
+  if (!viewedId) {
+    res.status(400).json({ error: "viewedId is required" });
+    return;
+  }
+
+  try {
+    await recordProfileView(req.user!.id, viewedId);
+  } catch {
+    // Non-fatal — view tracking failing shouldn't break the profile view
+    // itself for the person looking.
+  }
+
+  res.sendStatus(204);
+});
+
+/** GET /api/profile-views/who-viewed-me — distinct recent viewers, most
+ *  recent view first, with basic profile info to display. */
+router.get("/profile-views/who-viewed-me", requireAuth, async (req, res): Promise<void> => {
+  const { data: views, error } = await supabase
+    .from("profile_views")
+    .select("viewer_id, created_at")
+    .eq("viewed_id", req.user!.id)
+    .order("created_at", { ascending: false })
+    .limit(200);
+
+  if (error) {
+    res.status(500).json({ error: `Failed to load viewers: ${error.message}` });
+    return;
+  }
+
+  // Dedupe to one entry per viewer, keeping their most recent view time
+  // (views are already ordered newest-first, so the first occurrence
+  // of each viewer_id is the most recent).
+  const seen = new Set<string>();
+  const latestViews: { viewer_id: string; created_at: string }[] = [];
+  for (const v of views ?? []) {
+    if (seen.has(v.viewer_id)) continue;
+    seen.add(v.viewer_id);
+    latestViews.push(v);
+  }
+
+  const viewerIds = latestViews.map((v) => v.viewer_id);
+  if (viewerIds.length === 0) {
+    res.json([]);
+    return;
+  }
+
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("id, name, age, birthday, city, photo_url, personality_tags")
+    .in("id", viewerIds);
+
+  const profileMap = new Map((profiles ?? []).map((p) => [p.id, p]));
+  const merged = withComputedAges(
+    latestViews
+      .map((v) => {
+        const profile = profileMap.get(v.viewer_id);
+        return profile ? { ...profile, viewed_at: v.created_at } : null;
+      })
+      .filter((p): p is NonNullable<typeof p> => p !== null),
+  );
+
+  res.json(merged);
 });
 
 export default router;
