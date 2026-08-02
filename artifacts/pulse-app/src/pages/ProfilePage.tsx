@@ -12,14 +12,11 @@ import { SparksModal } from "@/components/SparksModal";
 import { motion, AnimatePresence } from "framer-motion";
 import { PageHeader } from "@/components/PageHeader";
 import { ChipGrid } from "@/components/SelectorControls";
-import { Dropdown, MultiSelectDropdown, RadiusSlider } from "@/components/DropdownControls";
+import { Dropdown, MultiSelectDropdown } from "@/components/DropdownControls";
 import { AudioRecorderControl } from "@/components/AudioRecorderControl";
 import {
   INTERESTS,
-  DATING_INTENTIONS,
-  RELATIONSHIP_TYPES,
   GENDER_OPTIONS,
-  LOOKING_FOR_OPTIONS,
   NUM_KIDS_OPTIONS,
   FAMILY_PLANS_OPTIONS,
   SMOKING_OPTIONS,
@@ -29,6 +26,8 @@ import {
   LANGUAGES,
   AUDIO_PROMPT_QUESTIONS,
 } from "@/lib/preferenceOptions";
+import { TATTOO_OPTIONS, VAPING_OPTIONS, PETS_OPTIONS, ACTIVITY_LEVEL_OPTIONS } from "@/lib/lifestylePreferenceOptions";
+import { HeightInput } from "@/components/HeightInput";
 
 interface BoostStatus {
   is_active: boolean;
@@ -128,8 +127,6 @@ export default function ProfilePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const [activeTab, setActiveTab] = useState<"profile" | "preferences">("profile");
-
   const [formData, setFormData] = useState({
     name: "",
     birthday: "",
@@ -138,10 +135,6 @@ export default function ProfilePage() {
   });
 
   const [gender, setGender] = useState("");
-  const [lookingForGender, setLookingForGender] = useState("");
-  const [distanceKm, setDistanceKm] = useState(25);
-  const [relationshipType, setRelationshipType] = useState("");
-  const [intentions, setIntentions] = useState<string[]>([]);
   const [interests, setInterests] = useState<string[]>([]);
   const [numKids, setNumKids] = useState("");
   const [familyPlans, setFamilyPlans] = useState("");
@@ -151,10 +144,12 @@ export default function ProfilePage() {
   const [languagesOther, setLanguagesOther] = useState("");
   const [loveLanguage, setLoveLanguage] = useState("");
   const [education, setEducation] = useState("");
+  const [hasTattoos, setHasTattoos] = useState("");
+  const [vapingStatus, setVapingStatus] = useState("");
+  const [pets, setPets] = useState("");
+  const [heightCm, setHeightCm] = useState<number | null>(null);
+  const [activityLevel, setActivityLevel] = useState("");
 
-  const toggleIntention = (v: string) => {
-    setIntentions((prev) => (prev.includes(v) ? prev.filter((i) => i !== v) : prev.length < 3 ? [...prev, v] : prev));
-  };
   const toggleInterest = (v: string) => {
     setInterests((prev) => (prev.includes(v) ? prev.filter((i) => i !== v) : prev.length < 10 ? [...prev, v] : prev));
   };
@@ -728,10 +723,6 @@ export default function ProfilePage() {
         bio: profile.bio || ""
       });
       setGender(profile.gender || "");
-      setLookingForGender(profile.looking_for_gender || "");
-      setDistanceKm(profile.distance_km ?? 25);
-      setRelationshipType(profile.relationship_type || "");
-      setIntentions(profile.dating_intentions || []);
       setInterests(profile.personality_tags || []);
       setNumKids(profile.num_kids || "");
       setFamilyPlans(profile.family_plans || "");
@@ -741,6 +732,11 @@ export default function ProfilePage() {
       setLanguagesOther(profile.languages_other || "");
       setLoveLanguage(profile.love_language || "");
       setEducation(profile.education || "");
+      setHasTattoos(profile.has_tattoos || "");
+      setVapingStatus(profile.vaping_status || "");
+      setPets(profile.pets || "");
+      setHeightCm(profile.height_cm ?? null);
+      setActivityLevel(profile.activity_level || "");
     }
   }, [profile]);
 
@@ -750,10 +746,6 @@ export default function ProfilePage() {
     formData.city !== (profile.city || "") ||
     formData.bio !== (profile.bio || "") ||
     gender !== (profile.gender || "") ||
-    lookingForGender !== (profile.looking_for_gender || "") ||
-    distanceKm !== (profile.distance_km ?? 25) ||
-    relationshipType !== (profile.relationship_type || "") ||
-    JSON.stringify(intentions) !== JSON.stringify(profile.dating_intentions || []) ||
     JSON.stringify(interests) !== JSON.stringify(profile.personality_tags || []) ||
     numKids !== (profile.num_kids || "") ||
     familyPlans !== (profile.family_plans || "") ||
@@ -762,7 +754,12 @@ export default function ProfilePage() {
     JSON.stringify(languagesSpoken) !== JSON.stringify(profile.languages_spoken || []) ||
     languagesOther !== (profile.languages_other || "") ||
     loveLanguage !== (profile.love_language || "") ||
-    education !== (profile.education || "")
+    education !== (profile.education || "") ||
+    hasTattoos !== (profile.has_tattoos || "") ||
+    vapingStatus !== (profile.vaping_status || "") ||
+    pets !== (profile.pets || "") ||
+    heightCm !== (profile.height_cm ?? null) ||
+    activityLevel !== (profile.activity_level || "")
   );
 
   const handleSave = async () => {
@@ -781,10 +778,6 @@ export default function ProfilePage() {
           city: formData.city,
           bio: formData.bio,
           gender,
-          looking_for_gender: lookingForGender,
-          distance_km: distanceKm,
-          relationship_type: relationshipType,
-          dating_intentions: intentions,
           personality_tags: interests,
           num_kids: numKids,
           family_plans: familyPlans,
@@ -794,6 +787,11 @@ export default function ProfilePage() {
           languages_other: languagesOther,
           love_language: loveLanguage,
           education,
+          has_tattoos: hasTattoos,
+          vaping_status: vapingStatus,
+          pets,
+          height_cm: heightCm,
+          activity_level: activityLevel,
         }),
       });
       const body = await res.json();
@@ -819,27 +817,6 @@ export default function ProfilePage() {
     <div className="min-h-full px-6 pb-6 pt-6 bg-background">
       <PageHeader title="Profile" />
 
-      <div className="flex gap-2 mb-6">
-        <button
-          onClick={() => setActiveTab("profile")}
-          className={`flex-1 h-10 rounded-xl text-sm font-semibold transition-colors ${
-            activeTab === "profile" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
-          }`}
-        >
-          Profile
-        </button>
-        <button
-          onClick={() => setActiveTab("preferences")}
-          className={`flex-1 h-10 rounded-xl text-sm font-semibold transition-colors ${
-            activeTab === "preferences" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
-          }`}
-        >
-          Preferences
-        </button>
-      </div>
-
-      {activeTab === "profile" && (
-      <>
       <div className="flex flex-col items-center mb-10">
         <div className="relative">
           <div className="w-28 h-28 rounded-full border-4 border-background bg-muted overflow-hidden shadow-2xl relative z-10">
@@ -1245,23 +1222,8 @@ export default function ProfilePage() {
             className="bg-card border-card-border min-h-[120px] resize-none rounded-xl p-4 text-base leading-relaxed" 
           />
         </div>
-      </div>
-      </>
-      )}
 
-      {activeTab === "preferences" && (
-      <div className="space-y-6">
         <Dropdown label="I am a" value={gender} onChange={setGender} options={GENDER_OPTIONS} />
-        <Dropdown label="Looking for" value={lookingForGender} onChange={setLookingForGender} options={LOOKING_FOR_OPTIONS} />
-        <RadiusSlider valueKm={distanceKm} onChange={setDistanceKm} />
-        <Dropdown label="Relationship type" value={relationshipType} onChange={setRelationshipType} options={RELATIONSHIP_TYPES} />
-
-        <div className="space-y-3">
-          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">
-            What matters most to you (up to 3)
-          </h3>
-          <ChipGrid options={DATING_INTENTIONS} selected={intentions} onToggle={toggleIntention} max={3} />
-        </div>
 
         <div className="space-y-3">
           <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">
@@ -1273,7 +1235,17 @@ export default function ProfilePage() {
         <Dropdown label="Kids" value={numKids} onChange={setNumKids} options={NUM_KIDS_OPTIONS} />
         <Dropdown label="Family plans" value={familyPlans} onChange={setFamilyPlans} options={FAMILY_PLANS_OPTIONS} />
         <Dropdown label="Smoking" value={smokingStatus} onChange={setSmokingStatus} options={SMOKING_OPTIONS} />
+        <Dropdown label="Vaping" value={vapingStatus} onChange={setVapingStatus} options={VAPING_OPTIONS} />
         <Dropdown label="Drinking" value={drinkingStatus} onChange={setDrinkingStatus} options={DRINKING_OPTIONS} />
+        <Dropdown label="Tattoos" value={hasTattoos} onChange={setHasTattoos} options={TATTOO_OPTIONS} />
+        <Dropdown label="Pets" value={pets} onChange={setPets} options={PETS_OPTIONS} />
+        <Dropdown label="Physical activity" value={activityLevel} onChange={setActivityLevel} options={ACTIVITY_LEVEL_OPTIONS} />
+
+        <div className="space-y-2">
+          <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">Height</label>
+          <HeightInput valueCm={heightCm} onChange={setHeightCm} />
+        </div>
+
         <Dropdown label="Love language" value={loveLanguage} onChange={setLoveLanguage} options={LOVE_LANGUAGE_OPTIONS} />
         <Dropdown label="Education" value={education} onChange={setEducation} options={EDUCATION_OPTIONS} />
 
@@ -1290,7 +1262,6 @@ export default function ProfilePage() {
           </div>
         )}
       </div>
-      )}
 
       {hasChanges && (
         <div className="mt-8 pb-2">

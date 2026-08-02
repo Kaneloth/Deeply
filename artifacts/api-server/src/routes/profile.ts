@@ -67,6 +67,10 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     languages_other, love_language, education, family_plans,
     notify_messages, notify_matches, notify_likes, notify_sparks,
     is_incognito,
+    has_tattoos, vaping_status, pets, height_cm, activity_level,
+    pref_num_kids, pref_family_plans, pref_smoking_status, pref_drinking_status,
+    pref_vaping_status, pref_has_tattoos, pref_pets, pref_activity_level,
+    pref_height_min_cm, pref_height_max_cm,
   } = req.body as {
     name?: string;
     age?: number;
@@ -94,6 +98,21 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     notify_likes?: boolean;
     notify_sparks?: boolean;
     is_incognito?: boolean;
+    has_tattoos?: string;
+    vaping_status?: string;
+    pets?: string;
+    height_cm?: number;
+    activity_level?: string;
+    pref_num_kids?: string;
+    pref_family_plans?: string;
+    pref_smoking_status?: string;
+    pref_drinking_status?: string;
+    pref_vaping_status?: string;
+    pref_has_tattoos?: string;
+    pref_pets?: string;
+    pref_activity_level?: string;
+    pref_height_min_cm?: number;
+    pref_height_max_cm?: number;
   };
   if (birthday) {
     const dob = new Date(birthday);
@@ -136,6 +155,21 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   if (love_language !== undefined) updates.love_language = love_language || null;
   if (education !== undefined) updates.education = education || null;
   if (family_plans !== undefined) updates.family_plans = family_plans || null;
+  if (has_tattoos !== undefined) updates.has_tattoos = has_tattoos || null;
+  if (vaping_status !== undefined) updates.vaping_status = vaping_status || null;
+  if (pets !== undefined) updates.pets = pets || null;
+  if (height_cm !== undefined) updates.height_cm = height_cm;
+  if (activity_level !== undefined) updates.activity_level = activity_level || null;
+  if (pref_num_kids !== undefined) updates.pref_num_kids = pref_num_kids || null;
+  if (pref_family_plans !== undefined) updates.pref_family_plans = pref_family_plans || null;
+  if (pref_smoking_status !== undefined) updates.pref_smoking_status = pref_smoking_status || null;
+  if (pref_drinking_status !== undefined) updates.pref_drinking_status = pref_drinking_status || null;
+  if (pref_vaping_status !== undefined) updates.pref_vaping_status = pref_vaping_status || null;
+  if (pref_has_tattoos !== undefined) updates.pref_has_tattoos = pref_has_tattoos || null;
+  if (pref_pets !== undefined) updates.pref_pets = pref_pets || null;
+  if (pref_activity_level !== undefined) updates.pref_activity_level = pref_activity_level || null;
+  if (pref_height_min_cm !== undefined) updates.pref_height_min_cm = pref_height_min_cm;
+  if (pref_height_max_cm !== undefined) updates.pref_height_max_cm = pref_height_max_cm;
   if (notify_messages !== undefined) updates.notify_messages = notify_messages;
   if (notify_matches !== undefined) updates.notify_matches = notify_matches;
   if (notify_likes !== undefined) updates.notify_likes = notify_likes;

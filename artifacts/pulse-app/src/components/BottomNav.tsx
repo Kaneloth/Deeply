@@ -1,6 +1,6 @@
 import { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { Compass, Search, Mail, Heart, HeartHandshake } from "lucide-react";
+import { Compass, Search, Mail, Heart, HeartHandshake, SlidersHorizontal } from "lucide-react";
 
 function InvitesIcon({ size }: { size: number }) {
   return (
@@ -23,6 +23,7 @@ export function BottomNav() {
       <NavItem href="/search" icon={<Search size={22} />} active={location === "/search"} label="Search" />
       <NavItem href="/invites" icon={<InvitesIcon size={22} />} active={location === "/invites"} label="Invites" />
       <NavItem href="/matches" icon={<HeartHandshake size={22} />} active={location.startsWith("/matches")} label="Matches" />
+      <NavItem href="/preferences" icon={<SlidersHorizontal size={22} />} active={location === "/preferences"} label="Preferences" />
     </nav>
   );
 }
