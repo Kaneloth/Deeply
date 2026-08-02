@@ -2,10 +2,10 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Link } from "wouter";
 import { Skeleton } from "@/components/ui/skeleton";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/PageHeader";
-import { UserX, Flag } from "lucide-react";
+import { UserX, Flag, Sparkles, ChevronDown } from "lucide-react";
 import { ReportBlockModal } from "@/components/ReportBlockModal";
 
 interface MatchedUser {
@@ -21,6 +21,7 @@ interface Match {
   message_count: number;
   created_at: string;
   has_unread?: boolean;
+  is_new?: boolean;
 }
 
 export default function MatchesPage() {
@@ -28,6 +29,7 @@ export default function MatchesPage() {
   const { toast } = useToast();
   const [matches, setMatches] = useState<Match[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [showNewMatches, setShowNewMatches] = useState(true);
 
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
   const [reportTarget, setReportTarget] = useState<{ id: string; name: string; matchId: string } | null>(null);
@@ -86,11 +88,15 @@ export default function MatchesPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [token, toast]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
 
+  // Run once on mount only — same reload-on-token-refresh fix applied
+  // elsewhere in the app.
   useEffect(() => {
     fetchMatches();
-  }, [fetchMatches]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (isLoading) {
     return (
@@ -109,6 +115,9 @@ export default function MatchesPage() {
     );
   }
 
+  const newMatches = matches.filter((m) => m.is_new);
+  const regularMatches = matches.filter((m) => !m.is_new);
+
   return (
     <div className="px-4 pb-6 pt-6 min-h-full">
       <PageHeader title="Matches" />
@@ -124,8 +133,66 @@ export default function MatchesPage() {
           </p>
         </div>
       ) : (
-        <div className="space-y-4">
-          {matches.map((match, idx) => (
+        <>
+          {newMatches.length > 0 && (
+            <div className="mb-6">
+              <button
+                onClick={() => setShowNewMatches((v) => !v)}
+                className="w-full flex items-center justify-between mb-3"
+              >
+                <h3 className="text-sm font-semibold flex items-center gap-1.5 text-foreground">
+                  <Sparkles size={15} className="text-primary" />
+                  {newMatches.length} New Match{newMatches.length === 1 ? "" : "es"}
+                </h3>
+                <ChevronDown
+                  size={16}
+                  className={`text-muted-foreground transition-transform ${showNewMatches ? "rotate-180" : ""}`}
+                />
+              </button>
+
+              <AnimatePresence>
+                {showNewMatches && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.25 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="flex gap-4 overflow-x-auto pb-2 -mx-1 px-1 no-scrollbar">
+                      {newMatches.map((match) => (
+                        <Link
+                          key={match.id}
+                          href={`/matches/${match.id}`}
+                          className="flex flex-col items-center gap-1.5 shrink-0 w-[72px]"
+                        >
+                          <div className="w-16 h-16 rounded-full p-[2px] bg-gradient-accent">
+                            <div className="w-full h-full rounded-full overflow-hidden border-2 border-background bg-muted">
+                              {match.matched_user?.photo_url ? (
+                                <img src={match.matched_user.photo_url} alt="" className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/20 to-accent/20">
+                                  <span className="text-primary text-lg font-bold font-['Syne']">
+                                    {match.matched_user?.name?.[0] || "?"}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <p className="text-xs font-medium truncate w-full text-center">
+                            {match.matched_user?.name}
+                          </p>
+                        </Link>
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
+
+          <div className="space-y-4">
+            {regularMatches.map((match, idx) => (
             <motion.div
               key={match.id}
               initial={{ opacity: 0, y: 10 }}
@@ -212,8 +279,9 @@ export default function MatchesPage() {
                 </>
               )}
             </motion.div>
-          ))}
-        </div>
+            ))}
+          </div>
+        </>
       )}
 
       {reportTarget && (

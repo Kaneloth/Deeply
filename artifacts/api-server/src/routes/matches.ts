@@ -34,9 +34,23 @@ async function formatMatch(m: Record<string, any>, viewerId: string) {
   };
 }
 
-/** GET /api/matches — list all matches (chat is always open, no expiry) */
+/** GET /api/matches — list all matches (chat is always open, no expiry).
+ *  Also computes which matches are "new" (created since this viewer last
+ *  loaded this page), then immediately updates their last-viewed
+ *  timestamp — so the very next load won't show the same matches as new
+ *  again, but this response correctly reflects what was new *before*
+ *  this view. */
 router.get("/matches", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
+
+  const { data: viewerProfile } = await supabase
+    .from("profiles")
+    .select("matches_last_viewed_at")
+    .eq("id", userId)
+    .single();
+  const lastViewedAt = viewerProfile?.matches_last_viewed_at
+    ? new Date(viewerProfile.matches_last_viewed_at)
+    : new Date(0);
 
   const { data: rawMatches } = await supabase
     .from("matches")
@@ -66,7 +80,56 @@ router.get("/matches", requireAuth, async (req, res): Promise<void> => {
     matches.map((m) => formatMatch(m as Record<string, any>, userId)),
   );
 
-  res.json(formatted.map((m) => ({ ...m, has_unread: unreadMatchIds.has(m.id) })));
+  const result = formatted.map((m) => ({
+    ...m,
+    has_unread: unreadMatchIds.has(m.id),
+    is_new: new Date(m.created_at) > lastViewedAt,
+  }));
+
+  // Now that we've computed which were new relative to the OLD
+  // timestamp, advance it — best-effort, doesn't block the response.
+  supabase
+    .from("profiles")
+    .update({ matches_last_viewed_at: new Date().toISOString() })
+    .eq("id", userId)
+    .then(() => {});
+
+  res.json(result);
+});
+
+/** GET /api/matches/indicator-status — lightweight check for the bottom
+ *  nav dot: is there anything new or unread at all? Deliberately avoids
+ *  the full match/photo/audio hydration that GET /matches does, since
+ *  this gets polled frequently just to decide whether to show a dot. */
+router.get("/matches/indicator-status", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+
+  const [{ data: viewerProfile }, { data: myMatches }] = await Promise.all([
+    supabase.from("profiles").select("matches_last_viewed_at").eq("id", userId).single(),
+    supabase
+      .from("matches")
+      .select("id, created_at")
+      .or(`user1_id.eq.${userId},user2_id.eq.${userId}`),
+  ]);
+
+  const lastViewedAt = viewerProfile?.matches_last_viewed_at
+    ? new Date(viewerProfile.matches_last_viewed_at)
+    : new Date(0);
+  const hasNewMatch = (myMatches ?? []).some((m) => new Date(m.created_at) > lastViewedAt);
+
+  const matchIds = (myMatches ?? []).map((m) => m.id);
+  let hasUnreadMessage = false;
+  if (matchIds.length > 0) {
+    const { count } = await supabase
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .in("match_id", matchIds)
+      .eq("is_read", false)
+      .neq("sender_id", userId);
+    hasUnreadMessage = (count ?? 0) > 0;
+  }
+
+  res.json({ indicator: hasNewMatch || hasUnreadMessage });
 });
 
 /** GET /api/matches/:matchId */
