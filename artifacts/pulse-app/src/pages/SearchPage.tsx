@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { getUserIdFromToken } from "@/lib/tokenUtils";
 import { useSparks } from "@/contexts/SparksContext";
 import { useLocation } from "wouter";
 import { Input } from "@/components/ui/input";
@@ -117,6 +118,7 @@ function ProfileDetailOverlay({
 
 export default function SearchPage() {
   const { token } = useAuth();
+  const userId = getUserIdFromToken(token);
   const { refresh: refreshSparksBadge } = useSparks();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
@@ -253,8 +255,8 @@ export default function SearchPage() {
       setSelectedProfile((prev) => (prev?.id === targetId ? null : prev));
 
       if (direction === "like" && body.sparksCharged) {
-        if (!localStorage.getItem("deeply_seen_invite_quota_cost_notice")) {
-          localStorage.setItem("deeply_seen_invite_quota_cost_notice", "1");
+        if (!localStorage.getItem(`deeply_seen_invite_quota_cost_notice_${userId}`)) {
+          localStorage.setItem(`deeply_seen_invite_quota_cost_notice_${userId}`, "1");
           toast({ title: "5 Sparks used", description: "You've used today's 15 free invites — extra invites cost 5 Sparks each." });
         }
         refreshSparksBadge();

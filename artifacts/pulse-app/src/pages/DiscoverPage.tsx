@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { getUserIdFromToken } from "@/lib/tokenUtils";
 import { Link, useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -57,6 +58,7 @@ import { MatchCelebration } from "@/components/MatchCelebration";
 
 export default function DiscoverPage() {
   const { token } = useAuth();
+  const userId = getUserIdFromToken(token);
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const [candidates, setCandidates] = useState<Candidate[]>([]);
@@ -94,8 +96,8 @@ export default function DiscoverPage() {
       if (!res.ok) throw new Error(body.error ?? "Failed to reshuffle");
       setCandidates(body.candidates ?? []);
 
-      if (!body.wasFree && !localStorage.getItem("deeply_seen_reshuffle_cost_notice")) {
-        localStorage.setItem("deeply_seen_reshuffle_cost_notice", "1");
+      if (!body.wasFree && !localStorage.getItem(`deeply_seen_reshuffle_cost_notice_${userId}`)) {
+        localStorage.setItem(`deeply_seen_reshuffle_cost_notice_${userId}`, "1");
         toast({ title: "10 Sparks used", description: "Your free reshuffle refreshes weekly — extra reshuffles cost 10 Sparks." });
       }
 
@@ -201,8 +203,8 @@ export default function DiscoverPage() {
       if (direction === "super_like" || body.sparksCharged) {
         refreshSparksBadge();
       }
-      if (direction === "like" && body.sparksCharged && !localStorage.getItem("deeply_seen_invite_quota_cost_notice")) {
-        localStorage.setItem("deeply_seen_invite_quota_cost_notice", "1");
+      if (direction === "like" && body.sparksCharged && !localStorage.getItem(`deeply_seen_invite_quota_cost_notice_${userId}`)) {
+        localStorage.setItem(`deeply_seen_invite_quota_cost_notice_${userId}`, "1");
         toast({ title: "5 Sparks used", description: "You've used today's 15 free invites — extra invites cost 5 Sparks each." });
       }
       if (body.matched) {
