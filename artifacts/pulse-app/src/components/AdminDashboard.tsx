@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import {
   X, Users, Flag, Coins, Megaphone, LayoutDashboard, Loader2, Search,
   Ban, ShieldOff, Crown, Plus, Trash2, CheckCircle2, XCircle, ChevronLeft,
-  ChevronRight, ShieldCheck, AlertTriangle,
+  ChevronRight, ShieldCheck, AlertTriangle, RefreshCw,
 } from "lucide-react";
 
 type Section = "overview" | "reports" | "users" | "sparks" | "announcements" | "verification";
@@ -700,6 +700,20 @@ function UsersSection({ token, toast, isSuperAdmin }: { token: string | null; to
 
   return (
     <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          {loading ? "Loading..." : `${total.toLocaleString()} user${total === 1 ? "" : "s"}`}
+        </p>
+        <button
+          onClick={fetchUsers}
+          disabled={loading}
+          className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-secondary text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+        >
+          <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+          Refresh
+        </button>
+      </div>
+
       <div className="relative">
         <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
         <input
@@ -734,29 +748,82 @@ function UsersSection({ token, toast, isSuperAdmin }: { token: string | null; to
       ) : users.length === 0 ? (
         <EmptyNote text="No users found." />
       ) : (
-        <div className="space-y-2">
-          {users.map((u) => (
-            <button
-              key={u.id}
-              onClick={() => setSelected(u)}
-              className="w-full flex items-center gap-3 bg-card border border-card-border rounded-xl p-3 text-left"
-            >
-              <div className="w-10 h-10 rounded-full bg-muted overflow-hidden shrink-0">
-                {u.photo_url ? <img src={u.photo_url} alt="" className="w-full h-full object-cover" /> : null}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium truncate">
-                  {u.name}, {u.age}
-                </p>
-                <div className="flex gap-1 mt-0.5">
-                  {u.banned && <Tag color="destructive">Banned</Tag>}
-                  {u.suspended_until && new Date(u.suspended_until) > new Date() && <Tag color="amber">Suspended</Tag>}
-                  {u.is_admin && <Tag color="primary">Admin</Tag>}
+        <>
+          {/* Mobile — card list */}
+          <div className="lg:hidden space-y-2">
+            {users.map((u) => (
+              <button
+                key={u.id}
+                onClick={() => setSelected(u)}
+                className="w-full flex items-center gap-3 bg-card border border-card-border rounded-xl p-3 text-left"
+              >
+                <div className="w-10 h-10 rounded-full bg-muted overflow-hidden shrink-0">
+                  {u.photo_url ? <img src={u.photo_url} alt="" className="w-full h-full object-cover" /> : null}
                 </div>
-              </div>
-            </button>
-          ))}
-        </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium truncate">
+                    {u.name}, {u.age}
+                  </p>
+                  <div className="flex gap-1 mt-0.5">
+                    {u.banned && <Tag color="destructive">Banned</Tag>}
+                    {u.suspended_until && new Date(u.suspended_until) > new Date() && <Tag color="amber">Suspended</Tag>}
+                    {u.is_admin && <Tag color="primary">Admin</Tag>}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+
+          {/* Desktop — table */}
+          <div className="hidden lg:block border border-card-border rounded-xl overflow-hidden bg-card">
+            <table className="w-full text-sm">
+              <thead className="bg-secondary/60">
+                <tr>
+                  <th className="p-3 text-left font-medium text-muted-foreground">User</th>
+                  <th className="p-3 text-left font-medium text-muted-foreground">Age</th>
+                  <th className="p-3 text-left font-medium text-muted-foreground">City</th>
+                  <th className="p-3 text-left font-medium text-muted-foreground">Sparks</th>
+                  <th className="p-3 text-left font-medium text-muted-foreground">Status</th>
+                  <th className="p-3 text-right font-medium text-muted-foreground">Joined</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map((u) => (
+                  <tr
+                    key={u.id}
+                    onClick={() => setSelected(u)}
+                    className="border-t border-card-border hover:bg-secondary/40 cursor-pointer transition-colors"
+                  >
+                    <td className="p-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-full bg-muted overflow-hidden shrink-0">
+                          {u.photo_url ? <img src={u.photo_url} alt="" className="w-full h-full object-cover" /> : null}
+                        </div>
+                        <span className="font-medium">{u.name}</span>
+                      </div>
+                    </td>
+                    <td className="p-3 text-muted-foreground">{u.age}</td>
+                    <td className="p-3 text-muted-foreground">{u.city || "—"}</td>
+                    <td className="p-3 text-muted-foreground">{(u.free_sparks_balance ?? 0) + (u.paid_sparks_balance ?? 0)}</td>
+                    <td className="p-3">
+                      <div className="flex gap-1">
+                        {u.banned && <Tag color="destructive">Banned</Tag>}
+                        {u.suspended_until && new Date(u.suspended_until) > new Date() && <Tag color="amber">Suspended</Tag>}
+                        {u.is_admin && <Tag color="primary">Admin</Tag>}
+                        {!u.banned && !(u.suspended_until && new Date(u.suspended_until) > new Date()) && !u.is_admin && (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="p-3 text-right text-muted-foreground text-xs">
+                      {u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
 
       {totalPages > 1 && (
