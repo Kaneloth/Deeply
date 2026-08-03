@@ -21,6 +21,17 @@ const SECTIONS: { key: Section; label: string; icon: any; scope: AdminScope }[] 
   { key: "announcements", label: "Announcements", icon: Megaphone, scope: "manage_users" },
 ];
 
+// Desktop sidebar groups sections by what an admin is actually trying to
+// do in the moment, same reasoning as Skootlink's admin nav — matched
+// against SECTIONS by key, so a group only shows the items this admin
+// actually has scope for.
+const NAV_GROUPS: { label: string; keys: Section[] }[] = [
+  { label: "Overview", keys: ["overview"] },
+  { label: "People & Safety", keys: ["reports", "users", "verification"] },
+  { label: "Money", keys: ["sparks"] },
+  { label: "Communication", keys: ["announcements"] },
+];
+
 const MODERATION_REASONS = [
   "Fraudulent activity",
   "Fake or duplicate account",
@@ -49,39 +60,108 @@ export function AdminDashboard({ access, onClose }: { access: AdminAccess; onClo
 
   const availableSections = SECTIONS.filter((s) => access.isSuperAdmin || access.scopes.includes(s.scope));
   const [section, setSection] = useState<Section>(availableSections[0]?.key ?? "overview");
+  const currentSection = availableSections.find((s) => s.key === section);
+
+  const renderContent = () => (
+    <>
+      {section === "overview" && <OverviewSection token={token} toast={toast} />}
+      {section === "reports" && <ReportsSection token={token} toast={toast} />}
+      {section === "users" && <UsersSection token={token} toast={toast} isSuperAdmin={access.isSuperAdmin} />}
+      {section === "sparks" && <SparksSection token={token} toast={toast} />}
+      {section === "verification" && <AdminVerificationSection token={token} toast={toast} />}
+      {section === "announcements" && <AnnouncementsSection token={token} toast={toast} />}
+    </>
+  );
 
   return (
-    <div className="fixed inset-0 z-[200] bg-background flex flex-col">
-      <div className="w-full max-w-[430px] mx-auto h-full flex flex-col overflow-hidden">
-        <header className="flex-none flex items-center justify-between px-4 pt-12 pb-4 border-b border-card-border bg-card/90 backdrop-blur-xl">
-          <h1 className="font-['Syne'] font-bold text-xl">Admin Dashboard</h1>
-          <button onClick={onClose} className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
+    <div className="fixed inset-0 z-[200] bg-background flex flex-col lg:flex-row">
+      {/* Desktop sidebar — hidden below the lg breakpoint entirely, not
+          just visually, so it never mounts/fetches on mobile. */}
+      <aside className="hidden lg:flex lg:flex-col w-64 shrink-0 border-r border-card-border bg-card">
+        <div className="px-5 py-5 border-b border-card-border flex items-center gap-2.5">
+          <ShieldCheck size={22} className="text-primary shrink-0" />
+          <span className="font-['Syne'] font-bold text-lg">Admin</span>
+        </div>
+
+        <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
+          {NAV_GROUPS.map((group) => {
+            const items = availableSections.filter((s) => group.keys.includes(s.key));
+            if (items.length === 0) return null;
+            return (
+              <div key={group.label}>
+                <p className="px-3 mb-1.5 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                  {group.label}
+                </p>
+                <div className="space-y-0.5">
+                  {items.map((s) => (
+                    <button
+                      key={s.key}
+                      onClick={() => setSection(s.key)}
+                      className={`flex items-center gap-2.5 w-full px-3 py-2 rounded-xl text-sm font-medium transition-colors ${
+                        section === s.key ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+                      }`}
+                    >
+                      <s.icon size={16} className="shrink-0" />
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </nav>
+
+        <div className="px-3 py-4 border-t border-card-border">
+          <button
+            onClick={onClose}
+            className="flex items-center gap-2.5 w-full px-3 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+          >
+            <ChevronLeft size={16} className="shrink-0" />
+            Back to Settings
+          </button>
+        </div>
+      </aside>
+
+      {/* Main column — nav differs (pill tabs vs. sidebar header), but the
+          content area below is rendered exactly once regardless of
+          breakpoint. */}
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+        {/* Mobile header + pill tabs — hidden on desktop */}
+        <div className="lg:hidden flex flex-col">
+          <header className="flex-none flex items-center justify-between px-4 pt-12 pb-4 border-b border-card-border bg-card/90 backdrop-blur-xl">
+            <h1 className="font-['Syne'] font-bold text-xl">Admin Dashboard</h1>
+            <button onClick={onClose} className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
+              <X size={16} />
+            </button>
+          </header>
+          <div className="flex-none flex gap-2 px-4 py-3 overflow-x-auto no-scrollbar border-b border-card-border">
+            {availableSections.map((s) => (
+              <button
+                key={s.key}
+                onClick={() => setSection(s.key)}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold whitespace-nowrap transition-colors shrink-0 ${
+                  section === s.key ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
+                }`}
+              >
+                <s.icon size={13} />
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Desktop header — hidden on mobile */}
+        <header className="hidden lg:flex items-center justify-between px-6 py-4 border-b border-card-border bg-card shrink-0">
+          <h1 className="font-['Syne'] font-bold text-xl">{currentSection?.label ?? "Admin"}</h1>
+          <button onClick={onClose} className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center hover:bg-secondary/70 transition-colors">
             <X size={16} />
           </button>
         </header>
 
-        <div className="flex-none flex gap-2 px-4 py-3 overflow-x-auto no-scrollbar border-b border-card-border">
-          {availableSections.map((s) => (
-            <button
-              key={s.key}
-              onClick={() => setSection(s.key)}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold whitespace-nowrap transition-colors shrink-0 ${
-                section === s.key ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
-              }`}
-            >
-              <s.icon size={13} />
-              {s.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-4">
-          {section === "overview" && <OverviewSection token={token} toast={toast} />}
-          {section === "reports" && <ReportsSection token={token} toast={toast} />}
-          {section === "users" && <UsersSection token={token} toast={toast} isSuperAdmin={access.isSuperAdmin} />}
-          {section === "sparks" && <SparksSection token={token} toast={toast} />}
-          {section === "verification" && <AdminVerificationSection token={token} toast={toast} />}
-          {section === "announcements" && <AnnouncementsSection token={token} toast={toast} />}
+        {/* Shared content area — container width adapts by breakpoint,
+            the section components themselves render only once. */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="max-w-[430px] mx-auto lg:max-w-4xl w-full p-4 lg:p-6">{renderContent()}</div>
         </div>
       </div>
     </div>
