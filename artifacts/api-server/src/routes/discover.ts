@@ -26,6 +26,30 @@ const RESHUFFLE_FREE_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
  *  to each candidate. If the viewer hasn't granted location access yet
  *  (no lat/lng on file), distance filtering is skipped entirely rather
  *  than showing an empty queue. */
+/** Shared by the invites endpoints — fetches the viewer's location once,
+ *  computes distance_km for each profile that has coordinates, and strips
+ *  the raw lat/lng before returning (never exposed to the client). Skips
+ *  filtering entirely (just returns everyone with distance_km: null) if
+ *  the viewer hasn't granted location access — invites should never be
+ *  hidden by radius, only Discover/Search do that; this is purely about
+ *  showing the distance, not filtering by it. */
+async function attachDistances<T extends { id: string; latitude?: number | null; longitude?: number | null }>(
+  viewerId: string,
+  profiles: T[],
+): Promise<(Omit<T, "latitude" | "longitude"> & { distance_km: number | null })[]> {
+  const { data: viewer } = await supabase.from("profiles").select("latitude, longitude").eq("id", viewerId).single();
+  const viewerHasLocation = viewer?.latitude != null && viewer?.longitude != null;
+
+  return profiles.map((p) => {
+    const { latitude, longitude, ...rest } = p;
+    if (viewerHasLocation && latitude != null && longitude != null) {
+      const distance_km = Math.round(haversineDistanceKm(viewer!.latitude!, viewer!.longitude!, latitude, longitude));
+      return { ...rest, distance_km };
+    }
+    return { ...rest, distance_km: null };
+  });
+}
+
 async function buildDiscoverQueue(userId: string) {
   const excludedIds = await getExcludedCandidateIds(userId);
 
@@ -40,7 +64,7 @@ async function buildDiscoverQueue(userId: string) {
 
   const { data: candidates, error } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, boosted_until, num_kids, family_plans, smoking_status, drinking_status, latitude, longitude")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, boosted_until, num_kids, family_plans, smoking_status, drinking_status, latitude, longitude")
     .not("id", "in", `(${excludedIds.join(",")})`)
     .eq("is_incognito", false)
     .limit(200);
@@ -310,7 +334,7 @@ router.post("/discover/undo", requireAuth, async (req, res): Promise<void> => {
 
   const { data: restoredProfile } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, num_kids, family_plans, smoking_status, drinking_status")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, num_kids, family_plans, smoking_status, drinking_status")
     .eq("id", lastSwipe.target_id)
     .single();
 
@@ -353,14 +377,15 @@ router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => 
 
   const { data: revealedProfiles } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, num_kids, family_plans, smoking_status, drinking_status")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, num_kids, family_plans, smoking_status, drinking_status, latitude, longitude")
     .in("id", revealedPendingIds);
 
   const superLikerIds = new Set(
     pendingInviters.filter((p) => p.direction === "super_like").map((p) => p.id),
   );
   const enriched = (revealedProfiles ?? []).map((p) => ({ ...p, super_liked: superLikerIds.has(p.id) }));
-  const enrichedWithPhotos = await attachPhotoGalleries(enriched);
+  const withDistance = await attachDistances(userId, enriched);
+  const enrichedWithPhotos = await attachPhotoGalleries(withDistance);
 
   res.json({ revealed: withComputedAges(await attachAudioPrompts(enrichedWithPhotos)), new_count: newCount });
 });
@@ -408,7 +433,7 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
 
   const { data: inviters } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, num_kids, family_plans, smoking_status, drinking_status")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, num_kids, family_plans, smoking_status, drinking_status, latitude, longitude")
     .in("id", pendingInviterIds);
 
   const superLikerIds = new Set(
@@ -416,7 +441,8 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
   );
 
   const enriched = (inviters ?? []).map((l) => ({ ...l, super_liked: superLikerIds.has(l.id) }));
-  const enrichedWithPhotos = await attachPhotoGalleries(enriched);
+  const withDistance = await attachDistances(userId, enriched);
+  const enrichedWithPhotos = await attachPhotoGalleries(withDistance);
 
   res.json({ invites: withComputedAges(await attachAudioPrompts(enrichedWithPhotos)), balance });
 });
@@ -448,7 +474,7 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
 
   let query = supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, num_kids, family_plans, smoking_status, drinking_status, latitude, longitude")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, num_kids, family_plans, smoking_status, drinking_status, latitude, longitude")
     .not("id", "in", `(${excludedIds.join(",")})`)
     .eq("is_incognito", false);
 
@@ -661,7 +687,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
 
   const excludedIds = await getExcludedCandidateIds(userId);
   const excludeClause = `(${excludedIds.join(",")})`;
-  const SELECT_FIELDS = "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, num_kids, family_plans, smoking_status, drinking_status";
+  const SELECT_FIELDS = "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, num_kids, family_plans, smoking_status, drinking_status";
 
   const { data: viewerProfile } = await supabase
     .from("profiles")
@@ -884,14 +910,15 @@ router.get("/discover/invites/sent", requireAuth, async (req, res): Promise<void
 
   const { data: sentProfiles } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, num_kids, family_plans, smoking_status, drinking_status")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, num_kids, family_plans, smoking_status, drinking_status, latitude, longitude")
     .in("id", pendingSentIds);
 
   const superSentIds = new Set(
     (outgoingLikes ?? []).filter((l) => l.direction === "super_like").map((l) => l.target_id),
   );
   const enriched = (sentProfiles ?? []).map((p) => ({ ...p, super_liked: superSentIds.has(p.id) }));
-  const enrichedWithPhotos = await attachPhotoGalleries(enriched);
+  const withDistance = await attachDistances(userId, enriched);
+  const enrichedWithPhotos = await attachPhotoGalleries(withDistance);
 
   res.json({ sent: withComputedAges(await attachAudioPrompts(enrichedWithPhotos)) });
 });

@@ -1493,7 +1493,7 @@ router.get("/profile-views/who-viewed-me", requireAuth, async (req, res): Promis
 
   const { data: profiles } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, city, photo_url, personality_tags")
+    .select("id, name, age, birthday, city, photo_url, personality_tags, is_verified, photo_verified")
     .in("id", viewerIds);
 
   const profileMap = new Map((profiles ?? []).map((p) => [p.id, p]));
