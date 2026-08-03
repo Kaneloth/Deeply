@@ -6,16 +6,17 @@ import { Input } from "@/components/ui/input";
 import {
   X, Users, Flag, Coins, Megaphone, LayoutDashboard, Loader2, Search,
   Ban, ShieldOff, Crown, Plus, Trash2, CheckCircle2, XCircle, ChevronLeft,
-  ChevronRight,
+  ChevronRight, ShieldCheck, AlertTriangle,
 } from "lucide-react";
 
-type Section = "overview" | "reports" | "users" | "sparks" | "announcements";
+type Section = "overview" | "reports" | "users" | "sparks" | "announcements" | "verification";
 type AdminScope = "manage_reports" | "manage_users" | "manage_sparks" | "view_analytics";
 
 const SECTIONS: { key: Section; label: string; icon: any; scope: AdminScope }[] = [
   { key: "overview", label: "Overview", icon: LayoutDashboard, scope: "view_analytics" },
   { key: "reports", label: "Reports", icon: Flag, scope: "manage_reports" },
   { key: "users", label: "Users", icon: Users, scope: "manage_users" },
+  { key: "verification", label: "Verification", icon: ShieldCheck, scope: "manage_users" },
   { key: "sparks", label: "Sparks", icon: Coins, scope: "manage_sparks" },
   { key: "announcements", label: "Announcements", icon: Megaphone, scope: "manage_users" },
 ];
@@ -79,6 +80,7 @@ export function AdminDashboard({ access, onClose }: { access: AdminAccess; onClo
           {section === "reports" && <ReportsSection token={token} toast={toast} />}
           {section === "users" && <UsersSection token={token} toast={toast} isSuperAdmin={access.isSuperAdmin} />}
           {section === "sparks" && <SparksSection token={token} toast={toast} />}
+          {section === "verification" && <AdminVerificationSection token={token} toast={toast} />}
           {section === "announcements" && <AnnouncementsSection token={token} toast={toast} />}
         </div>
       </div>
@@ -322,6 +324,245 @@ function ReportsSection({ token, toast }: { token: string | null; toast: any }) 
               Ban
             </button>
           </div>
+        </div>
+      ))}
+
+      {preview && (
+        <div className="fixed inset-0 z-[300] bg-black/80 flex items-center justify-center p-4" onClick={() => setPreview(null)}>
+          <img src={preview} alt="" className="max-w-full max-h-[85vh] rounded-xl object-contain" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// Identity Verification queue — free "photo" (selfie vs gallery) and
+// paid "id" (front/back/selfie) submissions reviewed together.
+// ============================================================
+const VERIFICATION_REJECTION_REASONS = [
+  "Selfie doesn't match profile photos",
+  "Selfie doesn't match ID photo",
+  "Document photo too blurry to read",
+  "Document appears altered or fake",
+  "Name/details don't match profile",
+  "Other",
+];
+
+function AdminVerificationSection({ token, toast }: { token: string | null; toast: any }) {
+  const [queue, setQueue] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [processingId, setProcessingId] = useState<string | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [rejectReasonOther, setRejectReasonOther] = useState("");
+
+  const fetchQueue = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/verification-queue", { headers: { Authorization: `Bearer ${token}` } });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to load queue");
+      setQueue(body ?? []);
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to load verification queue.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [token, toast]);
+
+  useEffect(() => {
+    fetchQueue();
+  }, [fetchQueue]);
+
+  const approve = async (submission: any) => {
+    setProcessingId(submission.id);
+    try {
+      const res = await fetch(`/api/admin/verification/${submission.id}/approve`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to approve");
+      }
+      toast({ title: `${submission.verification_type === "photo" ? "Photo" : "ID"} verification approved` });
+      setQueue((prev) => prev.filter((s) => s.id !== submission.id));
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to approve.", variant: "destructive" });
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const reject = async (submission: any) => {
+    const finalReason = rejectReason === "Other" ? rejectReasonOther.trim() : rejectReason;
+    if (!finalReason) {
+      toast({ title: "Select or enter a reason first", variant: "destructive" });
+      return;
+    }
+    setProcessingId(submission.id);
+    try {
+      const res = await fetch(`/api/admin/verification/${submission.id}/reject`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ reason: finalReason }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to reject");
+      }
+      toast({ title: "Submission rejected" });
+      setQueue((prev) => prev.filter((s) => s.id !== submission.id));
+      setRejectingId(null);
+      setRejectReason("");
+      setRejectReasonOther("");
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to reject.", variant: "destructive" });
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  if (loading) return <CenteredLoader />;
+  if (queue.length === 0) return <EmptyNote text="No pending verifications." />;
+
+  return (
+    <div className="space-y-4">
+      {queue.map((s) => (
+        <div key={s.id} className="bg-card border border-card-border rounded-2xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <p className="text-sm font-semibold">{s.user?.name ?? "Unknown user"}</p>
+              <p className="text-[10px] text-muted-foreground">{new Date(s.created_at).toLocaleString()}</p>
+            </div>
+            <Tag color={s.verification_type === "id" ? "primary" : "amber"}>
+              {s.verification_type === "id" ? "ID Verification (R99)" : "Photo Verification (Free)"}
+            </Tag>
+          </div>
+
+          <p className="text-xs font-medium text-muted-foreground mb-1.5">Existing profile photos (compare against)</p>
+          <div className="flex gap-2 mb-3 overflow-x-auto no-scrollbar">
+            {(s.gallery_photos ?? []).length === 0 ? (
+              <p className="text-xs text-muted-foreground italic">No existing gallery photos</p>
+            ) : (
+              s.gallery_photos.map((url: string) => (
+                <img
+                  key={url}
+                  src={url}
+                  alt=""
+                  onClick={() => setPreview(url)}
+                  className="w-16 h-16 object-cover rounded-lg border border-card-border shrink-0 cursor-pointer"
+                />
+              ))
+            )}
+          </div>
+
+          <p className="text-xs font-medium text-muted-foreground mb-1.5">Submitted documents</p>
+          <div className="flex gap-2 mb-3">
+            {s.selfie_url && (
+              <div className="text-center">
+                <img
+                  src={s.selfie_url}
+                  alt="Selfie"
+                  onClick={() => setPreview(s.selfie_url)}
+                  className="w-20 h-20 object-cover rounded-lg border border-card-border cursor-pointer"
+                />
+                <p className="text-[10px] text-muted-foreground mt-1">Selfie</p>
+              </div>
+            )}
+            {s.id_front_url && (
+              <div className="text-center">
+                <img
+                  src={s.id_front_url}
+                  alt="ID Front"
+                  onClick={() => setPreview(s.id_front_url)}
+                  className="w-20 h-20 object-cover rounded-lg border border-card-border cursor-pointer"
+                />
+                <p className="text-[10px] text-muted-foreground mt-1">ID Front</p>
+              </div>
+            )}
+            {s.id_back_url && (
+              <div className="text-center">
+                <img
+                  src={s.id_back_url}
+                  alt="ID Back"
+                  onClick={() => setPreview(s.id_back_url)}
+                  className="w-20 h-20 object-cover rounded-lg border border-card-border cursor-pointer"
+                />
+                <p className="text-[10px] text-muted-foreground mt-1">ID Back</p>
+              </div>
+            )}
+          </div>
+
+          {rejectingId === s.id ? (
+            <div className="space-y-2 border-t border-border pt-3">
+              <select
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                className="w-full h-9 rounded-lg bg-background border border-card-border text-xs px-2"
+              >
+                <option value="">Select a reason...</option>
+                {VERIFICATION_REJECTION_REASONS.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+              {rejectReason === "Other" && (
+                <Input
+                  placeholder="Type the reason..."
+                  value={rejectReasonOther}
+                  onChange={(e) => setRejectReasonOther(e.target.value)}
+                  className="h-9 text-xs bg-background border-card-border rounded-lg"
+                />
+              )}
+              <div className="flex gap-2">
+                <button
+                  disabled={processingId === s.id}
+                  onClick={() => reject(s)}
+                  className="flex-1 h-9 rounded-lg text-xs font-semibold bg-destructive text-destructive-foreground disabled:opacity-50"
+                >
+                  Confirm Rejection
+                </button>
+                <button
+                  onClick={() => {
+                    setRejectingId(null);
+                    setRejectReason("");
+                    setRejectReasonOther("");
+                  }}
+                  className="flex-1 h-9 rounded-lg text-xs font-medium border border-card-border"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex gap-2 border-t border-border pt-3">
+              <button
+                disabled={processingId === s.id}
+                onClick={() => approve(s)}
+                className="flex-1 h-9 rounded-lg text-xs font-semibold border border-green-500/30 text-green-500 bg-green-500/10 disabled:opacity-50"
+              >
+                Approve
+              </button>
+              <button
+                disabled={processingId === s.id}
+                onClick={() => setRejectingId(s.id)}
+                className="flex-1 h-9 rounded-lg text-xs font-semibold border border-destructive/30 text-destructive disabled:opacity-50"
+              >
+                Reject
+              </button>
+            </div>
+          )}
         </div>
       ))}
 

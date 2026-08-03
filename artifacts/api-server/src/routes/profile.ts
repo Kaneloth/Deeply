@@ -1512,4 +1512,414 @@ router.get("/profile-views/who-viewed-me", requireAuth, async (req, res): Promis
   res.json(withAudio);
 });
 
+// ============================================================
+// Identity Verification — free "Photo Verified" (selfie vs existing
+// gallery photos) and paid "ID Verified" (R99, ID front/back + selfie).
+// Admin reviews both manually; approval/rejection are the terminal
+// states, and either one triggers storage cleanup since the documents
+// don't need to be retained once reviewed.
+// ============================================================
+
+const VERIFICATION_BUCKET = "identity-documents";
+const ID_VERIFICATION_FEE = 99;
+
+const verificationUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_IMAGE_SIZE },
+  fileFilter: (_req, file, cb) => {
+    if (!ALLOWED_IMAGE_TYPES.includes(file.mimetype)) {
+      cb(new Error("Only JPEG, PNG, or WEBP images are allowed"));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
+async function uploadVerificationFile(userId: string, file: Express.Multer.File): Promise<string> {
+  const ext = file.mimetype.split("/")[1] || "jpg";
+  const path = `${userId}/${randomUUID()}.${ext}`;
+  const { error } = await supabase.storage.from(VERIFICATION_BUCKET).upload(path, file.buffer, { contentType: file.mimetype });
+  if (error) throw error;
+  return path;
+}
+
+/** POST /api/verification/photo — free tier. Selfie only, compared by an
+ *  admin against the user's existing gallery photos. */
+router.post("/verification/photo", requireAuth, verificationUpload.single("selfie"), async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+
+  if (!req.file) {
+    res.status(400).json({ error: "A selfie is required" });
+    return;
+  }
+
+  const { data: existingPending } = await supabase
+    .from("identity_verification_submissions")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("verification_type", "photo")
+    .eq("status", "pending")
+    .maybeSingle();
+  if (existingPending) {
+    res.status(400).json({ error: "You already have a photo verification pending review" });
+    return;
+  }
+
+  let selfiePath: string;
+  try {
+    selfiePath = await uploadVerificationFile(userId, req.file);
+  } catch (err) {
+    res.status(500).json({ error: `Failed to upload selfie: ${err instanceof Error ? err.message : "unknown error"}` });
+    return;
+  }
+
+  const { error: insertError } = await supabase.from("identity_verification_submissions").insert({
+    user_id: userId,
+    verification_type: "photo",
+    selfie_path: selfiePath,
+    status: "pending",
+  });
+
+  if (insertError) {
+    // Technical failure after upload — clean up the now-orphaned file.
+    await supabase.storage.from(VERIFICATION_BUCKET).remove([selfiePath]).catch(() => {});
+    res.status(500).json({ error: `Failed to submit: ${insertError.message}` });
+    return;
+  }
+
+  res.status(201).json({ success: true });
+});
+
+/** POST /api/verification/id/request-refund — user-initiated only, never
+ *  automatic. Marks the payment as 'refund_requested' so it can no
+ *  longer be used to submit (the user has said they want their money
+ *  back, not to keep trying), but does NOT itself move real money —
+ *  there's no payment gateway wired in yet, so this just flags it for
+ *  manual processing, the same as Skootlink's refund_requests pattern. */
+router.post("/verification/id/request-refund", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+
+  const { data: payment } = await supabase
+    .from("identity_verification_payments")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("status", "paid")
+    .maybeSingle();
+
+  if (!payment) {
+    res.status(400).json({ error: "No active payment found to refund" });
+    return;
+  }
+
+  const { error } = await supabase
+    .from("identity_verification_payments")
+    .update({ status: "refund_requested" })
+    .eq("id", payment.id);
+
+  if (error) {
+    res.status(500).json({ error: `Failed to submit refund request: ${error.message}` });
+    return;
+  }
+
+  res.json({ success: true });
+});
+
+/** GET /api/verification/id/payment-status */
+router.get("/verification/id/payment-status", requireAuth, async (req, res): Promise<void> => {
+  const { data } = await supabase
+    .from("identity_verification_payments")
+    .select("id")
+    .eq("user_id", req.user!.id)
+    .eq("status", "paid")
+    .maybeSingle();
+  res.json({ hasPaid: !!data });
+});
+
+/** POST /api/verification/id/pay — TEMPORARY dev-only stub, same pattern
+ *  as /sparks/purchase. Grants "paid" status instantly with no real
+ *  payment gateway. Replace with real payment verification before this
+ *  goes live to real users. */
+router.post("/verification/id/pay", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+
+  const { data: existing } = await supabase
+    .from("identity_verification_payments")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("status", "paid")
+    .maybeSingle();
+  if (existing) {
+    res.json({ success: true, alreadyPaid: true });
+    return;
+  }
+
+  const { error } = await supabase.from("identity_verification_payments").insert({
+    user_id: userId,
+    amount: ID_VERIFICATION_FEE,
+    status: "paid",
+  });
+  if (error) {
+    res.status(500).json({ error: `[DEV] Payment failed: ${error.message}` });
+    return;
+  }
+
+  res.status(201).json({ success: true });
+});
+
+/** POST /api/verification/id — paid tier. Requires an existing unused
+ *  'paid' payment record. ID front, back, and selfie all required. Any
+ *  technical failure during upload/submission reverses the payment
+ *  (status -> 'refunded') so the user isn't out R99 for a submission
+ *  that never reached the review queue — this is distinct from an admin
+ *  rejection, which deliberately leaves the payment intact so the user
+ *  can resubmit for free. */
+router.post(
+  "/verification/id",
+  requireAuth,
+  verificationUpload.fields([
+    { name: "id_front", maxCount: 1 },
+    { name: "id_back", maxCount: 1 },
+    { name: "selfie", maxCount: 1 },
+  ]),
+  async (req, res): Promise<void> => {
+    const userId = req.user!.id;
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+    const idFront = files?.id_front?.[0];
+    const idBack = files?.id_back?.[0];
+    const selfie = files?.selfie?.[0];
+
+    if (!idFront || !idBack || !selfie) {
+      res.status(400).json({ error: "ID front, ID back, and a selfie are all required" });
+      return;
+    }
+
+    const { data: payment } = await supabase
+      .from("identity_verification_payments")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("status", "paid")
+      .maybeSingle();
+    if (!payment) {
+      res.status(402).json({ error: "Payment required before submitting ID verification" });
+      return;
+    }
+
+    const { data: existingPending } = await supabase
+      .from("identity_verification_submissions")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("verification_type", "id")
+      .eq("status", "pending")
+      .maybeSingle();
+    if (existingPending) {
+      res.status(400).json({ error: "You already have an ID verification pending review" });
+      return;
+    }
+
+    let frontPath: string, backPath: string, selfiePath: string;
+    try {
+      [frontPath, backPath, selfiePath] = await Promise.all([
+        uploadVerificationFile(userId, idFront),
+        uploadVerificationFile(userId, idBack),
+        uploadVerificationFile(userId, selfie),
+      ]);
+    } catch (err) {
+      // Technical failure before reaching the review queue — the payment
+      // deliberately stays 'paid' here rather than being auto-refunded.
+      // Auto-refunding would force the user to pay again just to retry,
+      // which punishes them for a failure on our end. Instead they get a
+      // real choice: retry (their payment still works), or explicitly
+      // request a refund via /verification/id/request-refund if they'd
+      // rather not continue.
+      res.status(500).json({
+        error: `Failed to upload documents (${err instanceof Error ? err.message : "unknown error"}). Your payment is still valid — you can try again, or request a refund.`,
+        code: "UPLOAD_FAILED",
+      });
+      return;
+    }
+
+    const { error: insertError } = await supabase.from("identity_verification_submissions").insert({
+      user_id: userId,
+      verification_type: "id",
+      id_front_path: frontPath,
+      id_back_path: backPath,
+      selfie_path: selfiePath,
+      status: "pending",
+    });
+
+    if (insertError) {
+      await supabase.storage.from(VERIFICATION_BUCKET).remove([frontPath, backPath, selfiePath]).catch(() => {});
+      // Same reasoning as above — payment stays valid, no auto-refund.
+      res.status(500).json({
+        error: `Failed to submit: ${insertError.message}. Your payment is still valid — you can try again, or request a refund.`,
+        code: "UPLOAD_FAILED",
+      });
+      return;
+    }
+
+    res.status(201).json({ success: true });
+  },
+);
+
+/** GET /api/verification/status — most recent submission of each type,
+ *  regardless of status, so the profile page can show pending/approved/
+ *  rejected (with reason + resubmit option) correctly. */
+router.get("/verification/status", requireAuth, async (req, res): Promise<void> => {
+  const { data } = await supabase
+    .from("identity_verification_submissions")
+    .select("id, verification_type, status, rejection_reason, created_at")
+    .eq("user_id", req.user!.id)
+    .order("created_at", { ascending: false });
+
+  const photo = (data ?? []).find((s) => s.verification_type === "photo") ?? null;
+  const idVerification = (data ?? []).find((s) => s.verification_type === "id") ?? null;
+
+  res.json({ photo, id: idVerification });
+});
+
+/** GET /api/admin/verification-queue */
+router.get("/admin/verification-queue", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const { data: submissions, error } = await supabase
+    .from("identity_verification_submissions")
+    .select("*")
+    .eq("status", "pending")
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    res.status(500).json({ error: `Failed to load verification queue: ${error.message}` });
+    return;
+  }
+
+  const userIds = [...new Set((submissions ?? []).map((s) => s.user_id))];
+  const { data: profiles } = userIds.length
+    ? await supabase.from("profiles").select("id, name, photo_url").in("id", userIds)
+    : { data: [] };
+  const profileMap = new Map((profiles ?? []).map((p) => [p.id, p]));
+
+  // Existing gallery photos, for the admin to visually compare the
+  // submitted selfie against.
+  const { data: galleryPhotos } = userIds.length
+    ? await supabase.from("profile_photos").select("user_id, photo_url").in("user_id", userIds).eq("media_type", "image")
+    : { data: [] };
+  const galleryMap = new Map<string, string[]>();
+  for (const p of galleryPhotos ?? []) {
+    const arr = galleryMap.get(p.user_id) ?? [];
+    arr.push(p.photo_url);
+    galleryMap.set(p.user_id, arr);
+  }
+
+  const enriched = await Promise.all(
+    (submissions ?? []).map(async (s) => {
+      const signedUrls: Record<string, string | null> = { selfie_url: null, id_front_url: null, id_back_url: null };
+      const pathFields: [keyof typeof signedUrls, string | null][] = [
+        ["selfie_url", s.selfie_path],
+        ["id_front_url", s.id_front_path],
+        ["id_back_url", s.id_back_path],
+      ];
+      for (const [key, path] of pathFields) {
+        if (!path) continue;
+        const { data: signed } = await supabase.storage.from(VERIFICATION_BUCKET).createSignedUrl(path, 600);
+        signedUrls[key] = signed?.signedUrl ?? null;
+      }
+
+      return {
+        id: s.id,
+        verification_type: s.verification_type,
+        created_at: s.created_at,
+        user: profileMap.get(s.user_id) ?? null,
+        gallery_photos: galleryMap.get(s.user_id) ?? [],
+        ...signedUrls,
+      };
+    }),
+  );
+
+  res.json(enriched);
+});
+
+/** POST /api/admin/verification/:submissionId/approve */
+router.post(
+  "/admin/verification/:submissionId/approve",
+  requireAuth,
+  requireAdminScope("manage_users"),
+  async (req, res): Promise<void> => {
+    const adminId = req.user!.id;
+    const submissionId = Array.isArray(req.params.submissionId) ? req.params.submissionId[0] : req.params.submissionId;
+
+    const { data: submission } = await supabase
+      .from("identity_verification_submissions")
+      .select("*")
+      .eq("id", submissionId)
+      .single();
+    if (!submission) {
+      res.status(404).json({ error: "Submission not found" });
+      return;
+    }
+
+    const { error: updateError } = await supabase
+      .from("identity_verification_submissions")
+      .update({ status: "approved", reviewed_by: adminId, reviewed_at: new Date().toISOString() })
+      .eq("id", submissionId);
+    if (updateError) {
+      res.status(500).json({ error: `Failed to approve: ${updateError.message}` });
+      return;
+    }
+
+    const badgeField = submission.verification_type === "photo" ? "photo_verified" : "is_verified";
+    await supabase.from("profiles").update({ [badgeField]: true }).eq("id", submission.user_id);
+
+    const paths = [submission.selfie_path, submission.id_front_path, submission.id_back_path].filter(Boolean) as string[];
+    if (paths.length > 0) {
+      await supabase.storage.from(VERIFICATION_BUCKET).remove(paths).catch(() => {});
+    }
+
+    res.sendStatus(204);
+  },
+);
+
+/** POST /api/admin/verification/:submissionId/reject */
+router.post(
+  "/admin/verification/:submissionId/reject",
+  requireAuth,
+  requireAdminScope("manage_users"),
+  async (req, res): Promise<void> => {
+    const adminId = req.user!.id;
+    const submissionId = Array.isArray(req.params.submissionId) ? req.params.submissionId[0] : req.params.submissionId;
+    const { reason } = req.body as { reason?: string };
+
+    if (!reason) {
+      res.status(400).json({ error: "A rejection reason is required" });
+      return;
+    }
+
+    const { data: submission } = await supabase
+      .from("identity_verification_submissions")
+      .select("*")
+      .eq("id", submissionId)
+      .single();
+    if (!submission) {
+      res.status(404).json({ error: "Submission not found" });
+      return;
+    }
+
+    const { error } = await supabase
+      .from("identity_verification_submissions")
+      .update({ status: "rejected", rejection_reason: reason, reviewed_by: adminId, reviewed_at: new Date().toISOString() })
+      .eq("id", submissionId);
+    if (error) {
+      res.status(500).json({ error: `Failed to reject: ${error.message}` });
+      return;
+    }
+
+    // Same storage cleanup as approve — rejection is also a terminal
+    // state for these documents (the payment, if this was the paid tier,
+    // deliberately stays 'paid' so the user can resubmit for free).
+    const paths = [submission.selfie_path, submission.id_front_path, submission.id_back_path].filter(Boolean) as string[];
+    if (paths.length > 0) {
+      await supabase.storage.from(VERIFICATION_BUCKET).remove(paths).catch(() => {});
+    }
+
+    res.sendStatus(204);
+  },
+);
+
 export default router;

@@ -28,6 +28,7 @@ import {
 } from "@/lib/preferenceOptions";
 import { TATTOO_OPTIONS, VAPING_OPTIONS, PETS_OPTIONS, ACTIVITY_LEVEL_OPTIONS, NIGHTLIFE_OPTIONS } from "@/lib/lifestylePreferenceOptions";
 import { HeightInput } from "@/components/HeightInput";
+import { VerificationSection } from "@/components/VerificationSection";
 
 interface BoostStatus {
   is_active: boolean;
@@ -861,6 +862,8 @@ export default function ProfilePage() {
           </div>
         </div>
       </button>
+
+      <VerificationSection />
 
       {/* Boost Section */}
       <div className="bg-card border border-card-border rounded-2xl p-5 mb-8">
