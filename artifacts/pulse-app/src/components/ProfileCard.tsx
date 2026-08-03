@@ -17,6 +17,7 @@ export interface ProfileCardData {
   age: number;
   bio: string | null;
   city: string | null;
+  distance_km?: number | null;
   photos: CarouselPhoto[];
   personality_tags: string[];
   looking_for?: string | null;
@@ -177,9 +178,12 @@ export function ProfileCard({
             <h2 className="text-2xl font-['Syne'] font-bold text-white flex items-end gap-2 leading-tight">
               {profile.name} <span className="text-base font-normal text-white/80">{profile.age}</span>
             </h2>
-            {profile.city && (
+            {(profile.city || profile.distance_km != null) && (
               <div className="flex items-center gap-1 text-white/70 text-xs mt-0.5">
-                <MapPin size={12} /> {profile.city}
+                <MapPin size={12} />
+                {profile.city}
+                {profile.city && profile.distance_km != null && " · "}
+                {profile.distance_km != null && `${profile.distance_km} km away`}
               </div>
             )}
             {profile.looking_for && (

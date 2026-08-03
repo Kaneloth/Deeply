@@ -7,6 +7,7 @@ import { attachAudioPrompts } from "../lib/audio-prompts-helper";
 import { withComputedAge, withComputedAges } from "../lib/age";
 import { consumeFreeInviteOrCharge } from "../lib/invites-quota";
 import { getExcludedCandidateIds, getPendingInviterIds } from "../lib/discover-exclusions";
+import { haversineDistanceKm } from "../lib/geo";
 
 const router: IRouter = Router();
 
@@ -18,29 +19,62 @@ const RESHUFFLE_COST = 10;
 const RESHUFFLE_FREE_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Shared by /discover/queue and /discover/reshuffle — builds a fresh,
- *  randomized batch of candidates, boosted profiles prioritized. */
+ *  randomized batch of candidates, boosted profiles prioritized.
+ *  Distance is computed from stored lat/lng (captured from the device's
+ *  geolocation) rather than the free-text city field, and used to both
+ *  filter by the viewer's preferred radius and attach a real distance_km
+ *  to each candidate. If the viewer hasn't granted location access yet
+ *  (no lat/lng on file), distance filtering is skipped entirely rather
+ *  than showing an empty queue. */
 async function buildDiscoverQueue(userId: string) {
   const excludedIds = await getExcludedCandidateIds(userId);
 
+  const { data: viewer } = await supabase
+    .from("profiles")
+    .select("latitude, longitude, distance_km")
+    .eq("id", userId)
+    .single();
+
+  const viewerHasLocation = viewer?.latitude != null && viewer?.longitude != null;
+  const radiusKm = viewer?.distance_km ?? 25;
+
   const { data: candidates, error } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, boosted_until, num_kids, family_plans, smoking_status, drinking_status")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, boosted_until, num_kids, family_plans, smoking_status, drinking_status, latitude, longitude")
     .not("id", "in", `(${excludedIds.join(",")})`)
     .eq("is_incognito", false)
-    .limit(60);
+    .limit(200);
 
   if (error || !candidates || candidates.length === 0) {
     return { candidates: [], error };
   }
 
+  // Attach distance where computable; candidates without location data
+  // are kept (unknown distance) rather than excluded, so the pool isn't
+  // artificially shrunk just because someone hasn't granted geolocation
+  // access yet.
+  const withDistance = candidates.map((c) => {
+    if (viewerHasLocation && c.latitude != null && c.longitude != null) {
+      const distance_km = Math.round(haversineDistanceKm(viewer!.latitude!, viewer!.longitude!, c.latitude, c.longitude));
+      return { ...c, distance_km };
+    }
+    return { ...c, distance_km: null as number | null };
+  });
+
+  // Only actually filter by radius for candidates whose distance we
+  // could compute — unknown-distance candidates pass through regardless.
+  const withinRadius = viewerHasLocation
+    ? withDistance.filter((c) => c.distance_km === null || c.distance_km <= radiusKm)
+    : withDistance;
+
   const now = Date.now();
-  const boosted = candidates.filter((c) => c.boosted_until && new Date(c.boosted_until).getTime() > now);
-  const rest = candidates.filter((c) => !c.boosted_until || new Date(c.boosted_until).getTime() <= now);
+  const boosted = withinRadius.filter((c) => c.boosted_until && new Date(c.boosted_until).getTime() > now);
+  const rest = withinRadius.filter((c) => !c.boosted_until || new Date(c.boosted_until).getTime() <= now);
 
   const shuffle = <T,>(arr: T[]) => arr.sort(() => Math.random() - 0.5);
   const prioritized = [...shuffle(boosted), ...shuffle(rest)].slice(0, 20);
 
-  const strippedCandidates = prioritized.map(({ boosted_until, ...profileFields }) => profileFields);
+  const strippedCandidates = prioritized.map(({ boosted_until, latitude, longitude, ...profileFields }) => profileFields);
 
   const withPhotos = await attachPhotoGalleries(strippedCandidates);
   const withAudio = await attachAudioPrompts(withPhotos);
@@ -388,7 +422,10 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
 });
 
 /** GET /api/discover/search — filter/search the same unswiped candidate
- *  pool as /queue, by name, age range, city, and personality tags. */
+ *  pool as /queue, by name, age range, city, and personality tags. Also
+ *  respects the viewer's radius preference and attaches distance_km,
+ *  same as the queue — skipped if the viewer hasn't granted location
+ *  access yet. */
 router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
   const { name, min_age, max_age, city, tags } = req.query as {
@@ -401,9 +438,17 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
 
   const excludedIds = await getExcludedCandidateIds(userId);
 
+  const { data: viewer } = await supabase
+    .from("profiles")
+    .select("latitude, longitude, distance_km")
+    .eq("id", userId)
+    .single();
+  const viewerHasLocation = viewer?.latitude != null && viewer?.longitude != null;
+  const radiusKm = viewer?.distance_km ?? 25;
+
   let query = supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, num_kids, family_plans, smoking_status, drinking_status")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, num_kids, family_plans, smoking_status, drinking_status, latitude, longitude")
     .not("id", "in", `(${excludedIds.join(",")})`)
     .eq("is_incognito", false);
 
@@ -426,14 +471,28 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
     }
   }
 
-  const { data: results, error } = await query.limit(30);
+  const { data: results, error } = await query.limit(100);
 
   if (error) {
     res.status(500).json({ error: "Search failed" });
     return;
   }
 
-  const withPhotos = await attachPhotoGalleries(results ?? []);
+  const withDistance = (results ?? []).map((c) => {
+    if (viewerHasLocation && c.latitude != null && c.longitude != null) {
+      const distance_km = Math.round(haversineDistanceKm(viewer!.latitude!, viewer!.longitude!, c.latitude, c.longitude));
+      return { ...c, distance_km };
+    }
+    return { ...c, distance_km: null as number | null };
+  });
+
+  const withinRadius = viewerHasLocation
+    ? withDistance.filter((c) => c.distance_km === null || c.distance_km <= radiusKm)
+    : withDistance;
+
+  const stripped = withinRadius.slice(0, 30).map(({ latitude, longitude, ...rest }) => rest);
+
+  const withPhotos = await attachPhotoGalleries(stripped);
 
   res.json({ results: withComputedAges(await attachAudioPrompts(withPhotos)) });
 });

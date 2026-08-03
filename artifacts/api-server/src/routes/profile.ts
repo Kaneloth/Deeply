@@ -72,6 +72,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     notify_messages, notify_matches, notify_likes, notify_sparks,
     is_incognito,
     has_tattoos, vaping_status, pets, height_cm, activity_level, nightlife_frequency,
+    latitude, longitude,
     pref_num_kids, pref_family_plans, pref_smoking_status, pref_drinking_status,
     pref_vaping_status, pref_has_tattoos, pref_pets, pref_activity_level,
     pref_height_min_cm, pref_height_max_cm, pref_nightlife_frequency,
@@ -108,6 +109,8 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     height_cm?: number;
     activity_level?: string;
     nightlife_frequency?: string;
+    latitude?: number;
+    longitude?: number;
     pref_num_kids?: string;
     pref_family_plans?: string;
     pref_smoking_status?: string;
@@ -167,6 +170,8 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   if (height_cm !== undefined) updates.height_cm = height_cm;
   if (activity_level !== undefined) updates.activity_level = activity_level || null;
   if (nightlife_frequency !== undefined) updates.nightlife_frequency = nightlife_frequency || null;
+  if (latitude !== undefined) updates.latitude = latitude;
+  if (longitude !== undefined) updates.longitude = longitude;
   if (pref_num_kids !== undefined) updates.pref_num_kids = pref_num_kids || null;
   if (pref_family_plans !== undefined) updates.pref_family_plans = pref_family_plans || null;
   if (pref_smoking_status !== undefined) updates.pref_smoking_status = pref_smoking_status || null;

@@ -164,6 +164,37 @@ export default function DiscoverPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Capture device location once per mount and save it silently in the
+  // background, so distance-based filtering/display has real data to
+  // work with. Doesn't block or affect the queue fetch above — if this
+  // resolves after that first fetch, the next reshuffle/reload benefits
+  // from it. Silently does nothing if permission is denied or
+  // unavailable — distance filtering just doesn't apply for that user,
+  // same as before this feature existed.
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        fetch("/api/profile/me", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          }),
+        }).catch(() => {});
+      },
+      () => {
+        // Permission denied, unavailable, or timed out — non-fatal.
+      },
+      { maximumAge: 10 * 60 * 1000, timeout: 10000 },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const { refresh: refreshSparksBadge } = useSparks();
 
   const handleDecision = async (direction: SwipeDirection) => {
