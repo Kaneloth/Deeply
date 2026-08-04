@@ -687,7 +687,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
 
   const excludedIds = await getExcludedCandidateIds(userId);
   const excludeClause = `(${excludedIds.join(",")})`;
-  const SELECT_FIELDS = "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, num_kids, family_plans, smoking_status, drinking_status";
+  const SELECT_FIELDS = "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, num_kids, family_plans, smoking_status, drinking_status, latitude, longitude";
 
   const { data: viewerProfile } = await supabase
     .from("profiles")
@@ -790,7 +790,8 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
     }
   }
 
-  const withPhotos = await attachPhotoGalleries(results);
+  const withDistance = await attachDistances(userId, results);
+  const withPhotos = await attachPhotoGalleries(withDistance);
 
   res.json({ results: withComputedAges(await attachAudioPrompts(withPhotos)) });
 });
