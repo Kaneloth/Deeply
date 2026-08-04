@@ -164,6 +164,36 @@ export default function SearchPage() {
     fetchCategories();
   }, [fetchCategories]);
 
+  // Capture device location here too, not just on Discover — otherwise
+  // anyone who opens Search before ever visiting Discover has no
+  // latitude/longitude on file yet, so no distance can be computed for
+  // them anywhere in the app, even though search results themselves may
+  // well have location data. Mount-once, silent, non-blocking — same
+  // pattern as DiscoverPage.
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        fetch("/api/profile/me", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          }),
+        }).catch(() => {});
+      },
+      () => {
+        // Permission denied, unavailable, or timed out — non-fatal.
+      },
+      { maximumAge: 10 * 60 * 1000, timeout: 10000 },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const openCategory = async (category: Category) => {
     setActiveCategory(category);
     setIsSearching(true);
