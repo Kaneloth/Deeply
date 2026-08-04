@@ -27,6 +27,7 @@ interface Result {
   age: number;
   bio: string | null;
   city: string | null;
+  distance_km?: number | null;
   photo_url: string | null;
   photos: { url: string; media_type: "image" | "video" }[];
   personality_tags: string[];
@@ -525,7 +526,13 @@ export default function SearchPage() {
                 <h3 className="font-semibold truncate">
                   {r.name}, {r.age}
                 </h3>
-                {r.city && <p className="text-xs text-muted-foreground truncate">{r.city}</p>}
+                {(r.city || r.distance_km != null) && (
+                  <p className="text-xs text-muted-foreground truncate">
+                    {r.city}
+                    {r.city && r.distance_km != null && " · "}
+                    {r.distance_km != null && `${r.distance_km} km away`}
+                  </p>
+                )}
               </div>
               <div className="flex gap-2 shrink-0">
                 <button
