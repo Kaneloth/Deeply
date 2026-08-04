@@ -1865,7 +1865,20 @@ router.post(
     }
 
     const badgeField = submission.verification_type === "photo" ? "photo_verified" : "is_verified";
-    await supabase.from("profiles").update({ [badgeField]: true }).eq("id", submission.user_id);
+    const { error: badgeError } = await supabase
+      .from("profiles")
+      .update({ [badgeField]: true })
+      .eq("id", submission.user_id);
+    if (badgeError) {
+      // The submission is already marked 'approved' at this point, so
+      // don't leave it stuck — but the admin needs to know the badge
+      // itself didn't actually get set, since silently swallowing this
+      // is exactly how "approved but no badge shows" bugs happen.
+      res.status(500).json({
+        error: `Submission was approved, but failed to set the ${badgeField} badge: ${badgeError.message}. Please investigate — the user's profile does not yet reflect this approval.`,
+      });
+      return;
+    }
 
     const paths = [submission.selfie_path, submission.id_front_path, submission.id_back_path].filter(Boolean) as string[];
     if (paths.length > 0) {
