@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { MapPin, Baby, Users, Cigarette, Wine, Mic, Play, Pause, BadgeCheck, ShieldCheck } from "lucide-react";
+import { MapPin, Baby, Users, Cigarette, Wine, Mic, Play, Pause, BadgeCheck, Camera } from "lucide-react";
 import { PhotoCarousel, type CarouselPhoto } from "@/components/PhotoCarousel";
 
 const PULL_REVEAL_THRESHOLD_PX = 50;
@@ -180,9 +180,19 @@ export function ProfileCard({
             <h2 className="text-2xl font-['Syne'] font-bold text-white flex items-end gap-1.5 leading-tight">
               {profile.name} <span className="text-base font-normal text-white/80">{profile.age}</span>
               {profile.is_verified ? (
-                <BadgeCheck size={18} className="text-sky-400 shrink-0 mb-0.5" />
+                <span
+                  title="ID Verified"
+                  className="inline-flex items-center justify-center w-[19px] h-[19px] rounded-full bg-sky-500 shrink-0 mb-0.5 ring-2 ring-black/10"
+                >
+                  <BadgeCheck size={13} className="text-white" strokeWidth={2.75} />
+                </span>
               ) : profile.photo_verified ? (
-                <ShieldCheck size={16} className="text-white/80 shrink-0 mb-1" />
+                <span
+                  title="Photo Verified"
+                  className="inline-flex items-center justify-center w-[17px] h-[17px] rounded-full bg-emerald-500 shrink-0 mb-1 ring-2 ring-black/10"
+                >
+                  <Camera size={10} className="text-white" strokeWidth={2.75} />
+                </span>
               ) : null}
             </h2>
             {(profile.city || profile.distance_km != null) && (
