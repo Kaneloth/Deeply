@@ -4,7 +4,7 @@ import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/PageHeader";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ProfileCard, type ProfileCardData } from "@/components/ProfileCard";
-import { X, Heart, Eye } from "lucide-react";
+import { X, Heart, Eye, Sparkles } from "lucide-react";
 
 interface Viewer extends ProfileCardData {
   viewed_at: string;
@@ -26,7 +26,9 @@ export default function WhoViewedMePage() {
   const { token } = useAuth();
   const { toast } = useToast();
   const [viewers, setViewers] = useState<Viewer[]>([]);
+  const [newCount, setNewCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRevealing, setIsRevealing] = useState(false);
   const [selected, setSelected] = useState<Viewer | null>(null);
   const [invitingId, setInvitingId] = useState<string | null>(null);
   const [invitedIds, setInvitedIds] = useState<Set<string>>(new Set());
@@ -37,7 +39,8 @@ export default function WhoViewedMePage() {
       const res = await fetch("/api/profile-views/who-viewed-me", { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) return;
       const body = await res.json();
-      setViewers(body ?? []);
+      setViewers(body.revealed ?? []);
+      setNewCount(body.new_count ?? 0);
     } catch {
       // Silent — page just shows empty state.
     } finally {
@@ -50,6 +53,29 @@ export default function WhoViewedMePage() {
     fetchViewers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const revealViewers = async () => {
+    setIsRevealing(true);
+    try {
+      const res = await fetch("/api/profile-views/reveal", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to reveal");
+      setViewers(body.revealed ?? []);
+      setNewCount(0);
+      toast({ title: "Revealed!" });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to reveal viewers.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRevealing(false);
+    }
+  };
 
   const sendInvite = async (viewer: Viewer) => {
     setInvitingId(viewer.id);
@@ -96,7 +122,26 @@ export default function WhoViewedMePage() {
     <div className="min-h-full px-6 pb-6 pt-6 bg-background">
       <PageHeader title="Who Viewed You" />
 
-      {viewers.length === 0 ? (
+      {newCount > 0 && (
+        <div className="bg-gradient-accent rounded-2xl p-4 mb-4 text-white">
+          <div className="flex items-center gap-2 mb-1">
+            <Sparkles size={16} />
+            <p className="font-semibold text-sm">
+              {newCount} new {newCount === 1 ? "person" : "people"} viewed your profile
+            </p>
+          </div>
+          <p className="text-xs text-white/80 mb-3">Reveal who they are — already-revealed viewers are always free to see again.</p>
+          <button
+            onClick={revealViewers}
+            disabled={isRevealing}
+            className="w-full h-10 rounded-xl bg-white text-primary text-sm font-semibold disabled:opacity-60"
+          >
+            {isRevealing ? "Revealing..." : "Reveal Now"}
+          </button>
+        </div>
+      )}
+
+      {viewers.length === 0 && newCount === 0 ? (
         <div className="flex flex-col items-center justify-center text-center py-20">
           <div className="w-16 h-16 rounded-full bg-card border border-card-border flex items-center justify-center mb-4">
             <Eye size={24} className="text-muted-foreground" />

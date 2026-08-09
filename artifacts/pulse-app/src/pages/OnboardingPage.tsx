@@ -141,6 +141,7 @@ export default function OnboardingPage() {
   const [notifyMessages, setNotifyMessages] = useState(true);
   const [notifyMatches, setNotifyMatches] = useState(true);
   const [notifyLikes, setNotifyLikes] = useState(true);
+  const [notifyProfileViews, setNotifyProfileViews] = useState(true);
   const [notifySparks, setNotifySparks] = useState(true);
 
   const toggleIntention = (v: string) => {
@@ -308,6 +309,7 @@ export default function OnboardingPage() {
           notify_messages: notifyMessages,
           notify_matches: notifyMatches,
           notify_likes: notifyLikes,
+          notify_profile_views: notifyProfileViews,
           notify_sparks: notifySparks,
           onboarding_completed: true,
         }),
@@ -663,6 +665,7 @@ export default function OnboardingPage() {
                 { key: "messages", label: "💬 Someone messages you", value: notifyMessages, set: setNotifyMessages },
                 { key: "matches", label: "❤️ You get a new match", value: notifyMatches, set: setNotifyMatches },
                 { key: "likes", label: "🔥 Someone likes your profile", value: notifyLikes, set: setNotifyLikes },
+                { key: "profile_views", label: "👀 Someone views your profile", value: notifyProfileViews, set: setNotifyProfileViews },
               ].map((item) => (
                 <button
                   key={item.key}

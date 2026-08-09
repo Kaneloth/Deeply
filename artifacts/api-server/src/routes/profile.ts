@@ -6,7 +6,7 @@ import { supabase } from "../lib/supabase";
 import { spendSparks } from "../lib/sparks-helper";
 import { withComputedAge, withComputedAges } from "../lib/age";
 import { isSuperAdmin, requireSuperAdmin, requireAdminScope, type AdminScope } from "../lib/admin-auth";
-import { createNotification, createNotificationForUsers, recordProfileView } from "../lib/notifications-helper";
+import { createNotification, createNotificationForUsers, recordProfileView, scheduleProfileViewNotificationClear } from "../lib/notifications-helper";
 import { attachPhotoGalleries } from "../lib/photo-galleries";
 import { attachAudioPrompts } from "../lib/audio-prompts-helper";
 import { checkImageSafety } from "../lib/content-moderation";
@@ -68,7 +68,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     relationship_type, dating_intentions, onboarding_completed,
     num_kids, smoking_status, drinking_status, languages_spoken,
     languages_other, love_language, education, family_plans,
-    notify_messages, notify_matches, notify_likes, notify_sparks,
+    notify_messages, notify_matches, notify_likes, notify_sparks, notify_profile_views,
     is_incognito,
     has_tattoos, vaping_status, pets, height_cm, activity_level, nightlife_frequency,
     latitude, longitude,
@@ -101,6 +101,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     notify_matches?: boolean;
     notify_likes?: boolean;
     notify_sparks?: boolean;
+    notify_profile_views?: boolean;
     is_incognito?: boolean;
     has_tattoos?: string;
     vaping_status?: string;
@@ -197,6 +198,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   if (notify_matches !== undefined) updates.notify_matches = notify_matches;
   if (notify_likes !== undefined) updates.notify_likes = notify_likes;
   if (notify_sparks !== undefined) updates.notify_sparks = notify_sparks;
+  if (notify_profile_views !== undefined) updates.notify_profile_views = notify_profile_views;
   if (is_incognito !== undefined) {
     if (is_incognito) {
       const { data: setting } = await supabase.from("app_settings").select("value").eq("key", "incognito_enabled").single();
@@ -1386,12 +1388,16 @@ router.post("/announcements/:announcementId/dismiss", requireAuth, async (req, r
 // Notifications & Profile Views
 // ============================================================
 
-/** GET /api/notifications — most recent 50, newest first. */
+/** GET /api/notifications — most recent 50, newest first. Excludes any
+ *  notification whose clear_at has passed (used by profile_views
+ *  notifications, which auto-clear 24h after being revealed). */
 router.get("/notifications", requireAuth, async (req, res): Promise<void> => {
+  const nowIso = new Date().toISOString();
   const { data, error } = await supabase
     .from("notifications")
     .select("*")
     .eq("user_id", req.user!.id)
+    .or(`clear_at.is.null,clear_at.gt.${nowIso}`)
     .order("created_at", { ascending: false })
     .limit(50);
 
@@ -1405,11 +1411,13 @@ router.get("/notifications", requireAuth, async (req, res): Promise<void> => {
 
 /** GET /api/notifications/unread-count */
 router.get("/notifications/unread-count", requireAuth, async (req, res): Promise<void> => {
+  const nowIso = new Date().toISOString();
   const { count, error } = await supabase
     .from("notifications")
     .select("id", { count: "exact", head: true })
     .eq("user_id", req.user!.id)
-    .eq("is_read", false);
+    .eq("is_read", false)
+    .or(`clear_at.is.null,clear_at.gt.${nowIso}`);
 
   if (error) {
     res.status(500).json({ error: `Failed to load unread count: ${error.message}` });
@@ -1471,13 +1479,20 @@ router.post("/profile-views", requireAuth, async (req, res): Promise<void> => {
   res.sendStatus(204);
 });
 
-/** GET /api/profile-views/who-viewed-me — distinct recent viewers, most
- *  recent view first, with basic profile info to display. */
+/** GET /api/profile-views/who-viewed-me — FREE. Returns:
+ *  - revealed: viewers this user has already paid to reveal (permanent
+ *    — never re-hidden once revealed, even when new unrevealed viewers
+ *    show up)
+ *  - new_count: how many additional distinct viewers haven't been
+ *    revealed yet (still requires a paid reveal), matching the
+ *    /discover/invites pattern. */
 router.get("/profile-views/who-viewed-me", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+
   const { data: views, error } = await supabase
     .from("profile_views")
     .select("viewer_id, created_at")
-    .eq("viewed_id", req.user!.id)
+    .eq("viewed_id", userId)
     .order("created_at", { ascending: false })
     .limit(200);
 
@@ -1497,12 +1512,26 @@ router.get("/profile-views/who-viewed-me", requireAuth, async (req, res): Promis
     latestViews.push(v);
   }
 
-  const viewerIds = latestViews.map((v) => v.viewer_id);
-  if (viewerIds.length === 0) {
-    res.json([]);
+  if (latestViews.length === 0) {
+    res.json({ revealed: [], new_count: 0 });
     return;
   }
 
+  const { data: alreadyRevealed } = await supabase
+    .from("profile_view_reveals")
+    .select("viewer_id")
+    .eq("user_id", userId);
+
+  const revealedIds = new Set((alreadyRevealed ?? []).map((r) => r.viewer_id));
+  const revealedViews = latestViews.filter((v) => revealedIds.has(v.viewer_id));
+  const newCount = latestViews.length - revealedViews.length;
+
+  if (revealedViews.length === 0) {
+    res.json({ revealed: [], new_count: newCount });
+    return;
+  }
+
+  const viewerIds = revealedViews.map((v) => v.viewer_id);
   const { data: profiles } = await supabase
     .from("profiles")
     .select("id, name, age, birthday, city, photo_url, personality_tags, is_verified, photo_verified")
@@ -1510,7 +1539,7 @@ router.get("/profile-views/who-viewed-me", requireAuth, async (req, res): Promis
 
   const profileMap = new Map((profiles ?? []).map((p) => [p.id, p]));
   const merged = withComputedAges(
-    latestViews
+    revealedViews
       .map((v) => {
         const profile = profileMap.get(v.viewer_id);
         return profile ? { ...profile, viewed_at: v.created_at } : null;
@@ -1521,7 +1550,88 @@ router.get("/profile-views/who-viewed-me", requireAuth, async (req, res): Promis
   const withPhotos = await attachPhotoGalleries(merged);
   const withAudio = await attachAudioPrompts(withPhotos);
 
-  res.json(withAudio);
+  res.json({ revealed: withAudio, new_count: newCount });
+});
+
+/** POST /api/profile-views/reveal — PAID (admin-configurable Sparks),
+ *  but ONLY if there's at least one genuinely new unrevealed viewer
+ *  since the last reveal. Already-revealed viewers never cost Sparks
+ *  again. Also schedules the profile_views notification to auto-clear
+ *  from the bell 24 hours from now, per the reveal. Returns the full
+ *  updated list of everyone revealed (previously + newly). */
+router.post("/profile-views/reveal", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+
+  const { data: views } = await supabase
+    .from("profile_views")
+    .select("viewer_id")
+    .eq("viewed_id", userId)
+    .limit(200);
+
+  const distinctViewerIds = [...new Set((views ?? []).map((v) => v.viewer_id))];
+
+  if (distinctViewerIds.length === 0) {
+    res.json({ revealed: [], balance: null });
+    return;
+  }
+
+  const { data: alreadyRevealed } = await supabase
+    .from("profile_view_reveals")
+    .select("viewer_id")
+    .eq("user_id", userId);
+
+  const revealedIds = new Set((alreadyRevealed ?? []).map((r) => r.viewer_id));
+  const hasNew = distinctViewerIds.some((id) => !revealedIds.has(id));
+
+  let balance: number | null = null;
+
+  if (hasNew) {
+    const { cost_reveal_profile_views } = await getEconomyConfig();
+    const spend = await spendSparks(userId, cost_reveal_profile_views, "Reveal who viewed your profile");
+    if (!spend.success) {
+      res.status(402).json({ error: `Insufficient Sparks (need ${cost_reveal_profile_views})`, balance: spend.balance });
+      return;
+    }
+    balance = spend.balance;
+
+    const rows = distinctViewerIds.map((viewerId) => ({ user_id: userId, viewer_id: viewerId }));
+    await supabase.from("profile_view_reveals").upsert(rows, { onConflict: "user_id,viewer_id" });
+
+    await scheduleProfileViewNotificationClear(userId);
+  }
+
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("id, name, age, birthday, city, photo_url, personality_tags, is_verified, photo_verified")
+    .in("id", distinctViewerIds);
+
+  const { data: freshViews } = await supabase
+    .from("profile_views")
+    .select("viewer_id, created_at")
+    .eq("viewed_id", userId)
+    .in("viewer_id", distinctViewerIds)
+    .order("created_at", { ascending: false });
+
+  const latestByViewer = new Map<string, string>();
+  for (const v of freshViews ?? []) {
+    if (!latestByViewer.has(v.viewer_id)) latestByViewer.set(v.viewer_id, v.created_at);
+  }
+
+  const profileMap = new Map((profiles ?? []).map((p) => [p.id, p]));
+  const merged = withComputedAges(
+    distinctViewerIds
+      .map((id) => {
+        const profile = profileMap.get(id);
+        const viewedAt = latestByViewer.get(id);
+        return profile && viewedAt ? { ...profile, viewed_at: viewedAt } : null;
+      })
+      .filter((p): p is NonNullable<typeof p> => p !== null),
+  );
+
+  const withPhotos = await attachPhotoGalleries(merged);
+  const withAudio = await attachAudioPrompts(withPhotos);
+
+  res.json({ revealed: withAudio, balance });
 });
 
 // ============================================================
@@ -1966,6 +2076,7 @@ const ECONOMY_CONFIG_LABELS: Record<string, { label: string; description: string
   cost_unlock_read_receipts: { label: "Unlock Read Receipts", description: "Cost to unlock read receipts, per match", unit: "Sparks" },
   cost_extra_invite: { label: "Extra Invite", description: "Cost per invite past the daily free quota", unit: "Sparks" },
   daily_free_invites: { label: "Daily Free Invites", description: "Free invites per day before the extra-invite cost applies", unit: "invites/day" },
+  cost_reveal_profile_views: { label: "Reveal Profile Viewers", description: "Cost to see who viewed your profile", unit: "Sparks" },
   cost_extra_photo: { label: "Extra Photo", description: "Cost per gallery photo past the free limit", unit: "Sparks" },
   cost_boost: { label: "Profile Boost", description: "Cost for a 5-hour profile boost (24h cooldown)", unit: "Sparks" },
   cost_incognito_per_day: { label: "Incognito Mode", description: "Cost per day while Incognito is active", unit: "Sparks" },

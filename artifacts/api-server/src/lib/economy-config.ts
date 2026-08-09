@@ -12,6 +12,7 @@ export interface EconomyConfig {
   cost_unlock_read_receipts: number;
   cost_extra_invite: number;
   daily_free_invites: number;
+  cost_reveal_profile_views: number;
   cost_extra_photo: number;
   cost_boost: number;
   cost_incognito_per_day: number;
@@ -34,6 +35,7 @@ const DEFAULTS: EconomyConfig = {
   cost_unlock_read_receipts: 20,
   cost_extra_invite: 5,
   daily_free_invites: 15,
+  cost_reveal_profile_views: 15,
   cost_extra_photo: 10,
   cost_boost: 50,
   cost_incognito_per_day: 5,

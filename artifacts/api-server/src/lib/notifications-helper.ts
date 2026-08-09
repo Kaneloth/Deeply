@@ -49,9 +49,11 @@ export async function createNotificationForUsers(
   }
 }
 
-/** Records a profile view and rolls it into a batched "X people viewed
- *  your profile" notification, so opening/closing the same profile
- *  repeatedly doesn't spam the viewed user with one notification per
+/** Records a profile view (always, regardless of notification
+ *  preference — Who Viewed You keeps working either way) and, if the
+ *  viewed user has profile-view notifications enabled, rolls it into a
+ *  batched "X people viewed your profile" notification so opening/
+ *  closing the same profile repeatedly doesn't spam one notification per
  *  view. A new view only counts (and re-triggers the notification) if
  *  this same viewer hasn't viewed this same profile in the last 6 hours. */
 export async function recordProfileView(viewerId: string, viewedId: string): Promise<void> {
@@ -69,6 +71,14 @@ export async function recordProfileView(viewerId: string, viewedId: string): Pro
   if (recentView) return; // already counted recently, don't double up
 
   await supabase.from("profile_views").insert({ viewer_id: viewerId, viewed_id: viewedId });
+
+  const { data: viewedProfile } = await supabase
+    .from("profiles")
+    .select("notify_profile_views")
+    .eq("id", viewedId)
+    .single();
+
+  if (viewedProfile?.notify_profile_views === false) return;
 
   // Roll into the existing unread profile_views notification if one
   // exists, otherwise start a new one.
@@ -101,4 +111,20 @@ export async function recordProfileView(viewerId: string, viewedId: string): Pro
       { count: 1 },
     );
   }
+}
+
+/** Call when a user pays to reveal their profile viewers — schedules
+ *  their profile_views notification(s) to auto-clear from the bell 24
+ *  hours from now, rather than sitting there indefinitely just because
+ *  it's already been read. Only touches notifications that don't already
+ *  have a clear_at set, so this is safe to call even if triggered more
+ *  than once. */
+export async function scheduleProfileViewNotificationClear(userId: string): Promise<void> {
+  const clearAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  await supabase
+    .from("notifications")
+    .update({ clear_at: clearAt })
+    .eq("user_id", userId)
+    .eq("type", "profile_views")
+    .is("clear_at", null);
 }

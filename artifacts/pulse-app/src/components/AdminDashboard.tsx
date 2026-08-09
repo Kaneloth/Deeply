@@ -1313,7 +1313,7 @@ function EconomySection({ token, toast }: { token: string | null; toast: any }) 
       keys: [
         "cost_super_like", "cost_undo_swipe", "cost_reveal_invites", "cost_message_before_match",
         "cost_reshuffle", "cost_send_message", "cost_unsend_message", "cost_unlock_read_receipts",
-        "cost_extra_invite", "cost_extra_photo", "cost_boost", "cost_incognito_per_day",
+        "cost_extra_invite", "cost_extra_photo", "cost_boost", "cost_incognito_per_day", "cost_reveal_profile_views",
       ],
     },
     { title: "Real-Money Fees", keys: ["id_verification_fee_zar"] },
