@@ -75,7 +75,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     latitude, longitude,
     pref_num_kids, pref_family_plans, pref_smoking_status, pref_drinking_status,
     pref_vaping_status, pref_has_tattoos, pref_pets, pref_activity_level,
-    pref_height_min_cm, pref_height_max_cm, pref_nightlife_frequency,
+    pref_height_min_cm, pref_height_max_cm, pref_nightlife_frequency, dealbreakers,
   } = req.body as {
     name?: string;
     age?: number;
@@ -122,6 +122,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     pref_height_min_cm?: number;
     pref_height_max_cm?: number;
     pref_nightlife_frequency?: string;
+    dealbreakers?: string[];
   };
   if (birthday) {
     const dob = new Date(birthday);
@@ -183,6 +184,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   if (pref_height_min_cm !== undefined) updates.pref_height_min_cm = pref_height_min_cm;
   if (pref_height_max_cm !== undefined) updates.pref_height_max_cm = pref_height_max_cm;
   if (pref_nightlife_frequency !== undefined) updates.pref_nightlife_frequency = pref_nightlife_frequency || null;
+  if (dealbreakers !== undefined) updates.dealbreakers = dealbreakers;
   if (notify_messages !== undefined) updates.notify_messages = notify_messages;
   if (notify_matches !== undefined) updates.notify_matches = notify_matches;
   if (notify_likes !== undefined) updates.notify_likes = notify_likes;

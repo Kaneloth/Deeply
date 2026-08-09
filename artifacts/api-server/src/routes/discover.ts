@@ -8,6 +8,7 @@ import { withComputedAge, withComputedAges } from "../lib/age";
 import { consumeFreeInviteOrCharge } from "../lib/invites-quota";
 import { getExcludedCandidateIds, getPendingInviterIds } from "../lib/discover-exclusions";
 import { haversineDistanceKm } from "../lib/geo";
+import { genderSatisfiesPreference, passesDealbreakers, computeCompatibilityScore } from "../lib/matching";
 
 const router: IRouter = Router();
 
@@ -55,31 +56,55 @@ async function buildDiscoverQueue(userId: string) {
 
   const { data: viewer } = await supabase
     .from("profiles")
-    .select("latitude, longitude, distance_km")
+    .select(
+      "latitude, longitude, distance_km, gender, looking_for_gender, relationship_type, dating_intentions, personality_tags, dealbreakers, " +
+        "pref_num_kids, pref_family_plans, pref_smoking_status, pref_vaping_status, pref_drinking_status, pref_nightlife_frequency, pref_has_tattoos, pref_pets, pref_activity_level",
+    )
     .eq("id", userId)
     .single();
 
-  const viewerHasLocation = viewer?.latitude != null && viewer?.longitude != null;
-  const radiusKm = viewer?.distance_km ?? 25;
+  if (!viewer) {
+    return { candidates: [], error: null };
+  }
+
+  const viewerHasLocation = viewer.latitude != null && viewer.longitude != null;
+  const radiusKm = viewer.distance_km ?? 25;
+  const dealbreakers: string[] = viewer.dealbreakers ?? [];
 
   const { data: candidates, error } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, boosted_until, num_kids, family_plans, smoking_status, drinking_status, latitude, longitude")
+    .select(
+      "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, boosted_until, " +
+        "gender, looking_for_gender, relationship_type, dating_intentions, num_kids, family_plans, smoking_status, vaping_status, drinking_status, " +
+        "nightlife_frequency, has_tattoos, pets, activity_level, latitude, longitude",
+    )
     .not("id", "in", `(${excludedIds.join(",")})`)
     .eq("is_incognito", false)
-    .limit(200);
+    .limit(300);
 
   if (error || !candidates || candidates.length === 0) {
     return { candidates: [], error };
   }
 
+  // Hard filters — gender preference is bidirectional (both people need
+  // to be open to the other's gender), plus radius and dealbreakers.
+  // Everything else is a soft signal handled by scoring below, not a
+  // filter — with a small user base, hard-filtering on every preference
+  // by default would risk an empty queue.
+  const hardFiltered = candidates.filter((c) => {
+    if (!genderSatisfiesPreference(c.gender, viewer.looking_for_gender)) return false;
+    if (!genderSatisfiesPreference(viewer.gender, c.looking_for_gender)) return false;
+    if (!passesDealbreakers(c, viewer, dealbreakers)) return false;
+    return true;
+  });
+
   // Attach distance where computable; candidates without location data
   // are kept (unknown distance) rather than excluded, so the pool isn't
   // artificially shrunk just because someone hasn't granted geolocation
   // access yet.
-  const withDistance = candidates.map((c) => {
+  const withDistance = hardFiltered.map((c) => {
     if (viewerHasLocation && c.latitude != null && c.longitude != null) {
-      const distance_km = Math.round(haversineDistanceKm(viewer!.latitude!, viewer!.longitude!, c.latitude, c.longitude));
+      const distance_km = Math.round(haversineDistanceKm(viewer.latitude!, viewer.longitude!, c.latitude, c.longitude));
       return { ...c, distance_km };
     }
     return { ...c, distance_km: null as number | null };
@@ -95,10 +120,24 @@ async function buildDiscoverQueue(userId: string) {
   const boosted = withinRadius.filter((c) => c.boosted_until && new Date(c.boosted_until).getTime() > now);
   const rest = withinRadius.filter((c) => !c.boosted_until || new Date(c.boosted_until).getTime() <= now);
 
-  const shuffle = <T,>(arr: T[]) => arr.sort(() => Math.random() - 0.5);
-  const prioritized = [...shuffle(boosted), ...shuffle(rest)].slice(0, 20);
+  // Weighted shuffle rather than a strict score-sort: each candidate's
+  // compatibility score becomes a bias on top of randomness, so better
+  // matches surface more often WITHOUT the queue becoming perfectly
+  // deterministic (always the exact same top matches in the exact same
+  // order). Preserves variety, matching how established apps avoid
+  // showing only exact-preference matches.
+  const weightedShuffle = <T extends Record<string, any>>(arr: T[]) =>
+    arr
+      .map((c) => ({ c, sortKey: computeCompatibilityScore(c, { ...viewer, dealbreakers }) + Math.random() * 20 }))
+      .sort((a, b) => b.sortKey - a.sortKey)
+      .map(({ c }) => c);
 
-  const strippedCandidates = prioritized.map(({ boosted_until, latitude, longitude, ...profileFields }) => profileFields);
+  const prioritized = [...weightedShuffle(boosted), ...weightedShuffle(rest)].slice(0, 20);
+
+  const strippedCandidates = prioritized.map(
+    ({ boosted_until, latitude, longitude, gender, looking_for_gender, relationship_type, dating_intentions, ...profileFields }) =>
+      profileFields,
+  );
 
   const withPhotos = await attachPhotoGalleries(strippedCandidates);
   const withAudio = await attachAudioPrompts(withPhotos);

@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { ChipGrid } from "@/components/SelectorControls";
 import { Dropdown, RadiusSlider } from "@/components/DropdownControls";
 import { HeightInput } from "@/components/HeightInput";
+import { Check } from "lucide-react";
 import {
   DATING_INTENTIONS,
   RELATIONSHIP_TYPES,
@@ -84,11 +85,16 @@ export default function PreferencesPage() {
   const [prefPets, setPrefPets] = useState("");
   const [prefActivityLevel, setPrefActivityLevel] = useState("");
   const [prefNightlifeFrequency, setPrefNightlifeFrequency] = useState("");
+  const [dealbreakers, setDealbreakers] = useState<string[]>([]);
   const [prefHeightMinCm, setPrefHeightMinCm] = useState<number | null>(null);
   const [prefHeightMaxCm, setPrefHeightMaxCm] = useState<number | null>(null);
 
   const toggleIntention = (v: string) => {
     setIntentions((prev) => (prev.includes(v) ? prev.filter((i) => i !== v) : prev.length < 3 ? [...prev, v] : prev));
+  };
+
+  const toggleDealbreaker = (key: string) => {
+    setDealbreakers((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
   };
 
   useEffect(() => {
@@ -106,6 +112,7 @@ export default function PreferencesPage() {
       setPrefPets(profile.pref_pets || "");
       setPrefActivityLevel(profile.pref_activity_level || "");
       setPrefNightlifeFrequency(profile.pref_nightlife_frequency || "");
+      setDealbreakers(profile.dealbreakers || []);
       setPrefHeightMinCm(profile.pref_height_min_cm ?? null);
       setPrefHeightMaxCm(profile.pref_height_max_cm ?? null);
     }
@@ -126,7 +133,8 @@ export default function PreferencesPage() {
     prefActivityLevel !== (profile.pref_activity_level || "") ||
     prefHeightMinCm !== (profile.pref_height_min_cm ?? null) ||
     prefHeightMaxCm !== (profile.pref_height_max_cm ?? null) ||
-    prefNightlifeFrequency !== (profile.pref_nightlife_frequency || "")
+    prefNightlifeFrequency !== (profile.pref_nightlife_frequency || "") ||
+    JSON.stringify([...dealbreakers].sort()) !== JSON.stringify([...(profile.dealbreakers || [])].sort())
   );
 
   const handleSave = async () => {
@@ -155,6 +163,7 @@ export default function PreferencesPage() {
           pref_height_min_cm: prefHeightMinCm,
           pref_height_max_cm: prefHeightMaxCm,
           pref_nightlife_frequency: prefNightlifeFrequency,
+          dealbreakers,
         }),
       });
       const body = await res.json();
@@ -201,15 +210,15 @@ export default function PreferencesPage() {
           </h3>
         </div>
 
-        <Dropdown label="Kids" value={prefNumKids} onChange={setPrefNumKids} options={NUM_KIDS_PREFERENCE_OPTIONS} />
-        <Dropdown label="Family plans" value={prefFamilyPlans} onChange={setPrefFamilyPlans} options={FAMILY_PLANS_PREFERENCE_OPTIONS} />
-        <Dropdown label="Smoking" value={prefSmokingStatus} onChange={setPrefSmokingStatus} options={SMOKING_PREFERENCE_OPTIONS} />
-        <Dropdown label="Vaping" value={prefVapingStatus} onChange={setPrefVapingStatus} options={VAPING_PREFERENCE_OPTIONS} />
-        <Dropdown label="Drinking" value={prefDrinkingStatus} onChange={setPrefDrinkingStatus} options={DRINKING_PREFERENCE_OPTIONS} />
-        <Dropdown label="Tattoos" value={prefHasTattoos} onChange={setPrefHasTattoos} options={TATTOO_PREFERENCE_OPTIONS} />
-        <Dropdown label="Pets" value={prefPets} onChange={setPrefPets} options={PETS_PREFERENCE_OPTIONS} />
-        <Dropdown label="Physical activity" value={prefActivityLevel} onChange={setPrefActivityLevel} options={ACTIVITY_LEVEL_PREFERENCE_OPTIONS} />
-        <Dropdown label="Nightlife" value={prefNightlifeFrequency} onChange={setPrefNightlifeFrequency} options={NIGHTLIFE_PREFERENCE_OPTIONS} />
+        <DealbreakerDropdown label="Kids" value={prefNumKids} onChange={setPrefNumKids} options={NUM_KIDS_PREFERENCE_OPTIONS} fieldKey="num_kids" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} />
+        <DealbreakerDropdown label="Family plans" value={prefFamilyPlans} onChange={setPrefFamilyPlans} options={FAMILY_PLANS_PREFERENCE_OPTIONS} fieldKey="family_plans" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} />
+        <DealbreakerDropdown label="Smoking" value={prefSmokingStatus} onChange={setPrefSmokingStatus} options={SMOKING_PREFERENCE_OPTIONS} fieldKey="smoking_status" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} />
+        <DealbreakerDropdown label="Vaping" value={prefVapingStatus} onChange={setPrefVapingStatus} options={VAPING_PREFERENCE_OPTIONS} fieldKey="vaping_status" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} />
+        <DealbreakerDropdown label="Drinking" value={prefDrinkingStatus} onChange={setPrefDrinkingStatus} options={DRINKING_PREFERENCE_OPTIONS} fieldKey="drinking_status" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} />
+        <DealbreakerDropdown label="Tattoos" value={prefHasTattoos} onChange={setPrefHasTattoos} options={TATTOO_PREFERENCE_OPTIONS} fieldKey="has_tattoos" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} />
+        <DealbreakerDropdown label="Pets" value={prefPets} onChange={setPrefPets} options={PETS_PREFERENCE_OPTIONS} fieldKey="pets" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} />
+        <DealbreakerDropdown label="Physical activity" value={prefActivityLevel} onChange={setPrefActivityLevel} options={ACTIVITY_LEVEL_PREFERENCE_OPTIONS} fieldKey="activity_level" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} />
+        <DealbreakerDropdown label="Nightlife" value={prefNightlifeFrequency} onChange={setPrefNightlifeFrequency} options={NIGHTLIFE_PREFERENCE_OPTIONS} fieldKey="nightlife_frequency" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} />
 
         <div className="space-y-2">
           <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">Height range</label>
@@ -236,6 +245,54 @@ export default function PreferencesPage() {
             {isSaving ? "Saving..." : "Save Changes"}
           </Button>
         </div>
+      )}
+    </div>
+  );
+}
+
+/** Wraps the standard Dropdown with an optional "Dealbreaker" toggle
+ *  underneath. Only shown once a specific value is picked (not "any" /
+ *  "doesn't matter") — a dealbreaker on an unset preference has nothing
+ *  to enforce, so surfacing the toggle before then would be confusing. */
+function DealbreakerDropdown({
+  label,
+  value,
+  onChange,
+  options,
+  fieldKey,
+  dealbreakers,
+  onToggleDealbreaker,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+  fieldKey: string;
+  dealbreakers: string[];
+  onToggleDealbreaker: (key: string) => void;
+}) {
+  const isDealbreaker = dealbreakers.includes(fieldKey);
+  const hasSpecificValue = !!value && value !== "any";
+
+  return (
+    <div>
+      <Dropdown label={label} value={value} onChange={onChange} options={options} />
+      {hasSpecificValue && (
+        <button
+          onClick={() => onToggleDealbreaker(fieldKey)}
+          className={`mt-1.5 flex items-center gap-1.5 text-xs font-medium transition-colors ${
+            isDealbreaker ? "text-destructive" : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <span
+            className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
+              isDealbreaker ? "bg-destructive border-destructive" : "border-muted-foreground"
+            }`}
+          >
+            {isDealbreaker && <Check size={10} className="text-white" strokeWidth={3} />}
+          </span>
+          Dealbreaker — only show people who match this
+        </button>
       )}
     </div>
   );
