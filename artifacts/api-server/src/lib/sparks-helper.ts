@@ -1,8 +1,8 @@
 import { supabase } from "./supabase";
 import { logger } from "./logger";
 import { createNotification } from "./notifications-helper";
+import { getEconomyConfig } from "./economy-config";
 
-const MONTHLY_GRANT_AMOUNT = 300;
 const LOW_BALANCE_THRESHOLD = 30;
 
 interface SparksProfile {
@@ -38,13 +38,15 @@ export async function checkAndApplyMonthlyGrant(userId: string): Promise<SparksP
     return profile as SparksProfile;
   }
 
+  const { sparks_monthly_grant: grantAmount } = await getEconomyConfig();
+
   const nextGrantAt = new Date();
   nextGrantAt.setMonth(nextGrantAt.getMonth() + 1);
 
   const { data: updated, error: updateError } = await supabase
     .from("profiles")
     .update({
-      free_sparks_balance: MONTHLY_GRANT_AMOUNT,
+      free_sparks_balance: grantAmount,
       next_spark_grant_at: nextGrantAt.toISOString(),
     })
     .eq("id", userId)
@@ -58,7 +60,7 @@ export async function checkAndApplyMonthlyGrant(userId: string): Promise<SparksP
 
   await supabase.from("sparks_transactions").insert({
     user_id: userId,
-    amount: MONTHLY_GRANT_AMOUNT,
+    amount: grantAmount,
     reason: "Monthly free Sparks grant",
     balance_after: updated.free_sparks_balance + updated.paid_sparks_balance,
   });
@@ -69,7 +71,7 @@ export async function checkAndApplyMonthlyGrant(userId: string): Promise<SparksP
     userId,
     "spark_grant",
     "Your free Sparks have arrived",
-    `${MONTHLY_GRANT_AMOUNT} free Sparks were just added to your balance.`,
+    `${grantAmount} free Sparks were just added to your balance.`,
   ).catch(() => {});
 
   return updated as SparksProfile;

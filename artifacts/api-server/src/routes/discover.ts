@@ -9,14 +9,10 @@ import { consumeFreeInviteOrCharge } from "../lib/invites-quota";
 import { getExcludedCandidateIds, getPendingInviterIds } from "../lib/discover-exclusions";
 import { haversineDistanceKm } from "../lib/geo";
 import { genderSatisfiesPreference, passesDealbreakers, computeCompatibilityScore } from "../lib/matching";
+import { getEconomyConfig } from "../lib/economy-config";
 
 const router: IRouter = Router();
 
-const SUPER_LIKE_COST = 10;
-const UNDO_COST = 5;
-const REVEAL_LIKES_COST = 30;
-const MESSAGE_REQUEST_COST = 30;
-const RESHUFFLE_COST = 10;
 const RESHUFFLE_FREE_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Shared by /discover/queue and /discover/reshuffle — builds a fresh,
@@ -173,11 +169,12 @@ router.get("/discover/reshuffle-status", requireAuth, async (req, res): Promise<
   const isFree = !lastFree || Date.now() - lastFree.getTime() >= RESHUFFLE_FREE_INTERVAL_MS;
   const nextFreeAt = lastFree ? new Date(lastFree.getTime() + RESHUFFLE_FREE_INTERVAL_MS).toISOString() : null;
 
-  res.json({ isFree, cost: RESHUFFLE_COST, nextFreeAt: isFree ? null : nextFreeAt });
+  const { cost_reshuffle } = await getEconomyConfig();
+  res.json({ isFree, cost: cost_reshuffle, nextFreeAt: isFree ? null : nextFreeAt });
 });
 
 /** POST /api/discover/reshuffle — re-randomizes the discover queue on
- *  demand. Free once every 7 days, 10 Sparks otherwise. */
+ *  demand. Free once every 7 days, admin-configurable Sparks otherwise. */
 router.post("/discover/reshuffle", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
@@ -193,7 +190,8 @@ router.post("/discover/reshuffle", requireAuth, async (req, res): Promise<void> 
   if (isFree) {
     await supabase.from("profiles").update({ last_free_reshuffle_at: new Date().toISOString() }).eq("id", userId);
   } else {
-    const spend = await spendSparks(userId, RESHUFFLE_COST, "Discover reshuffle");
+    const { cost_reshuffle } = await getEconomyConfig();
+    const spend = await spendSparks(userId, cost_reshuffle, "Discover reshuffle");
     if (!spend.success) {
       res.status(400).json({ error: "Not enough Sparks to reshuffle" });
       return;
@@ -231,9 +229,10 @@ router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
   }
 
   if (direction === "super_like") {
-    const spend = await spendSparks(userId, SUPER_LIKE_COST, "Super Like");
+    const { cost_super_like } = await getEconomyConfig();
+    const spend = await spendSparks(userId, cost_super_like, "Super Like");
     if (!spend.success) {
-      res.status(402).json({ error: `Insufficient Sparks (need ${SUPER_LIKE_COST})`, balance: spend.balance });
+      res.status(402).json({ error: `Insufficient Sparks (need ${cost_super_like})`, balance: spend.balance });
       return;
     }
   }
@@ -363,9 +362,10 @@ router.post("/discover/undo", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
-  const spend = await spendSparks(userId, UNDO_COST, "Undo swipe");
+  const { cost_undo_swipe } = await getEconomyConfig();
+  const spend = await spendSparks(userId, cost_undo_swipe, "Undo swipe");
   if (!spend.success) {
-    res.status(402).json({ error: `Insufficient Sparks (need ${UNDO_COST})`, balance: spend.balance });
+    res.status(402).json({ error: `Insufficient Sparks (need ${cost_undo_swipe})`, balance: spend.balance });
     return;
   }
 
@@ -457,9 +457,10 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
   let balance: number | null = null;
 
   if (hasNew) {
-    const spend = await spendSparks(userId, REVEAL_LIKES_COST, "See who invited you");
+    const { cost_reveal_invites } = await getEconomyConfig();
+    const spend = await spendSparks(userId, cost_reveal_invites, "See who invited you");
     if (!spend.success) {
-      res.status(402).json({ error: `Insufficient Sparks (need ${REVEAL_LIKES_COST})`, balance: spend.balance });
+      res.status(402).json({ error: `Insufficient Sparks (need ${cost_reveal_invites})`, balance: spend.balance });
       return;
     }
     balance = spend.balance;
@@ -875,9 +876,10 @@ router.post("/discover/message-request", requireAuth, async (req, res): Promise<
     return;
   }
 
-  const spend = await spendSparks(userId, MESSAGE_REQUEST_COST, "Message before match");
+  const { cost_message_before_match } = await getEconomyConfig();
+  const spend = await spendSparks(userId, cost_message_before_match, "Message before match");
   if (!spend.success) {
-    res.status(402).json({ error: `Insufficient Sparks (need ${MESSAGE_REQUEST_COST})`, balance: spend.balance });
+    res.status(402).json({ error: `Insufficient Sparks (need ${cost_message_before_match})`, balance: spend.balance });
     return;
   }
 
@@ -996,9 +998,10 @@ router.delete("/discover/invites/sent/:targetId", requireAuth, async (req, res):
     return;
   }
 
-  const spend = await spendSparks(userId, UNDO_COST, "Withdraw invite");
+  const { cost_undo_swipe: withdrawCost } = await getEconomyConfig();
+  const spend = await spendSparks(userId, withdrawCost, "Withdraw invite");
   if (!spend.success) {
-    res.status(402).json({ error: `Insufficient Sparks (need ${UNDO_COST})`, balance: spend.balance });
+    res.status(402).json({ error: `Insufficient Sparks (need ${withdrawCost})`, balance: spend.balance });
     return;
   }
 

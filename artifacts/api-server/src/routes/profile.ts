@@ -10,16 +10,15 @@ import { createNotification, createNotificationForUsers, recordProfileView } fro
 import { attachPhotoGalleries } from "../lib/photo-galleries";
 import { attachAudioPrompts } from "../lib/audio-prompts-helper";
 import { checkImageSafety } from "../lib/content-moderation";
+import { getEconomyConfig, invalidateEconomyConfigCache } from "../lib/economy-config";
 
 const router: IRouter = Router();
 
-const BOOST_COST = 50;
 const BOOST_DURATION_MS = 5 * 60 * 60 * 1000; // 5 hours
 const BOOST_COOLDOWN_MS = 24 * 60 * 60 * 1000; // once per 24 hours
 
 const MAX_FREE_PHOTOS = 8;
 const MAX_GALLERY_ITEMS = 20; // hard safety ceiling regardless of Sparks spent
-const EXTRA_PHOTO_COST = 10; // same as a message
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
 const MAX_VIDEO_SIZE = 6 * 1024 * 1024; // 6MB — ceiling, not a guarantee of 3MB
 const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
@@ -184,7 +183,16 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   if (pref_height_min_cm !== undefined) updates.pref_height_min_cm = pref_height_min_cm;
   if (pref_height_max_cm !== undefined) updates.pref_height_max_cm = pref_height_max_cm;
   if (pref_nightlife_frequency !== undefined) updates.pref_nightlife_frequency = pref_nightlife_frequency || null;
-  if (dealbreakers !== undefined) updates.dealbreakers = dealbreakers;
+  if (dealbreakers !== undefined) {
+    if (dealbreakers.length > 0) {
+      const { data: setting } = await supabase.from("app_settings").select("value").eq("key", "dealbreakers_enabled").single();
+      if (setting?.value !== true) {
+        res.status(403).json({ error: "Dealbreakers are not currently available." });
+        return;
+      }
+    }
+    updates.dealbreakers = dealbreakers;
+  }
   if (notify_messages !== undefined) updates.notify_messages = notify_messages;
   if (notify_matches !== undefined) updates.notify_matches = notify_matches;
   if (notify_likes !== undefined) updates.notify_likes = notify_likes;
@@ -255,9 +263,10 @@ router.post("/profile/boost", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
-  const spend = await spendSparks(userId, BOOST_COST, "Profile Boost");
+  const { cost_boost } = await getEconomyConfig();
+  const spend = await spendSparks(userId, cost_boost, "Profile Boost");
   if (!spend.success) {
-    res.status(402).json({ error: `Insufficient Sparks (need ${BOOST_COST})`, balance: spend.balance });
+    res.status(402).json({ error: `Insufficient Sparks (need ${cost_boost})`, balance: spend.balance });
     return;
   }
 
@@ -501,15 +510,16 @@ router.post(
     let balanceAfter: number | null = null;
 
     if (currentCount >= MAX_FREE_PHOTOS) {
-      const spend = await spendSparks(userId, EXTRA_PHOTO_COST, "Extra gallery photo");
+      const { cost_extra_photo } = await getEconomyConfig();
+      const spend = await spendSparks(userId, cost_extra_photo, "Extra gallery photo");
       if (!spend.success) {
         res.status(402).json({
-          error: `You've used your ${MAX_FREE_PHOTOS} free photos. Adding more costs ${EXTRA_PHOTO_COST} Sparks (insufficient balance).`,
+          error: `You've used your ${MAX_FREE_PHOTOS} free photos. Adding more costs ${cost_extra_photo} Sparks (insufficient balance).`,
           balance: spend.balance,
         });
         return;
       }
-      sparksCharged = EXTRA_PHOTO_COST;
+      sparksCharged = cost_extra_photo;
       balanceAfter = spend.balance;
     }
 
@@ -1523,7 +1533,6 @@ router.get("/profile-views/who-viewed-me", requireAuth, async (req, res): Promis
 // ============================================================
 
 const VERIFICATION_BUCKET = "identity-documents";
-const ID_VERIFICATION_FEE = 99;
 
 const verificationUpload = multer({
   storage: multer.memoryStorage(),
@@ -1655,9 +1664,10 @@ router.post("/verification/id/pay", requireAuth, async (req, res): Promise<void>
     return;
   }
 
+  const { id_verification_fee_zar } = await getEconomyConfig();
   const { error } = await supabase.from("identity_verification_payments").insert({
     user_id: userId,
-    amount: ID_VERIFICATION_FEE,
+    amount: id_verification_fee_zar,
     status: "paid",
   });
   if (error) {
@@ -1936,5 +1946,72 @@ router.post(
     res.sendStatus(204);
   },
 );
+
+// ============================================================
+// Admin-configurable economy figures — Sparks costs, the monthly grant
+// amount, and the ID verification fee. Reuses the same app_settings
+// table that already powers the Incognito/Dealbreakers toggles, so
+// there's one consistent place admins manage platform-wide settings.
+// ============================================================
+
+const ECONOMY_CONFIG_LABELS: Record<string, { label: string; description: string; unit: string }> = {
+  sparks_monthly_grant: { label: "Monthly Free Grant", description: "Free Sparks every user receives each month", unit: "Sparks" },
+  cost_super_like: { label: "Super Like", description: "Cost to send a Super Like", unit: "Sparks" },
+  cost_undo_swipe: { label: "Undo Swipe / Withdraw Invite", description: "Cost to undo a swipe or withdraw a sent invite", unit: "Sparks" },
+  cost_reveal_invites: { label: "Reveal Who Invited You", description: "Cost to see new pending inviters", unit: "Sparks" },
+  cost_message_before_match: { label: "Message Before Match", description: "Cost to message someone before matching", unit: "Sparks" },
+  cost_reshuffle: { label: "Discover Reshuffle", description: "Cost for a paid reshuffle (one free per week)", unit: "Sparks" },
+  cost_send_message: { label: "Send Message", description: "Cost to send a message in a match", unit: "Sparks" },
+  cost_unsend_message: { label: "Unsend Message", description: "Cost to unsend a sent message", unit: "Sparks" },
+  cost_unlock_read_receipts: { label: "Unlock Read Receipts", description: "Cost to unlock read receipts, per match", unit: "Sparks" },
+  cost_extra_invite: { label: "Extra Invite", description: "Cost per invite past the daily free quota", unit: "Sparks" },
+  daily_free_invites: { label: "Daily Free Invites", description: "Free invites per day before the extra-invite cost applies", unit: "invites/day" },
+  cost_extra_photo: { label: "Extra Photo", description: "Cost per gallery photo past the free limit", unit: "Sparks" },
+  cost_boost: { label: "Profile Boost", description: "Cost for a 5-hour profile boost (24h cooldown)", unit: "Sparks" },
+  cost_incognito_per_day: { label: "Incognito Mode", description: "Cost per day while Incognito is active", unit: "Sparks" },
+  id_verification_fee_zar: { label: "ID Verification Fee", description: "One-off fee for paid ID verification", unit: "ZAR" },
+};
+
+/** GET /api/admin/economy-config — current value of every configurable
+ *  figure, plus display metadata so the dashboard doesn't need its own
+ *  hardcoded copy of labels/descriptions. */
+router.get("/admin/economy-config", requireAuth, requireAdminScope("manage_sparks"), async (req, res): Promise<void> => {
+  const config = await getEconomyConfig();
+  const withLabels = Object.entries(config).map(([key, value]) => ({
+    key,
+    value,
+    ...(ECONOMY_CONFIG_LABELS[key] ?? { label: key, description: "", unit: "" }),
+  }));
+  res.json(withLabels);
+});
+
+/** PUT /api/admin/economy-config — update one figure. Validates it's a
+ *  known key and a non-negative number before writing, then invalidates
+ *  the in-memory cache so the change is live for the very next request
+ *  rather than waiting out the cache TTL. */
+router.put("/admin/economy-config", requireAuth, requireAdminScope("manage_sparks"), async (req, res): Promise<void> => {
+  const { key, value } = req.body as { key?: string; value?: number };
+
+  if (!key || !(key in ECONOMY_CONFIG_LABELS)) {
+    res.status(400).json({ error: "Unknown configuration key" });
+    return;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    res.status(400).json({ error: "value must be a non-negative number" });
+    return;
+  }
+
+  const { error } = await supabase
+    .from("app_settings")
+    .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: "key" });
+
+  if (error) {
+    res.status(500).json({ error: `Failed to update: ${error.message}` });
+    return;
+  }
+
+  invalidateEconomyConfigCache();
+  res.sendStatus(204);
+});
 
 export default router;

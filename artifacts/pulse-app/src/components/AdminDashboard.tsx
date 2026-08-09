@@ -6,10 +6,10 @@ import { Input } from "@/components/ui/input";
 import {
   X, Users, Flag, Coins, Megaphone, LayoutDashboard, Loader2, Search,
   Ban, ShieldOff, Crown, Plus, Trash2, CheckCircle2, XCircle, ChevronLeft,
-  ChevronRight, ShieldCheck, AlertTriangle, RefreshCw,
+  ChevronRight, ShieldCheck, AlertTriangle, RefreshCw, Sliders,
 } from "lucide-react";
 
-type Section = "overview" | "reports" | "users" | "sparks" | "announcements" | "verification";
+type Section = "overview" | "reports" | "users" | "sparks" | "economy" | "announcements" | "verification";
 type AdminScope = "manage_reports" | "manage_users" | "manage_sparks" | "view_analytics";
 
 const SECTIONS: { key: Section; label: string; icon: any; scope: AdminScope }[] = [
@@ -18,6 +18,7 @@ const SECTIONS: { key: Section; label: string; icon: any; scope: AdminScope }[] 
   { key: "users", label: "Users", icon: Users, scope: "manage_users" },
   { key: "verification", label: "Verification", icon: ShieldCheck, scope: "manage_users" },
   { key: "sparks", label: "Sparks", icon: Coins, scope: "manage_sparks" },
+  { key: "economy", label: "Pricing", icon: Sliders, scope: "manage_sparks" },
   { key: "announcements", label: "Announcements", icon: Megaphone, scope: "manage_users" },
 ];
 
@@ -28,7 +29,7 @@ const SECTIONS: { key: Section; label: string; icon: any; scope: AdminScope }[] 
 const NAV_GROUPS: { label: string; keys: Section[] }[] = [
   { label: "Overview", keys: ["overview"] },
   { label: "People & Safety", keys: ["reports", "users", "verification"] },
-  { label: "Money", keys: ["sparks"] },
+  { label: "Money", keys: ["sparks", "economy"] },
   { label: "Communication", keys: ["announcements"] },
 ];
 
@@ -68,6 +69,7 @@ export function AdminDashboard({ access, onClose }: { access: AdminAccess; onClo
       {section === "reports" && <ReportsSection token={token} toast={toast} />}
       {section === "users" && <UsersSection token={token} toast={toast} isSuperAdmin={access.isSuperAdmin} />}
       {section === "sparks" && <SparksSection token={token} toast={toast} />}
+      {section === "economy" && <EconomySection token={token} toast={toast} />}
       {section === "verification" && <AdminVerificationSection token={token} toast={toast} />}
       {section === "announcements" && <AnnouncementsSection token={token} toast={toast} />}
     </>
@@ -176,6 +178,8 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
   const [loading, setLoading] = useState(true);
   const [incognitoEnabled, setIncognitoEnabled] = useState(false);
   const [isTogglingIncognito, setIsTogglingIncognito] = useState(false);
+  const [dealbreakersEnabled, setDealbreakersEnabled] = useState(false);
+  const [isTogglingDealbreakers, setIsTogglingDealbreakers] = useState(false);
 
   useEffect(() => {
     fetch("/api/admin/overview", { headers: { Authorization: `Bearer ${token}` } })
@@ -185,7 +189,10 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
     fetch("/api/app-settings", { headers: { Authorization: `Bearer ${token}` } })
       .then((res) => (res.ok ? res.json() : null))
       .then((body) => {
-        if (body) setIncognitoEnabled(body.incognito_enabled === true);
+        if (body) {
+          setIncognitoEnabled(body.incognito_enabled === true);
+          setDealbreakersEnabled(body.dealbreakers_enabled === true);
+        }
       })
       .catch(() => {});
   }, [token]);
@@ -214,6 +221,33 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
       });
     } finally {
       setIsTogglingIncognito(false);
+    }
+  };
+
+  const toggleDealbreakersFeature = async () => {
+    const next = !dealbreakersEnabled;
+    setIsTogglingDealbreakers(true);
+    try {
+      const res = await fetch("/api/admin/settings", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ key: "dealbreakers_enabled", value: next }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "Failed to update setting");
+      setDealbreakersEnabled(next);
+      toast({ title: next ? "Dealbreakers enabled platform-wide" : "Dealbreakers disabled platform-wide" });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to update setting.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsTogglingDealbreakers(false);
     }
   };
 
@@ -258,6 +292,24 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
           </div>
           <div className={`h-6 w-10 rounded-full relative transition-colors shrink-0 ${incognitoEnabled ? "bg-primary" : "bg-secondary"}`}>
             <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${incognitoEnabled ? "right-1" : "left-1"}`} />
+          </div>
+        </button>
+
+        <button
+          onClick={toggleDealbreakersFeature}
+          disabled={isTogglingDealbreakers}
+          className="w-full flex items-center justify-between bg-card border border-card-border rounded-2xl p-4 disabled:opacity-60 mt-2"
+        >
+          <div className="text-left">
+            <p className="text-sm font-medium">Dealbreakers</p>
+            <p className="text-xs text-muted-foreground">
+              {dealbreakersEnabled
+                ? "Enabled — users can hard-filter Discover by lifestyle preferences"
+                : "Disabled — dealbreaker checkboxes hidden from all users"}
+            </p>
+          </div>
+          <div className={`h-6 w-10 rounded-full relative transition-colors shrink-0 ${dealbreakersEnabled ? "bg-primary" : "bg-secondary"}`}>
+            <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${dealbreakersEnabled ? "right-1" : "left-1"}`} />
           </div>
         </button>
       </div>
@@ -1185,8 +1237,137 @@ function SparksSection({ token, toast }: { token: string | null; toast: any }) {
 }
 
 // ============================================================
-// Announcements
+// Economy — admin-editable Sparks costs, grant amounts, and the ID
+// verification fee. Each row edits independently (save one field at a
+// time) rather than a single big form-wide save, so a mistake on one
+// figure can't accidentally block saving a correction to another.
 // ============================================================
+function EconomySection({ token, toast }: { token: string | null; toast: any }) {
+  const [figures, setFigures] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [savingKey, setSavingKey] = useState<string | null>(null);
+
+  const fetchFigures = useCallback(() => {
+    setLoading(true);
+    fetch("/api/admin/economy-config", { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error ?? `Failed to load config (${res.status})`);
+        setFigures(body ?? []);
+        setDrafts(Object.fromEntries((body ?? []).map((f: any) => [f.key, String(f.value)])));
+      })
+      .catch((err) => {
+        toast({
+          title: "Error",
+          description: err instanceof Error ? err.message : "Failed to load pricing config.",
+          variant: "destructive",
+        });
+      })
+      .finally(() => setLoading(false));
+  }, [token, toast]);
+
+  useEffect(() => {
+    fetchFigures();
+  }, [fetchFigures]);
+
+  const saveFigure = async (key: string) => {
+    const raw = drafts[key];
+    const value = Number(raw);
+    if (!raw || Number.isNaN(value) || value < 0) {
+      toast({ title: "Enter a valid non-negative number", variant: "destructive" });
+      return;
+    }
+    setSavingKey(key);
+    try {
+      const res = await fetch("/api/admin/economy-config", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ key, value }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "Failed to save");
+      setFigures((prev) => prev.map((f) => (f.key === key ? { ...f, value } : f)));
+      toast({ title: "Updated" });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to save.",
+        variant: "destructive",
+      });
+    } finally {
+      setSavingKey(null);
+    }
+  };
+
+  if (loading) return <CenteredLoader />;
+  if (figures.length === 0) return <EmptyNote text="No pricing config found." />;
+
+  const groups: { title: string; keys: string[] }[] = [
+    { title: "Grants", keys: ["sparks_monthly_grant", "daily_free_invites"] },
+    {
+      title: "Sparks Costs",
+      keys: [
+        "cost_super_like", "cost_undo_swipe", "cost_reveal_invites", "cost_message_before_match",
+        "cost_reshuffle", "cost_send_message", "cost_unsend_message", "cost_unlock_read_receipts",
+        "cost_extra_invite", "cost_extra_photo", "cost_boost", "cost_incognito_per_day",
+      ],
+    },
+    { title: "Real-Money Fees", keys: ["id_verification_fee_zar"] },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <p className="text-xs text-muted-foreground -mt-1">
+        Changes take effect within 30 seconds platform-wide. Values reflect what's currently live in the database.
+      </p>
+      {groups.map((group) => (
+        <div key={group.title}>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2 pl-1">{group.title}</p>
+          <div className="space-y-2">
+            {group.keys
+              .map((key) => figures.find((f) => f.key === key))
+              .filter(Boolean)
+              .map((f: any) => {
+                const isDirty = drafts[f.key] !== String(f.value);
+                return (
+                  <div key={f.key} className="bg-card border border-card-border rounded-2xl p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">{f.label}</p>
+                        <p className="text-xs text-muted-foreground">{f.description}</p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Input
+                          type="number"
+                          min={0}
+                          value={drafts[f.key] ?? ""}
+                          onChange={(e) => setDrafts((prev) => ({ ...prev, [f.key]: e.target.value }))}
+                          className="w-20 h-9 text-sm bg-background border-card-border rounded-lg text-right"
+                        />
+                        <span className="text-xs text-muted-foreground w-10">{f.unit}</span>
+                        <Button
+                          size="sm"
+                          disabled={!isDirty || savingKey === f.key}
+                          onClick={() => saveFigure(f.key)}
+                          className="h-9 text-xs"
+                        >
+                          {savingKey === f.key ? <Loader2 size={13} className="animate-spin" /> : "Save"}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 function AnnouncementsSection({ token, toast }: { token: string | null; toast: any }) {
   const [announcements, setAnnouncements] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);

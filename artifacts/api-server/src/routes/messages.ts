@@ -3,12 +3,9 @@ import { requireAuth } from "../middlewares/auth";
 import { supabase } from "../lib/supabase";
 import { spendSparks } from "../lib/sparks-helper";
 import { isBlockedEitherWay } from "../lib/blocks-helper";
+import { getEconomyConfig } from "../lib/economy-config";
 
 const router: IRouter = Router();
-
-const MESSAGE_COST = 10;
-const UNSEND_COST = 10;
-const READ_RECEIPT_COST = 20;
 
 /** Attaches an aggregated `reactions` array to each message:
  *  [{ emoji, count, reactedByMe }] — grouped by emoji, not by individual
@@ -145,9 +142,10 @@ router.post("/matches/:matchId/read-receipts/unlock", requireAuth, async (req, r
     return;
   }
 
-  const spend = await spendSparks(userId, READ_RECEIPT_COST, "Unlock read receipts");
+  const { cost_unlock_read_receipts } = await getEconomyConfig();
+  const spend = await spendSparks(userId, cost_unlock_read_receipts, "Unlock read receipts");
   if (!spend.success) {
-    res.status(402).json({ error: `Insufficient Sparks (need ${READ_RECEIPT_COST})`, balance: spend.balance });
+    res.status(402).json({ error: `Insufficient Sparks (need ${cost_unlock_read_receipts})`, balance: spend.balance });
     return;
   }
 
@@ -200,9 +198,10 @@ router.post("/matches/:matchId/messages", requireAuth, async (req, res): Promise
     return;
   }
 
-  const spend = await spendSparks(userId, MESSAGE_COST, "Message sent");
+  const { cost_send_message } = await getEconomyConfig();
+  const spend = await spendSparks(userId, cost_send_message, "Message sent");
   if (!spend.success) {
-    res.status(402).json({ error: `Insufficient Sparks (need ${MESSAGE_COST})`, balance: spend.balance });
+    res.status(402).json({ error: `Insufficient Sparks (need ${cost_send_message})`, balance: spend.balance });
     return;
   }
 
@@ -325,9 +324,10 @@ router.post("/messages/:messageId/unsend", requireAuth, async (req, res): Promis
     return;
   }
 
-  const spend = await spendSparks(userId, UNSEND_COST, "Message unsend");
+  const { cost_unsend_message } = await getEconomyConfig();
+  const spend = await spendSparks(userId, cost_unsend_message, "Message unsend");
   if (!spend.success) {
-    res.status(402).json({ error: `Insufficient Sparks (need ${UNSEND_COST})`, balance: spend.balance });
+    res.status(402).json({ error: `Insufficient Sparks (need ${cost_unsend_message})`, balance: spend.balance });
     return;
   }
 

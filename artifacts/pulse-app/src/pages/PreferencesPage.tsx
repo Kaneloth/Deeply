@@ -44,6 +44,7 @@ export default function PreferencesPage() {
   const [profile, setProfile] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [dealbreakersEnabled, setDealbreakersEnabled] = useState(false);
 
   const fetchProfile = useCallback(async () => {
     setIsLoading(true);
@@ -69,6 +70,12 @@ export default function PreferencesPage() {
   // Profile/Discover.
   useEffect(() => {
     fetchProfile();
+    fetch("/api/app-settings", { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (body) setDealbreakersEnabled(body.dealbreakers_enabled === true);
+      })
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -210,15 +217,15 @@ export default function PreferencesPage() {
           </h3>
         </div>
 
-        <DealbreakerDropdown label="Kids" value={prefNumKids} onChange={setPrefNumKids} options={NUM_KIDS_PREFERENCE_OPTIONS} fieldKey="num_kids" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} />
-        <DealbreakerDropdown label="Family plans" value={prefFamilyPlans} onChange={setPrefFamilyPlans} options={FAMILY_PLANS_PREFERENCE_OPTIONS} fieldKey="family_plans" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} />
-        <DealbreakerDropdown label="Smoking" value={prefSmokingStatus} onChange={setPrefSmokingStatus} options={SMOKING_PREFERENCE_OPTIONS} fieldKey="smoking_status" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} />
-        <DealbreakerDropdown label="Vaping" value={prefVapingStatus} onChange={setPrefVapingStatus} options={VAPING_PREFERENCE_OPTIONS} fieldKey="vaping_status" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} />
-        <DealbreakerDropdown label="Drinking" value={prefDrinkingStatus} onChange={setPrefDrinkingStatus} options={DRINKING_PREFERENCE_OPTIONS} fieldKey="drinking_status" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} />
-        <DealbreakerDropdown label="Tattoos" value={prefHasTattoos} onChange={setPrefHasTattoos} options={TATTOO_PREFERENCE_OPTIONS} fieldKey="has_tattoos" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} />
-        <DealbreakerDropdown label="Pets" value={prefPets} onChange={setPrefPets} options={PETS_PREFERENCE_OPTIONS} fieldKey="pets" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} />
-        <DealbreakerDropdown label="Physical activity" value={prefActivityLevel} onChange={setPrefActivityLevel} options={ACTIVITY_LEVEL_PREFERENCE_OPTIONS} fieldKey="activity_level" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} />
-        <DealbreakerDropdown label="Nightlife" value={prefNightlifeFrequency} onChange={setPrefNightlifeFrequency} options={NIGHTLIFE_PREFERENCE_OPTIONS} fieldKey="nightlife_frequency" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} />
+        <DealbreakerDropdown label="Kids" value={prefNumKids} onChange={setPrefNumKids} options={NUM_KIDS_PREFERENCE_OPTIONS} fieldKey="num_kids" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} enabled={dealbreakersEnabled} />
+        <DealbreakerDropdown label="Family plans" value={prefFamilyPlans} onChange={setPrefFamilyPlans} options={FAMILY_PLANS_PREFERENCE_OPTIONS} fieldKey="family_plans" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} enabled={dealbreakersEnabled} />
+        <DealbreakerDropdown label="Smoking" value={prefSmokingStatus} onChange={setPrefSmokingStatus} options={SMOKING_PREFERENCE_OPTIONS} fieldKey="smoking_status" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} enabled={dealbreakersEnabled} />
+        <DealbreakerDropdown label="Vaping" value={prefVapingStatus} onChange={setPrefVapingStatus} options={VAPING_PREFERENCE_OPTIONS} fieldKey="vaping_status" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} enabled={dealbreakersEnabled} />
+        <DealbreakerDropdown label="Drinking" value={prefDrinkingStatus} onChange={setPrefDrinkingStatus} options={DRINKING_PREFERENCE_OPTIONS} fieldKey="drinking_status" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} enabled={dealbreakersEnabled} />
+        <DealbreakerDropdown label="Tattoos" value={prefHasTattoos} onChange={setPrefHasTattoos} options={TATTOO_PREFERENCE_OPTIONS} fieldKey="has_tattoos" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} enabled={dealbreakersEnabled} />
+        <DealbreakerDropdown label="Pets" value={prefPets} onChange={setPrefPets} options={PETS_PREFERENCE_OPTIONS} fieldKey="pets" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} enabled={dealbreakersEnabled} />
+        <DealbreakerDropdown label="Physical activity" value={prefActivityLevel} onChange={setPrefActivityLevel} options={ACTIVITY_LEVEL_PREFERENCE_OPTIONS} fieldKey="activity_level" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} enabled={dealbreakersEnabled} />
+        <DealbreakerDropdown label="Nightlife" value={prefNightlifeFrequency} onChange={setPrefNightlifeFrequency} options={NIGHTLIFE_PREFERENCE_OPTIONS} fieldKey="nightlife_frequency" dealbreakers={dealbreakers} onToggleDealbreaker={toggleDealbreaker} enabled={dealbreakersEnabled} />
 
         <div className="space-y-2">
           <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">Height range</label>
@@ -262,6 +269,7 @@ function DealbreakerDropdown({
   fieldKey,
   dealbreakers,
   onToggleDealbreaker,
+  enabled,
 }: {
   label: string;
   value: string;
@@ -270,6 +278,7 @@ function DealbreakerDropdown({
   fieldKey: string;
   dealbreakers: string[];
   onToggleDealbreaker: (key: string) => void;
+  enabled: boolean;
 }) {
   const isDealbreaker = dealbreakers.includes(fieldKey);
   const hasSpecificValue = !!value && value !== "any";
@@ -277,7 +286,7 @@ function DealbreakerDropdown({
   return (
     <div>
       <Dropdown label={label} value={value} onChange={onChange} options={options} />
-      {hasSpecificValue && (
+      {enabled && hasSpecificValue && (
         <button
           onClick={() => onToggleDealbreaker(fieldKey)}
           className={`mt-1.5 flex items-center gap-1.5 text-xs font-medium transition-colors ${

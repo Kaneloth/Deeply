@@ -1,8 +1,7 @@
 import { type Request, type Response, type NextFunction } from "express";
 import { supabase } from "../lib/supabase";
 import { spendSparks } from "../lib/sparks-helper";
-
-const INCOGNITO_DAILY_COST = 5;
+import { getEconomyConfig } from "../lib/economy-config";
 
 // Augment Express Request to carry the authenticated user
 declare global {
@@ -73,7 +72,8 @@ export async function requireAuth(
     const dueForCharge = !lastCharged || Date.now() - lastCharged.getTime() >= 24 * 60 * 60 * 1000;
 
     if (dueForCharge) {
-      const spend = await spendSparks(user.id, INCOGNITO_DAILY_COST, "Incognito mode (daily)");
+      const { cost_incognito_per_day } = await getEconomyConfig();
+      const spend = await spendSparks(user.id, cost_incognito_per_day, "Incognito mode (daily)");
       if (spend.success) {
         await supabase
           .from("profiles")

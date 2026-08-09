@@ -1,19 +1,20 @@
 import { supabase } from "./supabase";
 import { spendSparks } from "./sparks-helper";
 import { getNextLocalMidnightUTC } from "./timezone";
+import { getEconomyConfig } from "./economy-config";
 
-const DAILY_FREE_INVITES = 15;
-const EXTRA_INVITE_COST = 5;
-
-/** Consumes one "invite" against the user's daily free quota (15/day,
- *  resetting at local midnight). If the free quota is exhausted, charges
- *  EXTRA_INVITE_COST Sparks instead. Also opportunistically updates the
- *  user's stored timezone if a fresher one was provided (e.g. from the
- *  browser), so the local-midnight reset stays accurate if they travel. */
+/** Consumes one "invite" against the user's daily free quota, resetting
+ *  at local midnight (count is admin-configurable — see economy-config).
+ *  If the free quota is exhausted, charges the admin-configured Sparks
+ *  cost instead. Also opportunistically updates the user's stored
+ *  timezone if a fresher one was provided (e.g. from the browser), so
+ *  the local-midnight reset stays accurate if they travel. */
 export async function consumeFreeInviteOrCharge(
   userId: string,
   clientTimezone?: string,
 ): Promise<{ success: boolean; usedFree: boolean; balance: number | null }> {
+  const { daily_free_invites: DAILY_FREE_INVITES, cost_extra_invite: EXTRA_INVITE_COST } = await getEconomyConfig();
+
   const { data: profile } = await supabase
     .from("profiles")
     .select("timezone, free_invites_used_today, invites_reset_at")
@@ -64,4 +65,12 @@ export async function consumeFreeInviteOrCharge(
   return { success: true, usedFree: false, balance: spend.balance };
 }
 
-export { DAILY_FREE_INVITES, EXTRA_INVITE_COST };
+/** For any other file that previously imported the static
+ *  DAILY_FREE_INVITES/EXTRA_INVITE_COST constants (e.g. to display "X
+ *  free invites remaining today" in an API response) — these are no
+ *  longer static now that they're admin-configurable, so this async
+ *  getter replaces that direct import. */
+export async function getInviteQuotaConfig(): Promise<{ dailyFreeInvites: number; extraInviteCost: number }> {
+  const { daily_free_invites, cost_extra_invite } = await getEconomyConfig();
+  return { dailyFreeInvites: daily_free_invites, extraInviteCost: cost_extra_invite };
+}
