@@ -55,6 +55,16 @@ function SwipeCard({
 }
 
 import { MatchCelebration } from "@/components/MatchCelebration";
+import { ScanWaveLoader } from "@/components/ScanWaveLoader";
+
+// Module-level, not component state — persists for the lifetime of the
+// loaded JS bundle (i.e. the whole app session), resetting only on a
+// full page reload. This is deliberately outside the component so
+// navigating away from Discover and back within the same session does
+// NOT re-trigger the scan wave; it's a true "first load of this visit
+// to the app" flag, not a per-mount one.
+let hasShownDiscoverScanWave = false;
+const MIN_SCAN_WAVE_MS = 2000;
 
 export default function DiscoverPage() {
   const { token } = useAuth();
@@ -63,6 +73,7 @@ export default function DiscoverPage() {
   const [, setLocation] = useLocation();
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [showScanWave, setShowScanWave] = useState(false);
   const [matchCelebration, setMatchCelebration] = useState<{ name: string; matchId: string; photoUrl?: string } | null>(null);
   const [isSwiping, setIsSwiping] = useState(false);
   const [isUndoing, setIsUndoing] = useState(false);
@@ -127,13 +138,31 @@ export default function DiscoverPage() {
   }, [token]);
 
   const fetchQueue = useCallback(async () => {
+    const isFirstLoadOfSession = !hasShownDiscoverScanWave;
+    if (isFirstLoadOfSession) {
+      hasShownDiscoverScanWave = true;
+      setShowScanWave(true);
+    }
     setIsLoading(true);
+    const startedAt = Date.now();
     try {
       const res = await fetch("/api/discover/queue", {
         headers: { Authorization: `Bearer ${token}` },
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to load profiles");
+
+      // Enforce a minimum display time for the scan wave so it never
+      // flashes awkwardly fast on a quick response — but it's still
+      // fundamentally tied to the real fetch completing, not a fixed
+      // timer alone: if the fetch takes longer than the minimum, the
+      // wave just keeps running until the actual data arrives.
+      if (isFirstLoadOfSession) {
+        const elapsed = Date.now() - startedAt;
+        const remaining = MIN_SCAN_WAVE_MS - elapsed;
+        if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
+      }
+
       setCandidates(body.candidates ?? []);
     } catch (err) {
       toast({
@@ -143,6 +172,7 @@ export default function DiscoverPage() {
       });
     } finally {
       setIsLoading(false);
+      setShowScanWave(false);
     }
   }, [token, toast]);
 
@@ -331,6 +361,9 @@ export default function DiscoverPage() {
   };
 
   if (isLoading) {
+    if (showScanWave) {
+      return <ScanWaveLoader />;
+    }
     return (
       <div className="p-4 pt-10 space-y-6">
         <Skeleton className="h-8 w-32 mx-2" />
