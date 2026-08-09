@@ -824,7 +824,7 @@ export default function ProfilePage() {
       <PageHeader title="Profile" />
 
       <div className="flex flex-col items-center mb-10">
-        <div className="relative">
+        <div className="relative w-44 h-44 flex items-center justify-center">
           <div className="w-28 h-28 rounded-full border-4 border-background bg-muted overflow-hidden shadow-2xl relative z-10">
             {profile?.photo_url ? (
               <img src={profile.photo_url} alt="Profile" className="w-full h-full object-cover" />
