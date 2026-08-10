@@ -31,7 +31,7 @@ export ANDROID_HOME="$ANDROID_SDK_ROOT"
 export PATH="$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools"
 
 yes | sdkmanager --licenses > /dev/null
-sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+yes | sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
 echo "Android SDK command-line tools installed at $ANDROID_SDK_ROOT"
 echo "Run 'source ~/.bashrc' or open a new terminal for PATH changes to take effect."
