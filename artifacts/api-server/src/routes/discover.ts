@@ -6,7 +6,7 @@ import { attachPhotoGalleries } from "../lib/photo-galleries";
 import { attachAudioPrompts } from "../lib/audio-prompts-helper";
 import { withComputedAge, withComputedAges, calculateAge } from "../lib/age";
 import { consumeFreeInviteOrCharge } from "../lib/invites-quota";
-import { getExcludedCandidateIds, getPendingInviterIds } from "../lib/discover-exclusions";
+import { getExcludedCandidateIds, getPendingInviterIds, getCandidateExclusionSets } from "../lib/discover-exclusions";
 import { haversineDistanceKm } from "../lib/geo";
 import { genderSatisfiesPreference, passesDealbreakers, passesAgeRange, computeCompatibilityScore } from "../lib/matching";
 import { getEconomyConfig } from "../lib/economy-config";
@@ -507,7 +507,19 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
     tags?: string;
   };
 
-  const excludedIds = await getExcludedCandidateIds(userId);
+  const { hardExcluded, pendingInvitedIds } = await getCandidateExclusionSets(userId);
+
+  // Deliberately searching by name is treated as "I'm specifically
+  // looking for this person" — someone already invited should still be
+  // findable that way (to check their profile again, confirm you did
+  // invite them, etc.), even though they're correctly hidden from
+  // passive browsing everywhere else (Discover, Categories, and this
+  // same search when no name is given). Only a name search lifts the
+  // pending-invite exclusion; every other exclusion (passed, matched,
+  // blocked, admin) always applies regardless.
+  const isExplicitNameSearch = !!name && name.trim().length > 0;
+  const excludedIds = isExplicitNameSearch ? hardExcluded : [...hardExcluded, ...pendingInvitedIds];
+  const pendingInvitedSet = new Set(pendingInvitedIds);
 
   const { data: viewer } = await supabase
     .from("profiles")
@@ -584,7 +596,10 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
     ? withDistance.filter((c) => c.distance_km === null || c.distance_km <= radiusKm)
     : withDistance;
 
-  const stripped = withinRadius.slice(0, 30).map(({ latitude, longitude, ...rest }) => rest);
+  const stripped = withinRadius.slice(0, 30).map(({ latitude, longitude, ...rest }) => ({
+    ...rest,
+    invite_pending: pendingInvitedSet.has(rest.id),
+  }));
 
   const withPhotos = await attachPhotoGalleries(stripped);
 
@@ -598,12 +613,38 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
 
   const excludedIds = await getExcludedCandidateIds(userId);
   const excludeClause = `(${excludedIds.join(",")})`;
+  const PREVIEW_FIELDS = "id, photo_url, birthday, age, gender, looking_for_gender, num_kids, family_plans, smoking_status, vaping_status, drinking_status, nightlife_frequency, has_tattoos, pets, activity_level";
 
   const { data: viewerProfile } = await supabase
     .from("profiles")
-    .select("city, personality_tags")
+    .select(
+      "city, personality_tags, gender, looking_for_gender, dealbreakers, pref_age_min, pref_age_max, " +
+        "pref_num_kids, pref_family_plans, pref_smoking_status, pref_vaping_status, pref_drinking_status, pref_nightlife_frequency, pref_has_tattoos, pref_pets, pref_activity_level",
+    )
     .eq("id", userId)
     .single();
+
+  // Shared with the /categories/:key results endpoint below — applying
+  // the same gender/dealbreaker/age-range enforcement here too. Without
+  // this, a preview card could claim "2 people" using an unfiltered
+  // count while tapping into that category (which does filter) shows
+  // nobody — exactly the inconsistency that was happening before this
+  // fix, since only the results endpoint had these filters applied.
+  const dealbreakers: string[] = viewerProfile?.dealbreakers ?? [];
+  const applyHardFilters = (candidates: any[]): { count: number; preview_photos: string[] } => {
+    const filtered = candidates.filter((c) => {
+      if (!genderSatisfiesPreference(c.gender, viewerProfile?.looking_for_gender)) return false;
+      if (!genderSatisfiesPreference(viewerProfile?.gender, c.looking_for_gender)) return false;
+      if (viewerProfile && !passesDealbreakers(c, viewerProfile, dealbreakers)) return false;
+      const candidateAge = calculateAge(c.birthday ?? null) ?? c.age;
+      if (!passesAgeRange(candidateAge, viewerProfile?.pref_age_min, viewerProfile?.pref_age_max)) return false;
+      return true;
+    });
+    return {
+      count: filtered.length,
+      preview_photos: filtered.slice(0, 3).map((p) => p.photo_url).filter(Boolean),
+    };
+  };
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -613,46 +654,24 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
   {
     const { data } = await supabase
       .from("profiles")
-      .select("photo_url")
+      .select(PREVIEW_FIELDS)
       .not("id", "in", excludeClause)
       .eq("is_incognito", false)
       .gte("created_at", sevenDaysAgo)
-      .limit(3);
-    const { count } = await supabase
-      .from("profiles")
-      .select("id", { count: "exact", head: true })
-      .not("id", "in", excludeClause)
-      .eq("is_incognito", false)
-      .gte("created_at", sevenDaysAgo);
-    categories.push({
-      key: "new_here",
-      label: "New Here",
-      count: count ?? 0,
-      preview_photos: (data ?? []).map((p) => p.photo_url).filter(Boolean) as string[],
-    });
+      .limit(300);
+    categories.push({ key: "new_here", label: "New Here", ...applyHardFilters(data ?? []) });
   }
 
   // Verified
   {
     const { data } = await supabase
       .from("profiles")
-      .select("photo_url")
+      .select(PREVIEW_FIELDS)
       .not("id", "in", excludeClause)
       .eq("is_incognito", false)
       .eq("is_verified", true)
-      .limit(3);
-    const { count } = await supabase
-      .from("profiles")
-      .select("id", { count: "exact", head: true })
-      .not("id", "in", excludeClause)
-      .eq("is_incognito", false)
-      .eq("is_verified", true);
-    categories.push({
-      key: "verified",
-      label: "Verified",
-      count: count ?? 0,
-      preview_photos: (data ?? []).map((p) => p.photo_url).filter(Boolean) as string[],
-    });
+      .limit(300);
+    categories.push({ key: "verified", label: "Verified", ...applyHardFilters(data ?? []) });
   }
 
   // Has Audio Bio
@@ -661,63 +680,40 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
     const audioUserIds = [...new Set((audioUserRows ?? []).map((r) => r.user_id))].filter(
       (id) => !excludedIds.includes(id),
     );
-    let preview: string[] = [];
+    let result = { count: 0, preview_photos: [] as string[] };
     if (audioUserIds.length > 0) {
       const { data } = await supabase
         .from("profiles")
-        .select("photo_url")
-        .in("id", audioUserIds.slice(0, 50))
-        .eq("is_incognito", false)
-        .limit(3);
-      preview = (data ?? []).map((p) => p.photo_url).filter(Boolean) as string[];
+        .select(PREVIEW_FIELDS)
+        .in("id", audioUserIds)
+        .eq("is_incognito", false);
+      result = applyHardFilters(data ?? []);
     }
-    categories.push({ key: "has_audio", label: "Audio Bios", count: audioUserIds.length, preview_photos: preview });
+    categories.push({ key: "has_audio", label: "Audio Bios", ...result });
   }
 
   // Near You — same city as viewer
   if (viewerProfile?.city) {
     const { data } = await supabase
       .from("profiles")
-      .select("photo_url")
+      .select(PREVIEW_FIELDS)
       .not("id", "in", excludeClause)
       .eq("is_incognito", false)
       .ilike("city", viewerProfile.city)
-      .limit(3);
-    const { count } = await supabase
-      .from("profiles")
-      .select("id", { count: "exact", head: true })
-      .not("id", "in", excludeClause)
-      .eq("is_incognito", false)
-      .ilike("city", viewerProfile.city);
-    categories.push({
-      key: "near_you",
-      label: "Near You",
-      count: count ?? 0,
-      preview_photos: (data ?? []).map((p) => p.photo_url).filter(Boolean) as string[],
-    });
+      .limit(300);
+    categories.push({ key: "near_you", label: "Near You", ...applyHardFilters(data ?? []) });
   }
 
-  // Matches Your Vibe — overlapping personality tags
-  if (viewerProfile?.personality_tags && viewerProfile.personality_tags.length > 0) {
+  // Matches Your Vibe — broad pool, same holistic scoring as the results
+  // endpoint, not just a personality_tags overlap
+  {
     const { data } = await supabase
       .from("profiles")
-      .select("photo_url")
+      .select(PREVIEW_FIELDS)
       .not("id", "in", excludeClause)
       .eq("is_incognito", false)
-      .overlaps("personality_tags", viewerProfile.personality_tags)
-      .limit(3);
-    const { count } = await supabase
-      .from("profiles")
-      .select("id", { count: "exact", head: true })
-      .not("id", "in", excludeClause)
-      .eq("is_incognito", false)
-      .overlaps("personality_tags", viewerProfile.personality_tags);
-    categories.push({
-      key: "matches_vibe",
-      label: "Matches Your Vibe",
-      count: count ?? 0,
-      preview_photos: (data ?? []).map((p) => p.photo_url).filter(Boolean) as string[],
-    });
+      .limit(300);
+    categories.push({ key: "matches_vibe", label: "Matches Your Vibe", ...applyHardFilters(data ?? []) });
   }
 
   // Popular — most invited (liked) in the last 7 days
@@ -733,15 +729,20 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
       if (excludedIds.includes(l.target_id)) continue;
       countMap.set(l.target_id, (countMap.get(l.target_id) ?? 0) + 1);
     }
-    const topIds = [...countMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([id]) => id);
-    let preview: string[] = [];
-    if (topIds.length > 0) {
-      const { data } = await supabase.from("profiles").select("id, photo_url").in("id", topIds).eq("is_incognito", false);
-      preview = topIds
-        .map((id) => data?.find((p) => p.id === id)?.photo_url)
-        .filter(Boolean) as string[];
+    const likedIds = [...countMap.keys()];
+    let result = { count: 0, preview_photos: [] as string[] };
+    if (likedIds.length > 0) {
+      const { data } = await supabase
+        .from("profiles")
+        .select(PREVIEW_FIELDS)
+        .in("id", likedIds)
+        .eq("is_incognito", false);
+      // Sort by popularity before truncating to the top 3 preview photos,
+      // same ordering the results endpoint uses.
+      const sorted = (data ?? []).sort((a, b) => (countMap.get(b.id) ?? 0) - (countMap.get(a.id) ?? 0));
+      result = applyHardFilters(sorted);
     }
-    categories.push({ key: "popular", label: "Popular", count: countMap.size, preview_photos: preview });
+    categories.push({ key: "popular", label: "Popular", ...result });
   }
 
   res.json({ categories });

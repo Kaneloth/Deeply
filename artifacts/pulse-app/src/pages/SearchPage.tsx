@@ -32,6 +32,7 @@ interface Result {
   photos: { url: string; media_type: "image" | "video" }[];
   personality_tags: string[];
   integrity_score: number;
+  invite_pending?: boolean;
 }
 
 interface Category {
@@ -564,7 +565,7 @@ export default function SearchPage() {
                   </p>
                 )}
               </div>
-              <div className="flex gap-2 shrink-0">
+              <div className="flex items-center gap-2 shrink-0">
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -585,26 +586,35 @@ export default function SearchPage() {
                 >
                   <MessageCircle size={16} />
                 </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleSwipe(r.id, "like");
-                  }}
-                  disabled={actioningId === r.id}
-                  className="w-9 h-9 rounded-full bg-gradient-accent flex items-center justify-center text-white"
-                >
-                  <Heart size={16} className="fill-current" />
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleSwipe(r.id, "super_like");
-                  }}
-                  disabled={actioningId === r.id}
-                  className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center text-sky-400 hover:text-sky-300 transition-colors"
-                >
-                  <Star size={16} className="fill-current" />
-                </button>
+                {r.invite_pending ? (
+                  <span className="flex items-center gap-1.5 px-3 h-9 rounded-full bg-secondary text-xs font-medium text-muted-foreground whitespace-nowrap">
+                    <Heart size={13} className="fill-current opacity-60" />
+                    Invite sent
+                  </span>
+                ) : (
+                  <>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSwipe(r.id, "like");
+                      }}
+                      disabled={actioningId === r.id}
+                      className="w-9 h-9 rounded-full bg-gradient-accent flex items-center justify-center text-white"
+                    >
+                      <Heart size={16} className="fill-current" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSwipe(r.id, "super_like");
+                      }}
+                      disabled={actioningId === r.id}
+                      className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center text-sky-400 hover:text-sky-300 transition-colors"
+                    >
+                      <Star size={16} className="fill-current" />
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           ))}

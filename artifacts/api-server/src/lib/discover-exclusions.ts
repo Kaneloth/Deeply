@@ -37,6 +37,49 @@ export async function getExcludedCandidateIds(userId: string): Promise<string[]>
   ];
 }
 
+/** Same underlying exclusion logic as getExcludedCandidateIds, but keeps
+ *  the "invited but not yet decided" people (a pending "like" or
+ *  "super_like" the viewer sent) SEPARATE from everyone else, rather
+ *  than folding them into one blanket list. Used specifically by name
+ *  search: a viewer deliberately searching for a name they remember
+ *  should be able to find someone they've already invited (to check in,
+ *  view the profile again, etc.), while passive browsing (Discover,
+ *  Categories, filtered search without a name) should still hide them
+ *  entirely, same as before. People who were passed on, matched,
+ *  blocked, or are admins are always excluded regardless — this
+ *  distinction only ever applies to pending invites specifically. */
+export async function getCandidateExclusionSets(
+  userId: string,
+): Promise<{ hardExcluded: string[]; pendingInvitedIds: string[] }> {
+  const { data: allSwipes } = await supabase
+    .from("swipes")
+    .select("target_id, direction")
+    .eq("swiper_id", userId);
+
+  const pendingInvitedIds = (allSwipes ?? [])
+    .filter((s) => s.direction === "like" || s.direction === "super_like")
+    .map((s) => s.target_id);
+  const passedIds = (allSwipes ?? []).filter((s) => s.direction === "pass").map((s) => s.target_id);
+
+  const { data: existingMatches } = await supabase
+    .from("matches")
+    .select("user1_id, user2_id")
+    .or(`user1_id.eq.${userId},user2_id.eq.${userId}`);
+  const matchedPartnerIds = (existingMatches ?? []).map((m) =>
+    m.user1_id === userId ? m.user2_id : m.user1_id,
+  );
+
+  const blockedIds = await getBlockedUserIds(userId);
+
+  const { data: adminRows } = await supabase.from("profiles").select("id").eq("is_admin", true);
+  const adminIds = (adminRows ?? []).map((a) => a.id);
+
+  return {
+    hardExcluded: [userId, ...passedIds, ...matchedPartnerIds, ...blockedIds, ...adminIds],
+    pendingInvitedIds,
+  };
+}
+
 export interface PendingInviter {
   id: string;
   direction: "like" | "super_like";
