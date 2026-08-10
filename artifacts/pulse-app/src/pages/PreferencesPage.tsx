@@ -95,6 +95,8 @@ export default function PreferencesPage() {
   const [dealbreakers, setDealbreakers] = useState<string[]>([]);
   const [prefHeightMinCm, setPrefHeightMinCm] = useState<number | null>(null);
   const [prefHeightMaxCm, setPrefHeightMaxCm] = useState<number | null>(null);
+  const [prefAgeMin, setPrefAgeMin] = useState(18);
+  const [prefAgeMax, setPrefAgeMax] = useState(99);
 
   const toggleIntention = (v: string) => {
     setIntentions((prev) => (prev.includes(v) ? prev.filter((i) => i !== v) : prev.length < 3 ? [...prev, v] : prev));
@@ -122,6 +124,8 @@ export default function PreferencesPage() {
       setDealbreakers(profile.dealbreakers || []);
       setPrefHeightMinCm(profile.pref_height_min_cm ?? null);
       setPrefHeightMaxCm(profile.pref_height_max_cm ?? null);
+      setPrefAgeMin(profile.pref_age_min ?? 18);
+      setPrefAgeMax(profile.pref_age_max ?? 99);
     }
   }, [profile]);
 
@@ -140,6 +144,8 @@ export default function PreferencesPage() {
     prefActivityLevel !== (profile.pref_activity_level || "") ||
     prefHeightMinCm !== (profile.pref_height_min_cm ?? null) ||
     prefHeightMaxCm !== (profile.pref_height_max_cm ?? null) ||
+    prefAgeMin !== (profile.pref_age_min ?? 18) ||
+    prefAgeMax !== (profile.pref_age_max ?? 99) ||
     prefNightlifeFrequency !== (profile.pref_nightlife_frequency || "") ||
     JSON.stringify([...dealbreakers].sort()) !== JSON.stringify([...(profile.dealbreakers || [])].sort())
   );
@@ -169,6 +175,8 @@ export default function PreferencesPage() {
           pref_activity_level: prefActivityLevel,
           pref_height_min_cm: prefHeightMinCm,
           pref_height_max_cm: prefHeightMaxCm,
+          pref_age_min: prefAgeMin,
+          pref_age_max: prefAgeMax,
           pref_nightlife_frequency: prefNightlifeFrequency,
           dealbreakers,
         }),
@@ -202,6 +210,41 @@ export default function PreferencesPage() {
       <div className="space-y-6">
         <Dropdown label="Looking for" value={lookingForGender} onChange={setLookingForGender} options={LOOKING_FOR_OPTIONS} />
         <RadiusSlider valueKm={distanceKm} onChange={setDistanceKm} />
+
+        <div className="space-y-2">
+          <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">Age range</label>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-xs text-muted-foreground mb-1.5">Min</p>
+              <Input
+                type="number"
+                min={18}
+                max={99}
+                value={prefAgeMin}
+                onChange={(e) => {
+                  const next = Math.max(18, Math.min(99, Number(e.target.value) || 18));
+                  setPrefAgeMin(next);
+                  if (next > prefAgeMax) setPrefAgeMax(next);
+                }}
+              />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-1.5">Max</p>
+              <Input
+                type="number"
+                min={18}
+                max={99}
+                value={prefAgeMax}
+                onChange={(e) => {
+                  const next = Math.max(18, Math.min(99, Number(e.target.value) || 99));
+                  setPrefAgeMax(next);
+                  if (next < prefAgeMin) setPrefAgeMin(next);
+                }}
+              />
+            </div>
+          </div>
+        </div>
+
         <Dropdown label="Relationship type" value={relationshipType} onChange={setRelationshipType} options={RELATIONSHIP_TYPES} />
 
         <div className="space-y-3">

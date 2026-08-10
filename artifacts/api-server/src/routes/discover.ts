@@ -4,11 +4,11 @@ import { supabase } from "../lib/supabase";
 import { spendSparks } from "../lib/sparks-helper";
 import { attachPhotoGalleries } from "../lib/photo-galleries";
 import { attachAudioPrompts } from "../lib/audio-prompts-helper";
-import { withComputedAge, withComputedAges } from "../lib/age";
+import { withComputedAge, withComputedAges, calculateAge } from "../lib/age";
 import { consumeFreeInviteOrCharge } from "../lib/invites-quota";
 import { getExcludedCandidateIds, getPendingInviterIds } from "../lib/discover-exclusions";
 import { haversineDistanceKm } from "../lib/geo";
-import { genderSatisfiesPreference, passesDealbreakers, computeCompatibilityScore } from "../lib/matching";
+import { genderSatisfiesPreference, passesDealbreakers, passesAgeRange, computeCompatibilityScore } from "../lib/matching";
 import { getEconomyConfig } from "../lib/economy-config";
 
 const router: IRouter = Router();
@@ -54,6 +54,7 @@ async function buildDiscoverQueue(userId: string) {
     .from("profiles")
     .select(
       "latitude, longitude, distance_km, gender, looking_for_gender, relationship_type, dating_intentions, personality_tags, dealbreakers, " +
+        "pref_age_min, pref_age_max, " +
         "pref_num_kids, pref_family_plans, pref_smoking_status, pref_vaping_status, pref_drinking_status, pref_nightlife_frequency, pref_has_tattoos, pref_pets, pref_activity_level",
     )
     .eq("id", userId)
@@ -83,14 +84,18 @@ async function buildDiscoverQueue(userId: string) {
   }
 
   // Hard filters — gender preference is bidirectional (both people need
-  // to be open to the other's gender), plus radius and dealbreakers.
-  // Everything else is a soft signal handled by scoring below, not a
-  // filter — with a small user base, hard-filtering on every preference
-  // by default would risk an empty queue.
+  // to be open to the other's gender), age range, plus radius and
+  // dealbreakers. Everything else is a soft signal handled by scoring
+  // below, not a filter — with a small user base, hard-filtering on
+  // every preference by default would risk an empty queue. Age range is
+  // the one exception treated as always-on rather than optional, since
+  // it's a baseline expectation on every mainstream dating app, not
+  // something people expect to have to opt into.
   const hardFiltered = candidates.filter((c) => {
     if (!genderSatisfiesPreference(c.gender, viewer.looking_for_gender)) return false;
     if (!genderSatisfiesPreference(viewer.gender, c.looking_for_gender)) return false;
     if (!passesDealbreakers(c, viewer, dealbreakers)) return false;
+    if (!passesAgeRange(calculateAge(c.birthday ?? null) ?? c.age, viewer.pref_age_min, viewer.pref_age_max)) return false;
     return true;
   });
 

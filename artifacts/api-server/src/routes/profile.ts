@@ -75,6 +75,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     pref_num_kids, pref_family_plans, pref_smoking_status, pref_drinking_status,
     pref_vaping_status, pref_has_tattoos, pref_pets, pref_activity_level,
     pref_height_min_cm, pref_height_max_cm, pref_nightlife_frequency, dealbreakers,
+    pref_age_min, pref_age_max,
   } = req.body as {
     name?: string;
     age?: number;
@@ -123,6 +124,8 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     pref_height_max_cm?: number;
     pref_nightlife_frequency?: string;
     dealbreakers?: string[];
+    pref_age_min?: number;
+    pref_age_max?: number;
   };
   if (birthday) {
     const dob = new Date(birthday);
@@ -184,6 +187,16 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   if (pref_height_min_cm !== undefined) updates.pref_height_min_cm = pref_height_min_cm;
   if (pref_height_max_cm !== undefined) updates.pref_height_max_cm = pref_height_max_cm;
   if (pref_nightlife_frequency !== undefined) updates.pref_nightlife_frequency = pref_nightlife_frequency || null;
+  if (pref_age_min !== undefined || pref_age_max !== undefined) {
+    const min = pref_age_min ?? 18;
+    const max = pref_age_max ?? 99;
+    if (min < 18 || max < min) {
+      res.status(400).json({ error: "Invalid age range — minimum must be 18 or older, and maximum can't be below minimum." });
+      return;
+    }
+    if (pref_age_min !== undefined) updates.pref_age_min = min;
+    if (pref_age_max !== undefined) updates.pref_age_max = max;
+  }
   if (dealbreakers !== undefined) {
     if (dealbreakers.length > 0) {
       const { data: setting } = await supabase.from("app_settings").select("value").eq("key", "dealbreakers_enabled").single();
