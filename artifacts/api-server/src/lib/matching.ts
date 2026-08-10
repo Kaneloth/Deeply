@@ -75,6 +75,24 @@ export function passesDealbreakers(
   return true;
 }
 
+/** True if `candidateAge` falls within the viewer's set age range
+ *  (inclusive on both ends). Unlike lifestyle dealbreakers, age range is
+ *  always enforced as a hard filter, never optional — every mainstream
+ *  dating app treats this as a baseline expectation, not something a
+ *  viewer has to explicitly opt into filtering on. A candidate with no
+ *  computed age (missing birthday) is kept rather than excluded, since
+ *  excluding for missing data would be punitive rather than useful. */
+export function passesAgeRange(
+  candidateAge: number | null | undefined,
+  viewerPrefAgeMin: number | null | undefined,
+  viewerPrefAgeMax: number | null | undefined,
+): boolean {
+  if (candidateAge == null) return true;
+  const min = viewerPrefAgeMin ?? 18;
+  const max = viewerPrefAgeMax ?? 99;
+  return candidateAge >= min && candidateAge <= max;
+}
+
 interface CandidateForScoring extends LifestyleFields {
   relationship_type?: string | null;
   dating_intentions?: string[] | null;
