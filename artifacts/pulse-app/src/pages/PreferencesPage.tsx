@@ -95,6 +95,8 @@ export default function PreferencesPage() {
   const [dealbreakers, setDealbreakers] = useState<string[]>([]);
   const [prefHeightMinCm, setPrefHeightMinCm] = useState<number | null>(null);
   const [prefHeightMaxCm, setPrefHeightMaxCm] = useState<number | null>(null);
+  const [prefAgeMin, setPrefAgeMin] = useState<number | "">(18);
+  const [prefAgeMax, setPrefAgeMax] = useState<number | "">(99);
 
   const toggleIntention = (v: string) => {
     setIntentions((prev) => (prev.includes(v) ? prev.filter((i) => i !== v) : prev.length < 3 ? [...prev, v] : prev));
@@ -122,6 +124,8 @@ export default function PreferencesPage() {
       setDealbreakers(profile.dealbreakers || []);
       setPrefHeightMinCm(profile.pref_height_min_cm ?? null);
       setPrefHeightMaxCm(profile.pref_height_max_cm ?? null);
+      setPrefAgeMin(profile.pref_age_min ?? 18);
+      setPrefAgeMax(profile.pref_age_max ?? 99);
     }
   }, [profile]);
 
@@ -140,6 +144,8 @@ export default function PreferencesPage() {
     prefActivityLevel !== (profile.pref_activity_level || "") ||
     prefHeightMinCm !== (profile.pref_height_min_cm ?? null) ||
     prefHeightMaxCm !== (profile.pref_height_max_cm ?? null) ||
+    prefAgeMin !== (profile.pref_age_min ?? 18) ||
+    prefAgeMax !== (profile.pref_age_max ?? 99) ||
     prefNightlifeFrequency !== (profile.pref_nightlife_frequency || "") ||
     JSON.stringify([...dealbreakers].sort()) !== JSON.stringify([...(profile.dealbreakers || [])].sort())
   );
@@ -169,6 +175,8 @@ export default function PreferencesPage() {
           pref_activity_level: prefActivityLevel,
           pref_height_min_cm: prefHeightMinCm,
           pref_height_max_cm: prefHeightMaxCm,
+          pref_age_min: prefAgeMin === "" ? 18 : prefAgeMin,
+          pref_age_max: prefAgeMax === "" ? 99 : prefAgeMax,
           pref_nightlife_frequency: prefNightlifeFrequency,
           dealbreakers,
         }),
@@ -202,6 +210,68 @@ export default function PreferencesPage() {
       <div className="space-y-6">
         <Dropdown label="Looking for" value={lookingForGender} onChange={setLookingForGender} options={LOOKING_FOR_OPTIONS} />
         <RadiusSlider valueKm={distanceKm} onChange={setDistanceKm} />
+
+        <div className="space-y-2">
+          <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">Age range</label>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-xs text-muted-foreground mb-1.5">Min</p>
+              <Input
+                type="number"
+                min={18}
+                max={99}
+                value={prefAgeMin}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  // Let the field hold whatever's being typed — including
+                  // empty or momentarily out-of-range — while the user is
+                  // actively editing. Clamping here on every keystroke is
+                  // what caused the original bug: deleting a digit passes
+                  // through an empty string, which got force-corrected
+                  // back to 18 mid-edit, making it impossible to ever
+                  // type a different number.
+                  if (raw === "") {
+                    setPrefAgeMin("");
+                    return;
+                  }
+                  const num = Number(raw);
+                  if (!Number.isNaN(num)) setPrefAgeMin(num);
+                }}
+                onBlur={() => {
+                  const clamped = Math.max(18, Math.min(99, prefAgeMin === "" ? 18 : prefAgeMin));
+                  setPrefAgeMin(clamped);
+                  const currentMax = prefAgeMax === "" ? 99 : prefAgeMax;
+                  if (clamped > currentMax) setPrefAgeMax(clamped);
+                }}
+              />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-1.5">Max</p>
+              <Input
+                type="number"
+                min={18}
+                max={99}
+                value={prefAgeMax}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  if (raw === "") {
+                    setPrefAgeMax("");
+                    return;
+                  }
+                  const num = Number(raw);
+                  if (!Number.isNaN(num)) setPrefAgeMax(num);
+                }}
+                onBlur={() => {
+                  const clamped = Math.max(18, Math.min(99, prefAgeMax === "" ? 99 : prefAgeMax));
+                  setPrefAgeMax(clamped);
+                  const currentMin = prefAgeMin === "" ? 18 : prefAgeMin;
+                  if (clamped < currentMin) setPrefAgeMin(clamped);
+                }}
+              />
+            </div>
+          </div>
+        </div>
+
         <Dropdown label="Relationship type" value={relationshipType} onChange={setRelationshipType} options={RELATIONSHIP_TYPES} />
 
         <div className="space-y-3">

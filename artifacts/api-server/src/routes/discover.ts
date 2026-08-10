@@ -4,11 +4,11 @@ import { supabase } from "../lib/supabase";
 import { spendSparks } from "../lib/sparks-helper";
 import { attachPhotoGalleries } from "../lib/photo-galleries";
 import { attachAudioPrompts } from "../lib/audio-prompts-helper";
-import { withComputedAge, withComputedAges } from "../lib/age";
+import { withComputedAge, withComputedAges, calculateAge } from "../lib/age";
 import { consumeFreeInviteOrCharge } from "../lib/invites-quota";
 import { getExcludedCandidateIds, getPendingInviterIds } from "../lib/discover-exclusions";
 import { haversineDistanceKm } from "../lib/geo";
-import { genderSatisfiesPreference, passesDealbreakers, computeCompatibilityScore } from "../lib/matching";
+import { genderSatisfiesPreference, passesDealbreakers, passesAgeRange, computeCompatibilityScore } from "../lib/matching";
 import { getEconomyConfig } from "../lib/economy-config";
 
 const router: IRouter = Router();
@@ -54,6 +54,7 @@ async function buildDiscoverQueue(userId: string) {
     .from("profiles")
     .select(
       "latitude, longitude, distance_km, gender, looking_for_gender, relationship_type, dating_intentions, personality_tags, dealbreakers, " +
+        "pref_age_min, pref_age_max, " +
         "pref_num_kids, pref_family_plans, pref_smoking_status, pref_vaping_status, pref_drinking_status, pref_nightlife_frequency, pref_has_tattoos, pref_pets, pref_activity_level",
     )
     .eq("id", userId)
@@ -83,14 +84,18 @@ async function buildDiscoverQueue(userId: string) {
   }
 
   // Hard filters — gender preference is bidirectional (both people need
-  // to be open to the other's gender), plus radius and dealbreakers.
-  // Everything else is a soft signal handled by scoring below, not a
-  // filter — with a small user base, hard-filtering on every preference
-  // by default would risk an empty queue.
+  // to be open to the other's gender), age range, plus radius and
+  // dealbreakers. Everything else is a soft signal handled by scoring
+  // below, not a filter — with a small user base, hard-filtering on
+  // every preference by default would risk an empty queue. Age range is
+  // the one exception treated as always-on rather than optional, since
+  // it's a baseline expectation on every mainstream dating app, not
+  // something people expect to have to opt into.
   const hardFiltered = candidates.filter((c) => {
     if (!genderSatisfiesPreference(c.gender, viewer.looking_for_gender)) return false;
     if (!genderSatisfiesPreference(viewer.gender, c.looking_for_gender)) return false;
     if (!passesDealbreakers(c, viewer, dealbreakers)) return false;
+    if (!passesAgeRange(calculateAge(c.birthday ?? null) ?? c.age, viewer.pref_age_min, viewer.pref_age_max)) return false;
     return true;
   });
 
@@ -506,27 +511,39 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
 
   const { data: viewer } = await supabase
     .from("profiles")
-    .select("latitude, longitude, distance_km")
+    .select(
+      "latitude, longitude, distance_km, gender, looking_for_gender, dealbreakers, pref_age_min, pref_age_max, " +
+        "pref_num_kids, pref_family_plans, pref_smoking_status, pref_vaping_status, pref_drinking_status, pref_nightlife_frequency, pref_has_tattoos, pref_pets, pref_activity_level",
+    )
     .eq("id", userId)
     .single();
   const viewerHasLocation = viewer?.latitude != null && viewer?.longitude != null;
   const radiusKm = viewer?.distance_km ?? 25;
+  const dealbreakers: string[] = viewer?.dealbreakers ?? [];
+
+  // Explicit query params (from typing a one-off range into this specific
+  // search) take priority when present, but fall back to the viewer's
+  // saved preference from Preferences — previously this endpoint only
+  // ever looked at the query params, so unless someone manually entered
+  // an age range for that particular search, their saved preference was
+  // silently ignored entirely.
+  const effectiveMinAge = min_age ? Number(min_age) : viewer?.pref_age_min ?? 18;
+  const effectiveMaxAge = max_age ? Number(max_age) : viewer?.pref_age_max ?? 99;
 
   let query = supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, num_kids, family_plans, smoking_status, drinking_status, latitude, longitude")
+    .select(
+      "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, " +
+        "gender, looking_for_gender, num_kids, family_plans, smoking_status, vaping_status, drinking_status, nightlife_frequency, has_tattoos, pets, activity_level, " +
+        "latitude, longitude",
+    )
     .not("id", "in", `(${excludedIds.join(",")})`)
     .eq("is_incognito", false);
 
   if (name) {
     query = query.ilike("name", `%${name}%`);
   }
-  if (min_age) {
-    query = query.gte("age", Number(min_age));
-  }
-  if (max_age) {
-    query = query.lte("age", Number(max_age));
-  }
+  query = query.gte("age", effectiveMinAge).lte("age", effectiveMaxAge);
   if (city) {
     query = query.ilike("city", `%${city}%`);
   }
@@ -537,12 +554,23 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
     }
   }
 
-  const { data: results, error } = await query.limit(100);
+  const { data: rawResults, error } = await query.limit(150);
 
   if (error) {
     res.status(500).json({ error: "Search failed" });
     return;
   }
+
+  // Same gender-preference and dealbreaker enforcement the main Discover
+  // queue applies — previously missing here entirely, meaning Search
+  // could surface people outside the viewer's stated gender preference
+  // or explicit lifestyle dealbreakers.
+  const results = (rawResults ?? []).filter((c) => {
+    if (!genderSatisfiesPreference(c.gender, viewer?.looking_for_gender)) return false;
+    if (!genderSatisfiesPreference(viewer?.gender, c.looking_for_gender)) return false;
+    if (viewer && !passesDealbreakers(c, viewer, dealbreakers)) return false;
+    return true;
+  });
 
   const withDistance = (results ?? []).map((c) => {
     if (viewerHasLocation && c.latitude != null && c.longitude != null) {
@@ -727,11 +755,19 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
 
   const excludedIds = await getExcludedCandidateIds(userId);
   const excludeClause = `(${excludedIds.join(",")})`;
-  const SELECT_FIELDS = "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, num_kids, family_plans, smoking_status, drinking_status, latitude, longitude";
+  const SELECT_FIELDS =
+    "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, " +
+    "gender, looking_for_gender, relationship_type, dating_intentions, " +
+    "num_kids, family_plans, smoking_status, vaping_status, drinking_status, nightlife_frequency, has_tattoos, pets, activity_level, " +
+    "latitude, longitude";
 
   const { data: viewerProfile } = await supabase
     .from("profiles")
-    .select("city, personality_tags")
+    .select(
+      "city, personality_tags, gender, looking_for_gender, relationship_type, dating_intentions, dealbreakers, " +
+        "pref_age_min, pref_age_max, " +
+        "pref_num_kids, pref_family_plans, pref_smoking_status, pref_vaping_status, pref_drinking_status, pref_nightlife_frequency, pref_has_tattoos, pref_pets, pref_activity_level",
+    )
     .eq("id", userId)
     .single();
 
@@ -792,16 +828,25 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
       break;
     }
     case "matches_vibe": {
-      if (viewerProfile?.personality_tags && viewerProfile.personality_tags.length > 0) {
-        const { data } = await supabase
-          .from("profiles")
-          .select(SELECT_FIELDS)
-          .not("id", "in", excludeClause)
-          .eq("is_incognito", false)
-          .overlaps("personality_tags", viewerProfile.personality_tags)
-          .limit(30);
-        results = data ?? [];
-      }
+      // Previously this only checked personality_tags overlap at the
+      // database level — meaning two people who shared one hobby tag
+      // but disagreed on everything else (smoking, drinking, activity
+      // level, relationship type) could still show up here, which is
+      // exactly backwards for a category promising overall compatibility.
+      // Now: fetch a broad pool, then use the same holistic scoring
+      // function the main Discover queue uses, and take the best matches.
+      const { data } = await supabase
+        .from("profiles")
+        .select(SELECT_FIELDS)
+        .not("id", "in", excludeClause)
+        .eq("is_incognito", false)
+        .limit(300);
+
+      results = (data ?? [])
+        .map((c) => ({ ...c, __score: viewerProfile ? computeCompatibilityScore(c, { ...viewerProfile, dealbreakers: viewerProfile.dealbreakers ?? [] }) : 0 }))
+        .sort((a, b) => b.__score - a.__score)
+        .slice(0, 30)
+        .map(({ __score, ...profile }) => profile);
       break;
     }
     case "popular": {
@@ -828,6 +873,25 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
       res.status(400).json({ error: "Unknown category" });
       return;
     }
+  }
+
+  // Applied uniformly across every category, regardless of which one was
+  // requested — gender preference, dealbreakers, and age range are
+  // baseline expectations a user set deliberately, and previously none
+  // of these categories respected any of them at all. A category being
+  // "New Here" or "Popular" doesn't make someone's stated preferences
+  // optional; those are about ordering/selection criteria, not about
+  // who's allowed to be shown in the first place.
+  if (viewerProfile) {
+    const dealbreakers: string[] = viewerProfile.dealbreakers ?? [];
+    results = results.filter((c) => {
+      if (!genderSatisfiesPreference(c.gender, viewerProfile.looking_for_gender)) return false;
+      if (!genderSatisfiesPreference(viewerProfile.gender, c.looking_for_gender)) return false;
+      if (!passesDealbreakers(c, viewerProfile, dealbreakers)) return false;
+      const candidateAge = calculateAge(c.birthday ?? null) ?? c.age;
+      if (!passesAgeRange(candidateAge, viewerProfile.pref_age_min, viewerProfile.pref_age_max)) return false;
+      return true;
+    });
   }
 
   const withDistance = await attachDistances(userId, results);
