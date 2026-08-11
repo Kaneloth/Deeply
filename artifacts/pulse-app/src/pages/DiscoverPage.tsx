@@ -1,15 +1,16 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getUserIdFromToken } from "@/lib/tokenUtils";
-import { Link, useLocation } from "wouter";
+import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ProfileCard, type ProfileCardData } from "@/components/ProfileCard";
-import { X, Heart, MessageCircle, Star, RotateCcw, Shuffle } from "lucide-react";
+import { X, Heart, MessageCircle, Star, RotateCcw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useSparks } from "@/contexts/SparksContext";
+import { useDiscoverControls } from "@/contexts/DiscoverControlsContext";
 
 interface Candidate extends ProfileCardData {
   photo_url: string | null;
@@ -57,12 +58,6 @@ function SwipeCard({
 import { MatchCelebration } from "@/components/MatchCelebration";
 import { ScanWaveLoader } from "@/components/ScanWaveLoader";
 
-// Module-level, not component state — persists for the lifetime of the
-// loaded JS bundle (i.e. the whole app session), resetting only on a
-// full page reload. This is deliberately outside the component so
-// navigating away from Discover and back within the same session does
-// NOT re-trigger the scan wave; it's a true "first load of this visit
-// to the app" flag, not a per-mount one.
 let hasShownDiscoverScanWave = false;
 const MIN_SCAN_WAVE_MS = 2000;
 
@@ -71,6 +66,7 @@ export default function DiscoverPage() {
   const userId = getUserIdFromToken(token);
   const { toast } = useToast();
   const [, setLocation] = useLocation();
+  const { setControls } = useDiscoverControls();
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showScanWave, setShowScanWave] = useState(false);
@@ -152,11 +148,6 @@ export default function DiscoverPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to load profiles");
 
-      // Enforce a minimum display time for the scan wave so it never
-      // flashes awkwardly fast on a quick response — but it's still
-      // fundamentally tied to the real fetch completing, not a fixed
-      // timer alone: if the fetch takes longer than the minimum, the
-      // wave just keeps running until the actual data arrives.
       if (isFirstLoadOfSession) {
         const elapsed = Date.now() - startedAt;
         const remaining = MIN_SCAN_WAVE_MS - elapsed;
@@ -176,17 +167,6 @@ export default function DiscoverPage() {
     }
   }, [token, toast]);
 
-  // Intentionally run once on mount only — NOT whenever fetchQueue/
-  // fetchInvitesCount/fetchReshuffleStatus's identity changes. Those
-  // useCallbacks include `token` in their deps, and token changes every
-  // time AuthContext silently refreshes the session in the background
-  // (which happens routinely, well before actual expiry). Depending on
-  // the callback references here meant every background token refresh
-  // re-ran this effect: isLoading flips back to true (page flashes back
-  // to the skeleton, scroll resets to top), and /discover/queue gets
-  // re-fetched from scratch — which also re-randomizes the queue, since
-  // that endpoint deliberately shuffles on every call. None of that was
-  // ever supposed to happen just because a token silently rotated.
   useEffect(() => {
     fetchQueue();
     fetchInvitesCount();
@@ -194,13 +174,6 @@ export default function DiscoverPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Capture device location once per mount and save it silently in the
-  // background, so distance-based filtering/display has real data to
-  // work with. Doesn't block or affect the queue fetch above — if this
-  // resolves after that first fetch, the next reshuffle/reload benefits
-  // from it. Silently does nothing if permission is denied or
-  // unavailable — distance filtering just doesn't apply for that user,
-  // same as before this feature existed.
   useEffect(() => {
     if (!navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(
@@ -217,13 +190,22 @@ export default function DiscoverPage() {
           }),
         }).catch(() => {});
       },
-      () => {
-        // Permission denied, unavailable, or timed out — non-fatal.
-      },
+      () => {},
       { maximumAge: 10 * 60 * 1000, timeout: 10000 },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Register this page's reshuffle/invites state with the shared context
+  // on every relevant change, so TopBar always displays current values —
+  // and clear it on unmount, so navigating away from Discover makes
+  // these controls disappear from the header automatically, without
+  // TopBar needing any route-checking logic of its own.
+  useEffect(() => {
+    setControls({ invitesCount, reshuffleStatus, isReshuffling, onReshuffle: handleReshuffle });
+    return () => setControls(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invitesCount, reshuffleStatus, isReshuffling]);
 
   const { refresh: refreshSparksBadge } = useSparks();
 
@@ -254,7 +236,6 @@ export default function DiscoverPage() {
       return body;
     });
 
-    // Let the exit animation play before actually removing the card.
     await new Promise((resolve) => setTimeout(resolve, 300));
     setCandidates((prev) => prev.filter((c) => c.id !== target.id));
     setExiting(null);
@@ -375,28 +356,7 @@ export default function DiscoverPage() {
   const visibleCards = candidates.slice(0, 3);
 
   return (
-    <div className="flex flex-col h-full overflow-hidden px-4 pb-2 pt-6">
-      <div className="flex items-center justify-between mb-3 px-2">
-        <button
-          onClick={handleReshuffle}
-          disabled={isReshuffling}
-          className="flex items-center gap-1.5 bg-card/80 backdrop-blur border border-card-border px-3 py-1.5 rounded-full text-sm font-semibold text-muted-foreground hover:border-primary/50 hover:text-foreground transition-colors disabled:opacity-60"
-        >
-          <Shuffle size={14} className={isReshuffling ? "animate-spin" : ""} />
-          <span>{isReshuffling ? "Shuffling..." : reshuffleStatus?.isFree ? "Reshuffle (Free)" : "Reshuffle"}</span>
-        </button>
-
-        {invitesCount > 0 && (
-          <Link
-            href="/invites"
-            className="flex items-center gap-1.5 bg-card/80 backdrop-blur border border-card-border px-3 py-1.5 rounded-full text-sm font-semibold text-primary hover:border-primary/50 transition-colors"
-          >
-            <Heart size={14} className="fill-current" />
-            <span>{invitesCount} invite{invitesCount === 1 ? "" : "s"}</span>
-          </Link>
-        )}
-      </div>
-
+    <div className="flex flex-col h-full overflow-hidden px-2 pb-1 pt-2">
       <div className="flex-1 relative min-h-0">
         {visibleCards.length === 0 ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-6">
@@ -428,7 +388,7 @@ export default function DiscoverPage() {
       </div>
 
       {visibleCards.length > 0 && (
-        <div className="flex items-center justify-center gap-2.5 mt-3">
+        <div className="flex items-center justify-center gap-2.5 mt-2">
           <button
             onClick={handleUndo}
             disabled={isUndoing || isSwiping}

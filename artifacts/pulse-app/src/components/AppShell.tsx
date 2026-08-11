@@ -5,6 +5,7 @@ import { BottomNav } from "@/components/BottomNav";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { TextSizeProvider } from "@/contexts/TextSizeContext";
+import { DiscoverControlsProvider } from "@/contexts/DiscoverControlsContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { BlockedAccountScreen } from "@/components/BlockedAccountScreen";
 
@@ -52,7 +53,9 @@ export function AppShell({ children }: AppShellProps) {
   return (
     <ThemeProvider>
       <TextSizeProvider>
-        <AppShellInner>{children}</AppShellInner>
+        <DiscoverControlsProvider>
+          <AppShellInner>{children}</AppShellInner>
+        </DiscoverControlsProvider>
       </TextSizeProvider>
     </ThemeProvider>
   );
