@@ -10,13 +10,16 @@
   },
   "private": true,
   "dependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/cli": "^8.5.0",
+    "@capacitor/core": "^8.5.0",
     "@replit/connectors-sdk": "^0.4.1",
-	"multer": "^2.2.0"
+    "multer": "^2.2.0"
   },
   "devDependencies": {
+    "@types/multer": "^2.2.0",
     "prettier": "^3.9.5",
-    "typescript": "~5.9.3",
     "serverless-http": "^4.0.0",
-	"@types/multer": "^2.2.0"
+    "typescript": "~5.9.3"
   }
 }
