@@ -3,7 +3,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 const config: CapacitorConfig = {
   appId: 'za.co.deeplydating.app',
   appName: 'Deeply',
-  webDir: 'dist', // Vite's default production build output
+  webDir: 'dist/public', // Vite's default production build output
 
   server: {
     // CRITICAL: every fetch() call throughout this codebase uses relative
