@@ -1,8 +1,8 @@
 {
-  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "//": "Add these into your existing .devcontainer/devcontainer.json — merge the 'features' block into whatever you already have, don't replace the whole file.",
   "features": {
     "ghcr.io/devcontainers/features/java:1": {
-      "version": "17",
+      "version": "21",
       "installGradle": true
     }
   },
