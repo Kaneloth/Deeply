@@ -3,29 +3,38 @@ import type { CapacitorConfig } from '@capacitor/cli';
 const config: CapacitorConfig = {
   appId: 'za.co.deeplydating.app',
   appName: 'Deeply',
-  webDir: 'dist/public', // Vite's default production build output
+  webDir: 'dist/public', // NOT plain 'dist' — this project's Vite build outputs to dist/public/index.html, confirmed from the actual build output
 
-  server: {
-    // CRITICAL: every fetch() call throughout this codebase uses relative
-    // paths — fetch("/api/discover/queue", ...), fetch("/api/notifications", ...),
-    // etc. — never a full https://app.deeplydating.co.za/... URL. That's
-    // fine on the web, where relative paths resolve against whatever
-    // domain the page is loaded from. But a native app's WebView loads
-    // bundled local files (file://), not a real domain — so those same
-    // relative calls would try to hit "file:///api/..." and fail
-    // completely, breaking every single API call in the app.
-    //
-    // Setting hostname here makes the WebView's origin *behave* as if
-    // it's running on app.deeplydating.co.za, without actually fetching
-    // the page contents from the network — the bundled local files
-    // (from webDir above) still load instantly, same as any native app.
-    // Only the *origin* the browser reports (and therefore what relative
-    // fetch() calls resolve against) changes. This means zero code
-    // changes needed across the entire frontend — every existing
-    // fetch("/api/...") call keeps working exactly as-is.
-    hostname: 'app.deeplydating.co.za',
-    androidScheme: 'https',
-  },
+  // No `server` block — deliberately removed. It previously set
+  // hostname: 'app.deeplydating.co.za' + androidScheme: 'https', under
+  // the assumption this was needed for cookie-domain matching. It
+  // wasn't: this app uses Bearer tokens in localStorage, not cookies,
+  // for auth (see AuthContext.tsx) — so that setting was solving a
+  // problem this app doesn't have.
+  //
+  // Worse, it was the actual cause of every API call failing natively.
+  // Confirmed via live on-device debug logging: Capacitor intercepts
+  // ANY request matching that configured hostname as a request for a
+  // locally bundled file — even a fully-qualified, absolute fetch() URL
+  // to that exact address, not just relative paths that happen to
+  // resolve against it. The main.tsx fetch patch correctly rewrote
+  // relative "/api/..." calls to the full remote URL, confirmed in the
+  // debug logs — but since that URL still pointed at the same
+  // configured hostname, Capacitor intercepted it anyway and returned
+  // the app's own bundled index.html instead of a real network response.
+  //
+  // Without this hostname override, the WebView's origin defaults to
+  // Capacitor's own internal scheme (not app.deeplydating.co.za), so a
+  // fetch() to the real, external app.deeplydating.co.za domain is now
+  // a genuine cross-origin network request — not something Capacitor's
+  // local-asset loader has any reason to intercept.
+  //
+  // IMPORTANT: this makes API calls from the native app a real
+  // cross-origin request. The backend's CORS configuration needs to
+  // explicitly allow whatever origin Capacitor's WebView now reports
+  // (commonly https://localhost on Android) — check api-server's CORS
+  // allowed-origins list if login still fails after this change with a
+  // CORS-related error rather than the previous HTML-instead-of-JSON one.
 
   android: {
     // Standard, safe default — keeps WebView debugging available for
