@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client';
 import { Capacitor } from '@capacitor/core';
+import { setBaseUrl } from '@workspace/api-client-react';
 
 import App from './App';
 
@@ -18,17 +19,28 @@ import './index.css';
 //
 // This is a known, longstanding Capacitor issue (see ionic-team/
 // capacitor #6198, #5468, #6875 on GitHub) with no clean built-in fix.
-// The workaround: patch the global fetch, natively only, to rewrite any
-// "/api/..." call to the real, absolute remote URL before the request
-// goes out — bypassing Capacitor's local-asset interception entirely.
-// Every existing fetch("/api/...") call throughout the whole app keeps
-// working completely unchanged; only native builds get this rewrite,
-// so web behavior is untouched.
+//
+// Two separate call paths exist in this app, so two separate fixes:
+//
+// 1. @workspace/api-client-react (the generated API client) has its own
+//    OFFICIAL mechanism for exactly this — setBaseUrl(), explicitly
+//    documented as "useful for Expo bundles that need to call a remote
+//    API server". This is the correct, intended fix for anything routed
+//    through that client — no guessing at path prefixes needed, it
+//    prepends the base URL to any relative request.
+//
+// 2. Everywhere else in the app, plain fetch("/api/...") calls are used
+//    directly, not through the generated client. For those, the global
+//    fetch patch below rewrites the URL before the request goes out.
+//
+// Both are native-only; web behavior is completely untouched either way.
 if (Capacitor.isNativePlatform()) {
   // Keep in sync with server.hostname in capacitor.config.ts.
   const API_ORIGIN = 'https://app.deeplydating.co.za';
-  const originalFetch = window.fetch.bind(window);
 
+  setBaseUrl(API_ORIGIN);
+
+  const originalFetch = window.fetch.bind(window);
   window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
     if (typeof input === 'string' && input.startsWith('/api/')) {
       return originalFetch(`${API_ORIGIN}${input}`, init);
