@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
-import { MapPin, Baby, Users, Cigarette, Wine, Mic, Play, Pause, BadgeCheck, Camera } from "lucide-react";
+import { MapPin, Baby, Users, Cigarette, Wine, Mic, Play, Pause, BadgeCheck, Camera, Wind, PenTool, PawPrint, Dumbbell, PartyPopper, Ruler } from "lucide-react";
 import { PhotoCarousel, type CarouselPhoto } from "@/components/PhotoCarousel";
+import { TATTOO_OPTIONS, VAPING_OPTIONS, PETS_OPTIONS, ACTIVITY_LEVEL_OPTIONS, NIGHTLIFE_OPTIONS, cmToDisplay } from "@/lib/lifestylePreferenceOptions";
 
 const PULL_REVEAL_THRESHOLD_PX = 50;
 
@@ -27,6 +28,13 @@ export interface ProfileCardData {
   family_plans?: string | null;
   smoking_status?: string | null;
   drinking_status?: string | null;
+  vaping_status?: string | null;
+  has_tattoos?: string | null;
+  pets?: string | null;
+  activity_level?: string | null;
+  nightlife_frequency?: string | null;
+  height_cm?: number | null;
+  gender?: string | null;
   audio_prompts?: AudioPromptData[];
 }
 
@@ -55,6 +63,30 @@ const DRINKING_LABELS: Record<string, string> = {
   never: "Doesn't drink",
   socially: "Drinks socially",
   regularly: "Drinks regularly",
+};
+
+// Converted from the imported options arrays (single source of truth
+// with the edit form on ProfilePage) rather than redefined by hand here,
+// so these can never drift out of sync with the actual stored values.
+const toLabelMap = (options: { value: string; label: string }[]): Record<string, string> =>
+  Object.fromEntries(options.map((o) => [o.value, o.label]));
+
+const VAPING_LABELS = toLabelMap(VAPING_OPTIONS);
+const TATTOO_LABELS = toLabelMap(TATTOO_OPTIONS);
+const PETS_LABELS = toLabelMap(PETS_OPTIONS);
+const ACTIVITY_LEVEL_LABELS = toLabelMap(ACTIVITY_LEVEL_OPTIONS);
+const NIGHTLIFE_LABELS = toLabelMap(NIGHTLIFE_OPTIONS);
+
+// NOT sourced from a shared options file (GENDER_OPTIONS wasn't
+// available) — inferred from the value strings genderSatisfiesPreference
+// uses elsewhere in this app ("man"/"woman"/"non_binary"/
+// "prefer_not_to_say"). Worth confirming these match your actual
+// GENDER_OPTIONS values if this ever displays incorrectly.
+const GENDER_LABELS: Record<string, string> = {
+  man: "Man",
+  woman: "Woman",
+  non_binary: "Non-binary",
+  prefer_not_to_say: "Prefer not to say",
 };
 
 export function ProfileCard({
@@ -145,6 +177,13 @@ export function ProfileCard({
     !!profile.family_plans ||
     !!profile.smoking_status ||
     !!profile.drinking_status ||
+    !!profile.vaping_status ||
+    !!profile.has_tattoos ||
+    !!profile.pets ||
+    !!profile.activity_level ||
+    !!profile.nightlife_frequency ||
+    !!profile.height_cm ||
+    !!profile.gender ||
     (profile.audio_prompts?.length ?? 0) > 0;
 
   return (
@@ -237,8 +276,18 @@ export function ProfileCard({
                 ))}
               </div>
             )}
-            {(profile.num_kids || profile.family_plans || profile.smoking_status || profile.drinking_status) && (
+            {(profile.num_kids || profile.family_plans || profile.smoking_status || profile.drinking_status || profile.vaping_status || profile.has_tattoos || profile.pets || profile.activity_level || profile.nightlife_frequency || profile.height_cm || profile.gender) && (
               <div className="flex flex-wrap gap-2 mb-3">
+                {profile.gender && GENDER_LABELS[profile.gender] && (
+                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
+                    {GENDER_LABELS[profile.gender]}
+                  </span>
+                )}
+                {profile.height_cm && (
+                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
+                    <Ruler size={13} className="shrink-0" /> {cmToDisplay(profile.height_cm, "cm")} cm
+                  </span>
+                )}
                 {profile.num_kids && NUM_KIDS_LABELS[profile.num_kids] && (
                   <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
                     <Baby size={13} className="shrink-0" /> {NUM_KIDS_LABELS[profile.num_kids]}
@@ -254,9 +303,34 @@ export function ProfileCard({
                     <Cigarette size={13} className="shrink-0" /> {SMOKING_LABELS[profile.smoking_status]}
                   </span>
                 )}
+                {profile.vaping_status && VAPING_LABELS[profile.vaping_status] && (
+                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
+                    <Wind size={13} className="shrink-0" /> {VAPING_LABELS[profile.vaping_status]}
+                  </span>
+                )}
                 {profile.drinking_status && DRINKING_LABELS[profile.drinking_status] && (
                   <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
                     <Wine size={13} className="shrink-0" /> {DRINKING_LABELS[profile.drinking_status]}
+                  </span>
+                )}
+                {profile.has_tattoos && TATTOO_LABELS[profile.has_tattoos] && (
+                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
+                    <PenTool size={13} className="shrink-0" /> {TATTOO_LABELS[profile.has_tattoos]}
+                  </span>
+                )}
+                {profile.pets && PETS_LABELS[profile.pets] && (
+                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
+                    <PawPrint size={13} className="shrink-0" /> {PETS_LABELS[profile.pets]}
+                  </span>
+                )}
+                {profile.activity_level && ACTIVITY_LEVEL_LABELS[profile.activity_level] && (
+                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
+                    <Dumbbell size={13} className="shrink-0" /> {ACTIVITY_LEVEL_LABELS[profile.activity_level]}
+                  </span>
+                )}
+                {profile.nightlife_frequency && NIGHTLIFE_LABELS[profile.nightlife_frequency] && (
+                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
+                    <PartyPopper size={13} className="shrink-0" /> {NIGHTLIFE_LABELS[profile.nightlife_frequency]}
                   </span>
                 )}
               </div>

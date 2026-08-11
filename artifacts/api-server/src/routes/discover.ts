@@ -73,7 +73,7 @@ async function buildDiscoverQueue(userId: string) {
     .select(
       "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, boosted_until, " +
         "gender, looking_for_gender, relationship_type, dating_intentions, num_kids, family_plans, smoking_status, vaping_status, drinking_status, " +
-        "nightlife_frequency, has_tattoos, pets, activity_level, latitude, longitude",
+        "nightlife_frequency, has_tattoos, pets, activity_level, height_cm, latitude, longitude",
     )
     .not("id", "in", `(${excludedIds.join(",")})`)
     .eq("is_incognito", false)
@@ -546,7 +546,7 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
     .from("profiles")
     .select(
       "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, " +
-        "gender, looking_for_gender, num_kids, family_plans, smoking_status, vaping_status, drinking_status, nightlife_frequency, has_tattoos, pets, activity_level, " +
+        "gender, looking_for_gender, num_kids, family_plans, smoking_status, vaping_status, drinking_status, nightlife_frequency, has_tattoos, pets, activity_level, height_cm, " +
         "latitude, longitude",
     )
     .not("id", "in", `(${excludedIds.join(",")})`)
@@ -759,7 +759,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
   const SELECT_FIELDS =
     "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, " +
     "gender, looking_for_gender, relationship_type, dating_intentions, " +
-    "num_kids, family_plans, smoking_status, vaping_status, drinking_status, nightlife_frequency, has_tattoos, pets, activity_level, " +
+    "num_kids, family_plans, smoking_status, vaping_status, drinking_status, nightlife_frequency, has_tattoos, pets, activity_level, height_cm, " +
     "latitude, longitude";
 
   const { data: viewerProfile } = await supabase
