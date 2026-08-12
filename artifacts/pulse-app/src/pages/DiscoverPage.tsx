@@ -73,7 +73,6 @@ export default function DiscoverPage() {
   const [matchCelebration, setMatchCelebration] = useState<{ name: string; matchId: string; photoUrl?: string } | null>(null);
   const [isSwiping, setIsSwiping] = useState(false);
   const [isUndoing, setIsUndoing] = useState(false);
-  const [invitesCount, setInvitesCount] = useState<number>(0);
   const [exiting, setExiting] = useState<{ id: string; direction: SwipeDirection } | null>(null);
   const [composeFor, setComposeFor] = useState<Candidate | null>(null);
   const [messageText, setMessageText] = useState("");
@@ -103,9 +102,26 @@ export default function DiscoverPage() {
       if (!res.ok) throw new Error(body.error ?? "Failed to reshuffle");
       setCandidates(body.candidates ?? []);
 
-      if (!body.wasFree && !localStorage.getItem(`deeply_seen_reshuffle_cost_notice_${userId}`)) {
-        localStorage.setItem(`deeply_seen_reshuffle_cost_notice_${userId}`, "1");
-        toast({ title: "10 Sparks used", description: "Your free reshuffle refreshes weekly — extra reshuffles cost 10 Sparks." });
+      // Previously this only informed the user AFTER they'd already been
+      // charged for a paid reshuffle — meaning the first (free) reshuffle
+      // gave no warning at all about the cost structure, so the very
+      // next tap could surprise-charge someone with no prior notice.
+      // Now: the notice fires proactively, right when the free one gets
+      // used, so the person knows in advance what a subsequent reshuffle
+      // within the next 7 days will cost — before they ever get charged.
+      // Uses body.cost (the live, admin-configured value the backend
+      // just returned) rather than a hardcoded number, so this always
+      // reflects whatever's actually set in the admin dashboard.
+      if (body.wasFree) {
+        if (!localStorage.getItem(`deeply_seen_reshuffle_cost_notice_${userId}`)) {
+          localStorage.setItem(`deeply_seen_reshuffle_cost_notice_${userId}`, "1");
+          toast({
+            title: "Free reshuffle used",
+            description: `Your next free reshuffle is available in 7 days. Reshuffling again before then costs ${body.cost} Sparks.`,
+          });
+        }
+      } else {
+        toast({ title: `${body.cost} Sparks used`, description: "Your free reshuffle refreshes weekly." });
       }
 
       fetchReshuffleStatus();
@@ -119,19 +135,6 @@ export default function DiscoverPage() {
       setIsReshuffling(false);
     }
   };
-
-  const fetchInvitesCount = useCallback(async () => {
-    try {
-      const res = await fetch("/api/discover/invites", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) return;
-      const body = await res.json();
-      setInvitesCount((body.revealed?.length ?? 0) + (body.new_count ?? 0));
-    } catch {
-      // Silent — non-critical background fetch.
-    }
-  }, [token]);
 
   const fetchQueue = useCallback(async () => {
     const isFirstLoadOfSession = !hasShownDiscoverScanWave;
@@ -169,7 +172,6 @@ export default function DiscoverPage() {
 
   useEffect(() => {
     fetchQueue();
-    fetchInvitesCount();
     fetchReshuffleStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -196,16 +198,20 @@ export default function DiscoverPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Register this page's reshuffle/invites state with the shared context
-  // on every relevant change, so TopBar always displays current values —
+  // Register this page's reshuffle state with the shared context on
+  // every relevant change, so TopBar always displays current values —
   // and clear it on unmount, so navigating away from Discover makes
-  // these controls disappear from the header automatically, without
-  // TopBar needing any route-checking logic of its own.
+  // this control disappear from the header automatically, without
+  // TopBar needing any route-checking logic of its own. Invites count
+  // deliberately isn't part of this anymore — that badge now lives in
+  // BottomNav, fetched independently there, since it needs to stay
+  // accurate on every page, not just while Discover happens to be
+  // mounted.
   useEffect(() => {
-    setControls({ invitesCount, reshuffleStatus, isReshuffling, onReshuffle: handleReshuffle });
+    setControls({ reshuffleStatus, isReshuffling, onReshuffle: handleReshuffle });
     return () => setControls(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [invitesCount, reshuffleStatus, isReshuffling]);
+  }, [reshuffleStatus, isReshuffling]);
 
   const { refresh: refreshSparksBadge } = useSparks();
 
@@ -251,7 +257,6 @@ export default function DiscoverPage() {
       }
       if (body.matched) {
         setMatchCelebration({ name: target.name, matchId: body.matchId, photoUrl: target.photo_url ?? undefined });
-        fetchInvitesCount();
       }
     } catch (err) {
       toast({

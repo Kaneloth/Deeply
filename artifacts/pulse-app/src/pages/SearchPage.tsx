@@ -161,9 +161,17 @@ export default function SearchPage() {
     }
   }, [token]);
 
+  // Run once on mount only — same reload-on-token-refresh fix applied
+  // elsewhere in the app (MatchesPage, DiscoverPage, MatchDetailPage).
+  // fetchCategories is a useCallback keyed on `token`, and token gets a
+  // new reference on every periodic background refresh — depending on
+  // fetchCategories itself here was re-triggering this fetch (and the
+  // resulting re-render of the whole page) on that same interval, which
+  // is exactly the "page keeps refreshing every few seconds" symptom.
   useEffect(() => {
     fetchCategories();
-  }, [fetchCategories]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Capture device location here too, not just on Discover — otherwise
   // anyone who opens Search before ever visiting Discover has no
@@ -380,7 +388,6 @@ export default function SearchPage() {
                     disabled={cat.count === 0}
                     className={`relative h-28 rounded-2xl overflow-hidden border border-card-border text-left disabled:opacity-40 disabled:pointer-events-none bg-gradient-to-br ${style.gradient}`}
                   >
-                    {/* Preview photo collage */}
                     {cat.preview_photos.length > 0 && (
                       <div className="absolute inset-0 flex">
                         {cat.preview_photos.slice(0, 3).map((url, i) => (
@@ -530,9 +537,6 @@ export default function SearchPage() {
               key={r.id}
               onClick={() => {
                 setSelectedProfile(r);
-                // Fire-and-forget — a deliberate open of the full profile
-                // view counts as a "view" for the profile-views feature.
-                // Not awaited: no need to block opening the overlay on it.
                 fetch("/api/profile-views", {
                   method: "POST",
                   headers: {

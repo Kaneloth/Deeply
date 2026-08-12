@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Link, useLocation } from "wouter";
-import { User, Settings, LogOut, Bell, Shuffle, Heart } from "lucide-react";
+import { User, Settings, LogOut, Bell, Shuffle } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useDiscoverControls } from "@/contexts/DiscoverControlsContext";
 
@@ -52,45 +52,27 @@ export function TopBar() {
     >
       <img src="/deeply-logo.png" alt="Deeply" className="h-10 w-auto" />
       <div className="flex items-center gap-2">
-        {/* Discover-only controls — controls is null on every page other
-            than Discover (DiscoverPage registers/clears it via
+        {/* Discover-only — controls is null on every page other than
+            Discover (DiscoverPage registers/clears it via
             DiscoverControlsContext), so this renders nothing anywhere
-            else without any route-checking here at all. Styled as
-            circular icon buttons with corner badges, matching the bell
-            button right next to it, rather than the wider pill style
-            these used when they lived inline on the Discover page
-            itself — this bar is tight, so compact matters more here. */}
+            else without any route-checking here at all. Reshuffling only
+            makes sense while actually on Discover, unlike the invites
+            count (moved to BottomNav instead — that bar is visible on
+            every page, so its badge needs to be accurate everywhere,
+            not just borrowed from whatever Discover happens to have
+            registered at that moment). */}
         {controls && (
-          <>
-            <button
-              onClick={controls.onReshuffle}
-              disabled={controls.isReshuffling}
-              title={controls.reshuffleStatus?.isFree ? "Reshuffle (free)" : "Reshuffle"}
-              className="relative w-10 h-10 rounded-full flex items-center justify-center border transition-colors bg-card/80 backdrop-blur text-foreground border-card-border hover:border-primary/50 disabled:opacity-60"
-            >
-              <Shuffle size={16} className={controls.isReshuffling ? "animate-spin" : ""} />
-              {controls.reshuffleStatus?.isFree && !controls.isReshuffling && (
-                <span className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-primary border border-background" />
-              )}
-            </button>
-
-            {controls.invitesCount > 0 && (
-              <Link
-                href="/invites"
-                title={`${controls.invitesCount} invite${controls.invitesCount === 1 ? "" : "s"}`}
-                className={`relative w-10 h-10 rounded-full flex items-center justify-center border transition-colors ${
-                  location === "/invites"
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "bg-card/80 backdrop-blur text-foreground border-card-border hover:border-primary/50"
-                }`}
-              >
-                <Heart size={16} className="fill-current" />
-                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
-                  {controls.invitesCount > 9 ? "9+" : controls.invitesCount}
-                </span>
-              </Link>
+          <button
+            onClick={controls.onReshuffle}
+            disabled={controls.isReshuffling}
+            title={controls.reshuffleStatus?.isFree ? "Reshuffle (free)" : "Reshuffle"}
+            className="relative w-10 h-10 rounded-full flex items-center justify-center border transition-colors bg-card/80 backdrop-blur text-foreground border-card-border hover:border-primary/50 disabled:opacity-60"
+          >
+            <Shuffle size={16} className={controls.isReshuffling ? "animate-spin" : ""} />
+            {controls.reshuffleStatus?.isFree && !controls.isReshuffling && (
+              <span className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-primary border border-background" />
             )}
-          </>
+          </button>
         )}
 
         <button

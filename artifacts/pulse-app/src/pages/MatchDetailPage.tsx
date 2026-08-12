@@ -60,9 +60,18 @@ export default function MatchDetailPage() {
     }
   }, [matchId, token, toast, setLocation]);
 
+  // Run once per matchId only — same reload-on-token-refresh fix applied
+  // elsewhere in the app (MatchesPage, SearchPage, DiscoverPage).
+  // fetchMatch depends on token, toast, and setLocation as well as
+  // matchId — any one of those getting a new reference (token refreshes
+  // periodically, confirmed elsewhere in this codebase) re-triggered
+  // this fetch and re-rendered the whole page, ProfileCard included.
+  // matchId is kept as the one real dependency, since navigating to a
+  // different match should still refetch.
   useEffect(() => {
     fetchMatch();
-  }, [fetchMatch]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchId]);
 
   const handleUnmatch = async () => {
     setIsUnmatching(true);

@@ -179,7 +179,12 @@ router.get("/discover/reshuffle-status", requireAuth, async (req, res): Promise<
 });
 
 /** POST /api/discover/reshuffle — re-randomizes the discover queue on
- *  demand. Free once every 7 days, admin-configurable Sparks otherwise. */
+ *  demand. Free once every 7 days, admin-configurable Sparks otherwise.
+ *  Always returns the current admin-configured cost (regardless of
+ *  whether THIS reshuffle was free or paid) so the frontend can show an
+ *  accurate, live number — never a hardcoded one — in either the "you
+ *  just used your free one, next costs X" notice or the "X Sparks used"
+ *  confirmation. */
 router.post("/discover/reshuffle", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
@@ -192,10 +197,13 @@ router.post("/discover/reshuffle", requireAuth, async (req, res): Promise<void> 
   const lastFree = profile?.last_free_reshuffle_at ? new Date(profile.last_free_reshuffle_at) : null;
   const isFree = !lastFree || Date.now() - lastFree.getTime() >= RESHUFFLE_FREE_INTERVAL_MS;
 
+  // Fetched unconditionally (not just inside the paid branch) so it's
+  // always available to include in the response below.
+  const { cost_reshuffle } = await getEconomyConfig();
+
   if (isFree) {
     await supabase.from("profiles").update({ last_free_reshuffle_at: new Date().toISOString() }).eq("id", userId);
   } else {
-    const { cost_reshuffle } = await getEconomyConfig();
     const spend = await spendSparks(userId, cost_reshuffle, "Discover reshuffle");
     if (!spend.success) {
       res.status(400).json({ error: "Not enough Sparks to reshuffle" });
@@ -209,7 +217,7 @@ router.post("/discover/reshuffle", requireAuth, async (req, res): Promise<void> 
     return;
   }
 
-  res.json({ candidates, wasFree: isFree });
+  res.json({ candidates, wasFree: isFree, cost: cost_reshuffle });
 });
 
 /** POST /api/discover/swipe — record a like / pass / super_like and report

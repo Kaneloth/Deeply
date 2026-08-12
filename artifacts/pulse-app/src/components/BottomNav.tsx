@@ -21,6 +21,7 @@ export function BottomNav() {
   const [location] = useLocation();
   const { token } = useAuth();
   const [hasMatchIndicator, setHasMatchIndicator] = useState(false);
+  const [invitesCount, setInvitesCount] = useState(0);
 
   const fetchIndicatorStatus = useCallback(async () => {
     try {
@@ -34,22 +35,52 @@ export function BottomNav() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  // Fetched independently here, not borrowed from DiscoverPage/
+  // DiscoverControlsContext — that context only holds data while
+  // DiscoverPage is actually mounted, so relying on it here would make
+  // this badge vanish the moment you navigate to any other tab. This
+  // bar is visible everywhere, so its data needs to be too. Same
+  // self-contained poll-plus-route-change-refetch pattern as the match
+  // indicator right below it.
+  const fetchInvitesCount = useCallback(async () => {
+    try {
+      const res = await fetch("/api/discover/invites", { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return;
+      const body = await res.json();
+      setInvitesCount((body.revealed?.length ?? 0) + (body.new_count ?? 0));
+    } catch {
+      // Silent — non-critical background fetch.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
   // Poll periodically, plus refetch on route change — e.g. after
   // visiting Matches (which clears the "new" state server-side), the dot
   // should disappear as soon as you navigate away, not wait a full
-  // polling interval.
+  // polling interval. Same reasoning applies to invites: after visiting
+  // /invites and revealing new ones, the count should update right away.
   useEffect(() => {
     fetchIndicatorStatus();
-    const interval = setInterval(fetchIndicatorStatus, INDICATOR_POLL_INTERVAL_MS);
+    fetchInvitesCount();
+    const interval = setInterval(() => {
+      fetchIndicatorStatus();
+      fetchInvitesCount();
+    }, INDICATOR_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetchIndicatorStatus, location]);
+  }, [fetchIndicatorStatus, fetchInvitesCount, location]);
 
   return (
     <nav className="fixed bottom-0 w-full max-w-[430px] bg-background/80 backdrop-blur-xl border-t border-border z-50 px-4 py-4 flex items-center justify-between">
       <NavItem href="/discover" icon={<Compass size={22} />} active={location === "/discover"} label="Discover" />
       <NavItem href="/search" icon={<Search size={22} />} active={location === "/search"} label="Search" />
-      <NavItem href="/invites" icon={<InvitesIcon size={22} />} active={location === "/invites"} label="Invites" />
+      <NavItem
+        href="/invites"
+        icon={<InvitesIcon size={22} />}
+        active={location === "/invites"}
+        label="Invites"
+        badge={invitesCount > 0 ? invitesCount : undefined}
+      />
       <NavItem
         href="/matches"
         icon={<HeartHandshake size={22} />}

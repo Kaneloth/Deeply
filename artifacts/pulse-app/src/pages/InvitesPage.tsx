@@ -138,9 +138,16 @@ export default function InvitesPage() {
     }
   }, [token, toast]);
 
+  // Run once on mount only — same reload-on-token-refresh fix applied
+  // elsewhere in the app (MatchesPage, SearchPage, DiscoverPage,
+  // MatchDetailPage). fetchInvites depends on token and toast, both of
+  // which can get new references on background token refresh — the
+  // previous [fetchInvites] dependency re-ran this fetch (and
+  // re-rendered the whole page) on that same interval.
   useEffect(() => {
     fetchInvites();
-  }, [fetchInvites]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetchSent = useCallback(async () => {
     setSentLoading(true);
