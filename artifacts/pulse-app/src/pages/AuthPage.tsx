@@ -255,7 +255,16 @@ export default function AuthPage() {
     try {
       const { error } = await supabaseClient.auth.signInWithOAuth({
         provider: "google",
-        options: { redirectTo: `${window.location.origin}/auth/callback` },
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+          // Without this, Google silently reuses whichever of the
+          // browser's signed-in Google accounts was last active instead
+          // of showing the picker — a real problem on a shared/dev
+          // device where you want to switch test accounts, and
+          // surprising for real users too if they have multiple Google
+          // accounts signed in.
+          queryParams: { prompt: "select_account" },
+        },
       });
       if (error) throw error;
       // Browser navigates away to Google at this point — nothing left

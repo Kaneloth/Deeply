@@ -38,15 +38,39 @@ export default function AuthCallbackPage() {
       // signup goes through, but onboarding_completed will still be
       // false for them — route accordingly, same distinction the
       // signup/login handlers on AuthPage already make.
-      try {
-        const res = await fetch("/api/profile/me", {
-          headers: { Authorization: `Bearer ${access_token}` },
-        });
-        const profile = res.ok ? await res.json() : null;
-        setLocation(profile?.onboarding_completed ? "/discover" : "/onboarding");
-      } catch {
-        setLocation("/discover");
+      //
+      // IMPORTANT: this only ever sends someone to /onboarding on a
+      // CONFIRMED `false` from the backend — never as a fallback for "the
+      // request failed" or "couldn't tell". Right after the OAuth token
+      // is minted, this first request is more prone to a transient
+      // failure than a normal logged-in request — and mobile browsers
+      // (slower JS re-init and more variable timing coming back from the
+      // full-page redirect to Google) hit that window far more often
+      // than desktop, which is what was actually causing already-
+      // onboarded users to get bounced through onboarding again. If we
+      // can't get a confirmed answer after retrying, default to
+      // /discover — a genuinely new user seeing an empty Discover screen
+      // for a moment is a far smaller problem than risking a returning
+      // user re-running onboarding and overwriting their real data.
+      const fetchProfile = () =>
+        fetch("/api/profile/me", { headers: { Authorization: `Bearer ${access_token}` } });
+
+      let onboardingCompleted: boolean | null = null;
+      for (const delayMs of [0, 400, 1200]) {
+        if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+        try {
+          const res = await fetchProfile();
+          if (res.ok) {
+            const profile = await res.json();
+            onboardingCompleted = profile?.onboarding_completed === true;
+            break;
+          }
+        } catch {
+          // Network error — fall through and retry.
+        }
       }
+
+      setLocation(onboardingCompleted === false ? "/onboarding" : "/discover");
     })();
   }, [login, setLocation]);
 

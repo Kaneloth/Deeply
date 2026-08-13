@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useState, ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { setAuthTokenGetter } from "@workspace/api-client-react";
 import { useLocation } from "wouter";
 import type { BlockInfo } from "@/components/BlockedAccountScreen";
@@ -27,6 +28,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(localStorage.getItem(ACCESS_TOKEN_KEY));
   const [, setLocation] = useLocation();
+  const queryClient = useQueryClient();
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Ensures concurrent 401s all wait on the SAME refresh attempt instead of
   // firing multiple parallel refreshes (which would race against Supabase's
@@ -51,6 +53,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(EXPIRES_AT_KEY);
     setAuthTokenGetter(() => null);
     setToken(null);
+    // Wipe every cached query — without this, react-query's cache is a
+    // module-level singleton that outlives logout, so anything fetched
+    // via a hook (profile, matches, messages, discover deck) can still
+    // serve the PREVIOUS account's stale data to whoever logs in next on
+    // this device, until each query happens to refetch on its own. Given
+    // this is a dating app, that's both a confusing-UI bug (e.g. an
+    // already-onboarded user getting bounced to onboarding because a
+    // stale query still says onboarding_completed: false) and a real
+    // cross-account data leak risk.
+    queryClient.clear();
     setLocation("/");
   };
 
@@ -108,6 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const login = (accessToken: string, refreshToken: string, expiresIn: number) => {
+    queryClient.clear();
     applySession(accessToken, refreshToken, expiresIn);
   };
 
