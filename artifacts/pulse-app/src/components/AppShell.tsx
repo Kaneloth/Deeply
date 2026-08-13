@@ -29,7 +29,7 @@ function AppShellInner({ children }: AppShellProps) {
   const hideChrome = location === "/" || location === "/onboarding" || location === "/reset-password";
   if (hideChrome) {
     return (
-      <div className="w-full max-w-[430px] mx-auto min-h-[100dvh] bg-background relative overflow-x-hidden overflow-y-auto flex flex-col">
+      <div className="w-full max-w-[430px] mx-auto h-[100dvh] bg-background relative overflow-x-hidden overflow-y-auto flex flex-col">
         {children}
       </div>
     );
