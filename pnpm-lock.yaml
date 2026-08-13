@@ -425,6 +425,10 @@ importers:
         version: 3.25.76
 
   artifacts/pulse-app:
+    dependencies:
+      '@supabase/supabase-js':
+        specifier: ^2.110.7
+        version: 2.110.7
     devDependencies:
       '@hookform/resolvers':
         specifier: ^3.10.0
