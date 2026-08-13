@@ -528,6 +528,27 @@ export default function AuthPage() {
                   <Button type="submit" className="w-full h-12 rounded-xl text-base font-semibold bg-gradient-accent border-0" disabled={isLoading}>
                     {isLoading ? "Creating account..." : "Sign Up"}
                   </Button>
+                  <p className="text-xs text-muted-foreground text-center leading-relaxed px-2">
+                    By signing up, you agree to Deeply's{" "}
+                    <a
+                      href="https://deeplydating.co.za/terms"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-foreground underline underline-offset-2 hover:text-primary transition-colors"
+                    >
+                      Terms of Service
+                    </a>{" "}
+                    and{" "}
+                    <a
+                      href="https://deeplydating.co.za/privacy"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-foreground underline underline-offset-2 hover:text-primary transition-colors"
+                    >
+                      Privacy Policy
+                    </a>
+                    .
+                  </p>
                 </form>
               </Form>
             </motion.div>
