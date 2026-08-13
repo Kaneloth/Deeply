@@ -27,6 +27,7 @@ export default function WhoViewedMePage() {
   const { toast } = useToast();
   const [viewers, setViewers] = useState<Viewer[]>([]);
   const [newCount, setNewCount] = useState(0);
+  const [visibilityOff, setVisibilityOff] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRevealing, setIsRevealing] = useState(false);
   const [selected, setSelected] = useState<Viewer | null>(null);
@@ -41,6 +42,7 @@ export default function WhoViewedMePage() {
       const body = await res.json();
       setViewers(body.revealed ?? []);
       setNewCount(body.new_count ?? 0);
+      setVisibilityOff(body.visibility_off === true);
     } catch {
       // Silent — page just shows empty state.
     } finally {
@@ -141,7 +143,17 @@ export default function WhoViewedMePage() {
         </div>
       )}
 
-      {viewers.length === 0 && newCount === 0 ? (
+      {visibilityOff ? (
+        <div className="flex flex-col items-center justify-center text-center py-20 px-4">
+          <div className="w-16 h-16 rounded-full bg-card border border-card-border flex items-center justify-center mb-4">
+            <Eye size={24} className="text-muted-foreground" />
+          </div>
+          <p className="text-muted-foreground mb-1">Profile Views is off.</p>
+          <p className="text-xs text-muted-foreground max-w-xs">
+            Turn it on in Settings → Privacy and Safety to see who viewed you — this also lets people you view see that you viewed them.
+          </p>
+        </div>
+      ) : viewers.length === 0 && newCount === 0 ? (
         <div className="flex flex-col items-center justify-center text-center py-20">
           <div className="w-16 h-16 rounded-full bg-card border border-card-border flex items-center justify-center mb-4">
             <Eye size={24} className="text-muted-foreground" />

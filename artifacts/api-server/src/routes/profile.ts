@@ -68,7 +68,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     relationship_type, dating_intentions, onboarding_completed,
     num_kids, smoking_status, drinking_status, languages_spoken,
     languages_other, love_language, education, family_plans,
-    notify_messages, notify_matches, notify_likes, notify_sparks, notify_profile_views,
+    notify_sparks, notify_profile_views,
     is_incognito,
     has_tattoos, vaping_status, pets, height_cm, activity_level, nightlife_frequency,
     latitude, longitude,
@@ -98,9 +98,6 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     love_language?: string;
     education?: string;
     family_plans?: string;
-    notify_messages?: boolean;
-    notify_matches?: boolean;
-    notify_likes?: boolean;
     notify_sparks?: boolean;
     notify_profile_views?: boolean;
     is_incognito?: boolean;
@@ -207,9 +204,6 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     }
     updates.dealbreakers = dealbreakers;
   }
-  if (notify_messages !== undefined) updates.notify_messages = notify_messages;
-  if (notify_matches !== undefined) updates.notify_matches = notify_matches;
-  if (notify_likes !== undefined) updates.notify_likes = notify_likes;
   if (notify_sparks !== undefined) updates.notify_sparks = notify_sparks;
   if (notify_profile_views !== undefined) updates.notify_profile_views = notify_profile_views;
   if (is_incognito !== undefined) {
@@ -1502,10 +1496,27 @@ router.post("/profile-views", requireAuth, async (req, res): Promise<void> => {
 router.get("/profile-views/who-viewed-me", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
+  // Reciprocal visibility: if this user has profile-view visibility
+  // turned off, they don't get to see who viewed them either — same
+  // trade-off as turning off story-view sharing on TikTok/Instagram.
+  const { data: self } = await supabase
+    .from("profiles")
+    .select("notify_profile_views")
+    .eq("id", userId)
+    .single();
+
+  if (self?.notify_profile_views === false) {
+    res.json({ revealed: [], new_count: 0, visibility_off: true });
+    return;
+  }
+
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
   const { data: views, error } = await supabase
     .from("profile_views")
     .select("viewer_id, created_at")
     .eq("viewed_id", userId)
+    .gt("created_at", sevenDaysAgo)
     .order("created_at", { ascending: false })
     .limit(200);
 
@@ -1530,14 +1541,31 @@ router.get("/profile-views/who-viewed-me", requireAuth, async (req, res): Promis
     return;
   }
 
+  // Reciprocal filter: a viewer who currently has their own visibility
+  // off doesn't show up in anyone else's list, regardless of when they
+  // viewed.
+  const { data: viewerProfiles } = await supabase
+    .from("profiles")
+    .select("id, notify_profile_views")
+    .in("id", latestViews.map((v) => v.viewer_id));
+  const visibleViewerIds = new Set(
+    (viewerProfiles ?? []).filter((p) => p.notify_profile_views !== false).map((p) => p.id),
+  );
+  const visibleViews = latestViews.filter((v) => visibleViewerIds.has(v.viewer_id));
+
+  if (visibleViews.length === 0) {
+    res.json({ revealed: [], new_count: 0 });
+    return;
+  }
+
   const { data: alreadyRevealed } = await supabase
     .from("profile_view_reveals")
     .select("viewer_id")
     .eq("user_id", userId);
 
   const revealedIds = new Set((alreadyRevealed ?? []).map((r) => r.viewer_id));
-  const revealedViews = latestViews.filter((v) => revealedIds.has(v.viewer_id));
-  const newCount = latestViews.length - revealedViews.length;
+  const revealedViews = visibleViews.filter((v) => revealedIds.has(v.viewer_id));
+  const newCount = visibleViews.length - revealedViews.length;
 
   if (revealedViews.length === 0) {
     res.json({ revealed: [], new_count: newCount });
@@ -1575,13 +1603,45 @@ router.get("/profile-views/who-viewed-me", requireAuth, async (req, res): Promis
 router.post("/profile-views/reveal", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
+  // Reciprocal visibility: if this user has profile-view visibility
+  // turned off, there's nothing to reveal (and nothing to charge for).
+  const { data: self } = await supabase
+    .from("profiles")
+    .select("notify_profile_views")
+    .eq("id", userId)
+    .single();
+
+  if (self?.notify_profile_views === false) {
+    res.json({ revealed: [], balance: null });
+    return;
+  }
+
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
   const { data: views } = await supabase
     .from("profile_views")
     .select("viewer_id")
     .eq("viewed_id", userId)
+    .gt("created_at", sevenDaysAgo)
     .limit(200);
 
-  const distinctViewerIds = [...new Set((views ?? []).map((v) => v.viewer_id))];
+  const rawViewerIds = [...new Set((views ?? []).map((v) => v.viewer_id))];
+
+  if (rawViewerIds.length === 0) {
+    res.json({ revealed: [], balance: null });
+    return;
+  }
+
+  // Reciprocal filter — same as who-viewed-me: a viewer who currently
+  // has their own visibility off is excluded, so they can't be paid-reveal
+  // targets either.
+  const { data: viewerProfiles } = await supabase
+    .from("profiles")
+    .select("id, notify_profile_views")
+    .in("id", rawViewerIds);
+  const distinctViewerIds = (viewerProfiles ?? [])
+    .filter((p) => p.notify_profile_views !== false)
+    .map((p) => p.id);
 
   if (distinctViewerIds.length === 0) {
     res.json({ revealed: [], balance: null });
@@ -1623,6 +1683,7 @@ router.post("/profile-views/reveal", requireAuth, async (req, res): Promise<void
     .select("viewer_id, created_at")
     .eq("viewed_id", userId)
     .in("viewer_id", distinctViewerIds)
+    .gt("created_at", sevenDaysAgo)
     .order("created_at", { ascending: false });
 
   const latestByViewer = new Map<string, string>();

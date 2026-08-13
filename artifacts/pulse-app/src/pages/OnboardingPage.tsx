@@ -6,7 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
-import { Image as ImageIcon, Bell, Check, ChevronLeft, Play, Pause } from "lucide-react";
+import { Image as ImageIcon, Check, ChevronLeft, Play, Pause } from "lucide-react";
 import { RadioList, ChipGrid } from "@/components/SelectorControls";
 import { RadiusSlider } from "@/components/DropdownControls";
 import { AudioRecorderControl } from "@/components/AudioRecorderControl";
@@ -34,7 +34,7 @@ import {
   NIGHTLIFE_OPTIONS,
 } from "@/lib/lifestylePreferenceOptions";
 
-const TOTAL_STEPS = 24;
+const TOTAL_STEPS = 23;
 
 // Birthday picker bounds: must be at least 18, and a sane upper bound of
 // 100 years old.
@@ -138,10 +138,6 @@ export default function OnboardingPage() {
   const [isPlayingSaved, setIsPlayingSaved] = useState(false);
   const savedAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  const [notifyMessages, setNotifyMessages] = useState(true);
-  const [notifyMatches, setNotifyMatches] = useState(true);
-  const [notifyLikes, setNotifyLikes] = useState(true);
-  const [notifyProfileViews, setNotifyProfileViews] = useState(true);
   const [notifySparks, setNotifySparks] = useState(true);
 
   const toggleIntention = (v: string) => {
@@ -241,21 +237,6 @@ export default function OnboardingPage() {
     setIsPlayingSaved(true);
   };
 
-  const requestNotifications = async () => {
-    try {
-      if ("Notification" in window) {
-        await Notification.requestPermission();
-      }
-    } catch {
-      // Non-fatal — just continue either way.
-    }
-    goNext();
-  };
-
-  const declineNotifications = () => {
-    goNext();
-  };
-
   const handleComplete = async () => {
     setIsSaving(true);
     try {
@@ -306,10 +287,6 @@ export default function OnboardingPage() {
           education,
           languages_spoken: languagesSpoken,
           languages_other: languagesOther,
-          notify_messages: notifyMessages,
-          notify_matches: notifyMatches,
-          notify_likes: notifyLikes,
-          notify_profile_views: notifyProfileViews,
           notify_sparks: notifySparks,
           onboarding_completed: true,
         }),
@@ -652,42 +629,6 @@ export default function OnboardingPage() {
         )}
 
         {step === 22 && (
-          <StepShell step={step} onBack={goBack} onContinue={requestNotifications} continueLabel="Allow Notifications">
-            <div className="flex flex-col items-center text-center mb-6">
-              <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-6">
-                <Bell size={28} className="text-primary" />
-              </div>
-              <h2 className="text-2xl font-['Syne'] font-bold mb-2">Stay connected.</h2>
-              <p className="text-sm text-muted-foreground">Choose what you'd like to hear about.</p>
-            </div>
-            <div className="space-y-3">
-              {[
-                { key: "messages", label: "💬 Someone messages you", value: notifyMessages, set: setNotifyMessages },
-                { key: "matches", label: "❤️ You get a new match", value: notifyMatches, set: setNotifyMatches },
-                { key: "likes", label: "🔥 Someone likes your profile", value: notifyLikes, set: setNotifyLikes },
-                { key: "profile_views", label: "👀 Someone views your profile", value: notifyProfileViews, set: setNotifyProfileViews },
-              ].map((item) => (
-                <button
-                  key={item.key}
-                  onClick={() => item.set(!item.value)}
-                  className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-colors ${
-                    item.value ? "bg-primary/10 border-primary" : "bg-card border-card-border"
-                  }`}
-                >
-                  <span className="text-sm">{item.label}</span>
-                  <div className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${item.value ? "bg-primary border-primary" : "border-muted-foreground"}`}>
-                    {item.value && <Check size={12} className="text-primary-foreground" />}
-                  </div>
-                </button>
-              ))}
-            </div>
-            <button onClick={declineNotifications} className="text-xs text-muted-foreground underline mt-4 w-full text-center">
-              Not now
-            </button>
-          </StepShell>
-        )}
-
-        {step === 23 && (
           <motion.div key={step} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex-1 flex flex-col">
             <div className="flex-1 flex flex-col items-center justify-center text-center">
               <div className="text-5xl mb-6">🎉</div>

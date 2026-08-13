@@ -11,7 +11,7 @@ import { Shield } from "lucide-react";
 import {
   LogOut, Moon, Sun, Type, Lock, HelpCircle, LifeBuoy, Trash2,
   ChevronRight, AlertTriangle, Eye, EyeOff, Mail, EyeOff as IncognitoIcon,
-  ShieldOff, X as XIcon,
+  ShieldOff, X as XIcon, ScanEye,
 } from "lucide-react";
 
 const TEXT_SIZE_OPTIONS: { label: string; value: TextSize }[] = [
@@ -78,6 +78,9 @@ export default function SettingsPage() {
   const [isIncognito, setIsIncognito] = useState(false);
   const [incognitoEnabled, setIncognitoEnabled] = useState(false);
   const [isTogglingIncognito, setIsTogglingIncognito] = useState(false);
+
+  const [profileViewsVisible, setProfileViewsVisible] = useState(true);
+  const [isTogglingProfileViews, setIsTogglingProfileViews] = useState(false);
 
   interface BlockedEntry {
     id: string;
@@ -167,6 +170,38 @@ export default function SettingsPage() {
     }
   };
 
+  const handleToggleProfileViews = async () => {
+    const next = !profileViewsVisible;
+    setIsTogglingProfileViews(true);
+    try {
+      const res = await fetch("/api/profile/me", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ notify_profile_views: next }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "Failed to update");
+      setProfileViewsVisible(next);
+      toast({
+        title: next ? "Profile views on" : "Profile views off",
+        description: next
+          ? "You'll see who viewed your profile, and they'll see you viewed theirs."
+          : "Your views stay private, and you won't see who viewed you either — it goes both ways.",
+      });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to update profile views setting.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsTogglingProfileViews(false);
+    }
+  };
+
   useEffect(() => {
     fetch("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } })
       .then((res) => (res.ok ? res.json() : null))
@@ -178,7 +213,10 @@ export default function SettingsPage() {
     fetch("/api/profile/me", { headers: { Authorization: `Bearer ${token}` } })
       .then((res) => (res.ok ? res.json() : null))
       .then((body) => {
-        if (body) setIsIncognito(!!body.is_incognito);
+        if (body) {
+          setIsIncognito(!!body.is_incognito);
+          setProfileViewsVisible(body.notify_profile_views ?? true);
+        }
       })
       .catch(() => {});
     fetch("/api/app-settings", { headers: { Authorization: `Bearer ${token}` } })
@@ -396,6 +434,27 @@ export default function SettingsPage() {
         {/* Privacy & Safety */}
         <div className="space-y-3">
           <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">Privacy & Safety</h3>
+
+          <button
+            onClick={handleToggleProfileViews}
+            disabled={isTogglingProfileViews}
+            className="w-full flex items-center justify-between bg-card border border-card-border rounded-2xl p-4 disabled:opacity-60"
+          >
+            <div className="flex items-center gap-3">
+              <ScanEye size={18} className="text-muted-foreground" />
+              <div className="text-left">
+                <p className="text-sm font-medium">Profile Views</p>
+                <p className="text-xs text-muted-foreground">
+                  {profileViewsVisible
+                    ? "See who viewed you — they'll see you viewed them too"
+                    : "Off — your views are private, and you won't see who viewed you"}
+                </p>
+              </div>
+            </div>
+            <div className={`h-6 w-10 rounded-full relative transition-colors shrink-0 ${profileViewsVisible ? "bg-primary" : "bg-secondary"}`}>
+              <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${profileViewsVisible ? "right-1" : "left-1"}`} />
+            </div>
+          </button>
 
           {incognitoEnabled && (
             <button

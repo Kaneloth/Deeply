@@ -72,13 +72,22 @@ export async function recordProfileView(viewerId: string, viewedId: string): Pro
 
   await supabase.from("profile_views").insert({ viewer_id: viewerId, viewed_id: viewedId });
 
-  const { data: viewedProfile } = await supabase
+  // Reciprocal visibility, TikTok/IG-story style: notifying the viewed
+  // person requires BOTH sides to have profile-view visibility on. The
+  // view row above is still recorded either way (so a later toggle-on
+  // doesn't retroactively lose history), but if either party currently
+  // has visibility off, nothing surfaces — no notification, and (per the
+  // who-viewed-me / reveal routes) no appearance in either list.
+  const { data: parties } = await supabase
     .from("profiles")
-    .select("notify_profile_views")
-    .eq("id", viewedId)
-    .single();
+    .select("id, notify_profile_views")
+    .in("id", [viewerId, viewedId]);
+
+  const viewerProfile = parties?.find((p) => p.id === viewerId);
+  const viewedProfile = parties?.find((p) => p.id === viewedId);
 
   if (viewedProfile?.notify_profile_views === false) return;
+  if (viewerProfile?.notify_profile_views === false) return;
 
   // Roll into the existing unread profile_views notification if one
   // exists, otherwise start a new one.
