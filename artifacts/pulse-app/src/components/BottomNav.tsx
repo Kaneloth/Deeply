@@ -42,12 +42,20 @@ export function BottomNav() {
   // bar is visible everywhere, so its data needs to be too. Same
   // self-contained poll-plus-route-change-refetch pattern as the match
   // indicator right below it.
+  //
+  // Only new_count feeds the badge — NOT revealed.length. revealed is
+  // the list of inviters already paid-for and permanently visible on
+  // the Invites page; counting them here too would mean the badge never
+  // goes down even after you've seen and dealt with every one of them.
+  // A nav badge should mean "new/unseen", matching exactly how
+  // InvitesPage.tsx itself already treats these as two separate things
+  // (a "new_count" banner vs. the always-visible revealed cards).
   const fetchInvitesCount = useCallback(async () => {
     try {
       const res = await fetch("/api/discover/invites", { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) return;
       const body = await res.json();
-      setInvitesCount((body.revealed?.length ?? 0) + (body.new_count ?? 0));
+      setInvitesCount(body.new_count ?? 0);
     } catch {
       // Silent — non-critical background fetch.
     }
