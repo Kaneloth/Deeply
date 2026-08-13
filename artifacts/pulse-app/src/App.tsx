@@ -21,6 +21,7 @@ import WhoViewedMePage from '@/pages/WhoViewedMePage';
 import SettingsPage from '@/pages/SettingsPage';
 import AdminPage from '@/pages/AdminPage';
 import ResetPasswordPage from '@/pages/ResetPasswordPage';
+import AuthCallbackPage from '@/pages/AuthCallbackPage';
 const queryClient = new QueryClient();
 function ProtectedRoute({ component: Component, ...rest }: any) {
   const { isAuthenticated } = useAuth();
@@ -47,6 +48,7 @@ function Router() {
         {/* Public Routes */}
         <Route path="/" component={() => <PublicRoute component={AuthPage} />} />
         <Route path="/reset-password" component={ResetPasswordPage} />
+        <Route path="/auth/callback" component={AuthCallbackPage} />
         
         {/* Protected Routes */}
         <Route path="/onboarding" component={() => <ProtectedRoute component={OnboardingPage} />} />
