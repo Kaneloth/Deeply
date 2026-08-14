@@ -379,11 +379,11 @@ export default function AuthPage() {
   }
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-[100dvh] px-6 w-full relative flex-shrink-0">
+    <div className="flex flex-col items-center min-h-[100dvh] px-6 pt-14 pb-10 w-full relative flex-shrink-0">
       {/* Background Glow */}
       <div className="absolute top-[-10%] left-[-20%] w-[150%] h-[50%] bg-primary/20 blur-[120px] rounded-full pointer-events-none" />
       
-      <div className="w-full z-10 flex flex-col items-center mt-[-10vh] mb-12">
+      <div className="w-full z-10 flex flex-col items-center mb-10">
         <img src="/deeply-logo.png" alt="Deeply" className="h-16 w-auto" />
         <p className="text-muted-foreground text-sm mt-4 text-center max-w-[280px]">
           Deep connections begin with a spark.
