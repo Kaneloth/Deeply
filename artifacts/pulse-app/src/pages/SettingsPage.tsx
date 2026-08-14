@@ -575,14 +575,16 @@ export default function SettingsPage() {
           </div>
 
           <a
-            href="mailto:support@deeplyapp.com"
+            href={`mailto:support@deeplydating.co.za?subject=${encodeURIComponent("Deeply Support Request")}&body=${encodeURIComponent(
+              `Account email: ${email ?? "(not loaded — please include your account email)"}\n\n`,
+            )}`}
             className="flex items-center justify-between bg-card border border-card-border rounded-2xl p-4"
           >
             <div className="flex items-center gap-3">
               <LifeBuoy size={18} className="text-muted-foreground" />
               <div>
                 <p className="text-sm font-medium">Contact Support</p>
-                <p className="text-xs text-muted-foreground">support@deeplyapp.com</p>
+                <p className="text-xs text-muted-foreground">support@deeplydating.co.za</p>
               </div>
             </div>
             <ChevronRight size={16} className="text-muted-foreground" />
