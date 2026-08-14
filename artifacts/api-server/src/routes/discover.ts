@@ -121,17 +121,44 @@ async function buildDiscoverQueue(userId: string) {
   const boosted = withinRadius.filter((c) => c.boosted_until && new Date(c.boosted_until).getTime() > now);
   const rest = withinRadius.filter((c) => !c.boosted_until || new Date(c.boosted_until).getTime() <= now);
 
-  // Weighted shuffle rather than a strict score-sort: each candidate's
-  // compatibility score becomes a bias on top of randomness, so better
-  // matches surface more often WITHOUT the queue becoming perfectly
-  // deterministic (always the exact same top matches in the exact same
-  // order). Preserves variety, matching how established apps avoid
-  // showing only exact-preference matches.
-  const weightedShuffle = <T extends Record<string, any>>(arr: T[]) =>
-    arr
-      .map((c) => ({ c, sortKey: computeCompatibilityScore(c, { ...viewer, dealbreakers }) + Math.random() * 20 }))
-      .sort((a, b) => b.sortKey - a.sortKey)
-      .map(({ c }) => c);
+  // Weighted RANDOM DRAW (sampling without replacement), not a sort with
+  // a small additive jitter. A sort-based approach (score + small random
+  // offset) silently degenerates into a near-fixed order whenever
+  // compatibility scores vary by more than the jitter's range — the
+  // higher-scoring candidate wins the comparison almost every time
+  // regardless of the random roll, so reshuffling barely changes
+  // anything even though Math.random() is genuinely being called. This
+  // draws one candidate at a time, weighted by score, so each pick is a
+  // real random event — better matches still surface more OFTEN, but
+  // the order is never effectively frozen.
+  const weightedShuffle = <T extends Record<string, any>>(arr: T[]) => {
+    if (arr.length === 0) return arr;
+
+    const scored = arr.map((c) => ({ c, score: computeCompatibilityScore(c, { ...viewer, dealbreakers }) }));
+    // Shift so the lowest score maps to a small positive weight rather
+    // than zero/negative — a zero-weight candidate could otherwise never
+    // be drawn at all, which isn't the intent (everyone should have SOME
+    // chance, just not an equal one).
+    const minScore = Math.min(...scored.map((s) => s.score));
+    const pool = scored.map((s) => ({ c: s.c, weight: s.score - minScore + 1 }));
+
+    const result: T[] = [];
+    while (pool.length > 0) {
+      const totalWeight = pool.reduce((sum, p) => sum + p.weight, 0);
+      let roll = Math.random() * totalWeight;
+      let pickIndex = pool.length - 1; // fallback for float rounding at the very end
+      for (let i = 0; i < pool.length; i++) {
+        roll -= pool[i].weight;
+        if (roll <= 0) {
+          pickIndex = i;
+          break;
+        }
+      }
+      result.push(pool[pickIndex].c);
+      pool.splice(pickIndex, 1);
+    }
+    return result;
+  };
 
   const prioritized = [...weightedShuffle(boosted), ...weightedShuffle(rest)].slice(0, 20);
 
@@ -181,10 +208,9 @@ router.get("/discover/reshuffle-status", requireAuth, async (req, res): Promise<
 /** POST /api/discover/reshuffle — re-randomizes the discover queue on
  *  demand. Free once every 7 days, admin-configurable Sparks otherwise.
  *  Always returns the current admin-configured cost (regardless of
- *  whether THIS reshuffle was free or paid) so the frontend can show an
- *  accurate, live number — never a hardcoded one — in either the "you
- *  just used your free one, next costs X" notice or the "X Sparks used"
- *  confirmation. */
+ *  whether THIS reshuffle was free or paid) so the frontend has an
+ *  accurate, live number available if it ever needs to display one —
+ *  e.g. on the reshuffle button/status UI — never a hardcoded value. */
 router.post("/discover/reshuffle", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
