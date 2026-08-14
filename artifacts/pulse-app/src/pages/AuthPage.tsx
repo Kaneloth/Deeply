@@ -285,7 +285,7 @@ export default function AuthPage() {
 
   if (showForgotPassword) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[100dvh] px-6 w-full relative text-center">
+      <div className="flex flex-col items-center justify-center min-h-[100dvh] px-6 w-full relative flex-shrink-0 text-center">
         <div className="absolute top-[-10%] left-[-20%] w-[150%] h-[50%] bg-primary/20 blur-[120px] rounded-full pointer-events-none" />
         <div className="z-10 w-full max-w-sm">
           <img src="/deeply-logo.png" alt="Deeply" className="h-14 w-auto mx-auto" />
@@ -338,7 +338,7 @@ export default function AuthPage() {
 
   if (pendingEmail) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[100dvh] px-6 w-full relative text-center">
+      <div className="flex flex-col items-center justify-center min-h-[100dvh] px-6 w-full relative flex-shrink-0 text-center">
         <div className="absolute top-[-10%] left-[-20%] w-[150%] h-[50%] bg-primary/20 blur-[120px] rounded-full pointer-events-none" />
         <div className="z-10 w-full max-w-sm">
           <img src="/deeply-logo.png" alt="Deeply" className="h-14 w-auto mx-auto" />
@@ -379,7 +379,7 @@ export default function AuthPage() {
   }
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-[100dvh] px-6 w-full relative">
+    <div className="flex flex-col items-center justify-center min-h-[100dvh] px-6 w-full relative flex-shrink-0">
       {/* Background Glow */}
       <div className="absolute top-[-10%] left-[-20%] w-[150%] h-[50%] bg-primary/20 blur-[120px] rounded-full pointer-events-none" />
       
