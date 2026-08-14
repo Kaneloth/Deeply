@@ -120,7 +120,7 @@ export default function DiscoverPage() {
             description: `Your next free reshuffle is available in 7 days. Reshuffling again before then costs ${body.cost} Sparks.`,
           });
         }
-    
+      }
       fetchReshuffleStatus();
     } catch (err) {
       toast({
