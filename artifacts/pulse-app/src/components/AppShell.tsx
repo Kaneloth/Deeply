@@ -29,7 +29,13 @@ function AppShellInner({ children }: AppShellProps) {
   const hideChrome = location === "/" || location === "/onboarding" || location === "/reset-password";
   if (hideChrome) {
     return (
-      <div className="w-full max-w-[430px] mx-auto min-h-[100dvh] bg-background relative flex flex-col">
+      // overflow-y-auto, NOT overflow-hidden — these pages (especially
+      // the signup form on AuthPage) can be taller than the viewport on
+      // shorter/smaller screens. overflow-hidden made that content
+      // completely unreachable: not just scrolled past, but physically
+      // impossible to scroll to at all, since there was no way to
+      // scroll in the first place.
+      <div className="w-full max-w-[430px] mx-auto min-h-[100dvh] bg-background relative overflow-y-auto flex flex-col">
         {children}
       </div>
     );

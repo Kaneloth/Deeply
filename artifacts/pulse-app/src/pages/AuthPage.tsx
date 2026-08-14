@@ -285,9 +285,17 @@ export default function AuthPage() {
 
   if (showForgotPassword) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[100dvh] px-6 w-full relative text-center">
+      // min-h-[100dvh] + overflow-y-auto on the outer container, my-auto
+      // on the inner content block — centers vertically when content
+      // fits, but naturally lands at the top (with room to scroll) if
+      // it's ever taller than the viewport, instead of justify-center's
+      // behavior of centering overflow equally in both directions (which
+      // pushes content off the TOP of the screen just as much as it
+      // clips the bottom — exactly what was happening on the signup
+      // view below before this fix).
+      <div className="min-h-[100dvh] overflow-y-auto flex flex-col px-6 w-full relative">
         <div className="absolute top-[-10%] left-[-20%] w-[150%] h-[50%] bg-primary/20 blur-[120px] rounded-full pointer-events-none" />
-        <div className="z-10 w-full max-w-sm">
+        <div className="z-10 w-full max-w-sm mx-auto my-auto py-10 text-center">
           <img src="/deeply-logo.png" alt="Deeply" className="h-14 w-auto mx-auto" />
           {resetSent ? (
             <>
@@ -338,9 +346,9 @@ export default function AuthPage() {
 
   if (pendingEmail) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[100dvh] px-6 w-full relative text-center">
+      <div className="min-h-[100dvh] overflow-y-auto flex flex-col px-6 w-full relative">
         <div className="absolute top-[-10%] left-[-20%] w-[150%] h-[50%] bg-primary/20 blur-[120px] rounded-full pointer-events-none" />
-        <div className="z-10 w-full max-w-sm">
+        <div className="z-10 w-full max-w-sm mx-auto my-auto py-10 text-center">
           <img src="/deeply-logo.png" alt="Deeply" className="h-14 w-auto mx-auto" />
           <h1 className="text-2xl font-['Syne'] font-extrabold mt-6 mb-3">
             Enter your code
@@ -379,18 +387,25 @@ export default function AuthPage() {
   }
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-[100dvh] px-6 w-full relative">
+    <div className="min-h-[100dvh] overflow-y-auto flex flex-col px-6 w-full relative">
       {/* Background Glow */}
       <div className="absolute top-[-10%] left-[-20%] w-[150%] h-[50%] bg-primary/20 blur-[120px] rounded-full pointer-events-none" />
-      
-      <div className="w-full z-10 flex flex-col items-center -mt-8 mb-12">
-        <img src="/deeply-logo.png" alt="Deeply" className="h-16 w-auto" />
-        <p className="text-muted-foreground text-sm mt-4 text-center max-w-[280px]">
-          Deep connections begin with a spark.
-        </p>
-      </div>
 
-      <div className="w-full max-w-sm z-10">
+      {/* Single wrapper for logo + form together, so my-auto centers
+          (or top-aligns-and-scrolls, once taller than the viewport) the
+          whole thing as one unit. Previously the logo block and the
+          form block were separate siblings under a justify-center flex
+          parent — that's what let the signup form's extra height push
+          the logo off the top of the screen instead of just making the
+          page scrollable. */}
+      <div className="w-full max-w-sm mx-auto z-10 my-auto py-10">
+        <div className="w-full flex flex-col items-center mb-12">
+          <img src="/deeply-logo.png" alt="Deeply" className="h-16 w-auto" />
+          <p className="text-muted-foreground text-sm mt-4 text-center max-w-[280px]">
+            Deep connections begin with a spark.
+          </p>
+        </div>
+
         <button
           type="button"
           onClick={onGoogleSignIn}
