@@ -6,6 +6,7 @@ import discoverRouter from "./discover";
 import matchesRouter from "./matches";
 import messagesRouter from "./messages";
 import sparksRouter from "./sparks";
+import supportRouter from "./support";
 
 const router: IRouter = Router();
 
@@ -16,5 +17,6 @@ router.use(discoverRouter);
 router.use(matchesRouter);
 router.use(messagesRouter);
 router.use(sparksRouter);
+router.use(supportRouter);
 
 export default router;
