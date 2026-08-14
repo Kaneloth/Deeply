@@ -11,7 +11,7 @@ import { Shield } from "lucide-react";
 import {
   LogOut, Moon, Sun, Type, Lock, HelpCircle, LifeBuoy, Trash2,
   ChevronRight, AlertTriangle, Eye, EyeOff, Mail, EyeOff as IncognitoIcon,
-  ShieldOff, X as XIcon, ScanEye,
+  ShieldOff, X as XIcon, ScanEye, Send,
 } from "lucide-react";
 
 const TEXT_SIZE_OPTIONS: { label: string; value: TextSize }[] = [
@@ -69,6 +69,10 @@ export default function SettingsPage() {
 
   const [showFaq, setShowFaq] = useState(false);
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
+
+  const [showSupportForm, setShowSupportForm] = useState(false);
+  const [supportMessage, setSupportMessage] = useState("");
+  const [isSendingSupport, setIsSendingSupport] = useState(false);
 
   const [showDeleteSection, setShowDeleteSection] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
@@ -235,6 +239,36 @@ export default function SettingsPage() {
       .then((body) => setAdminAccess(body))
       .catch(() => {});
   }, [token]);
+
+  const handleSendSupportMessage = async () => {
+    if (!supportMessage.trim() || isSendingSupport) return;
+    setIsSendingSupport(true);
+    try {
+      const res = await fetch("/api/support/message", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ message: supportMessage.trim() }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to send message");
+      }
+      toast({ title: "Message sent", description: "Our team will get back to you by email." });
+      setSupportMessage("");
+      setShowSupportForm(false);
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to send message.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSendingSupport(false);
+    }
+  };
 
   const handleChangePassword = async () => {
     setPasswordError("");
@@ -574,21 +608,45 @@ export default function SettingsPage() {
             )}
           </div>
 
-          <a
-            href={`mailto:support@deeplydating.co.za?subject=${encodeURIComponent("Deeply Support Request")}&body=${encodeURIComponent(
-              `Account email: ${email ?? "(not loaded — please include your account email)"}\n\n`,
-            )}`}
-            className="flex items-center justify-between bg-card border border-card-border rounded-2xl p-4"
-          >
-            <div className="flex items-center gap-3">
-              <LifeBuoy size={18} className="text-muted-foreground" />
-              <div>
-                <p className="text-sm font-medium">Contact Support</p>
-                <p className="text-xs text-muted-foreground">support@deeplydating.co.za</p>
+          <div className="bg-card border border-card-border rounded-2xl p-4">
+            <button
+              onClick={() => setShowSupportForm((v) => !v)}
+              className="w-full flex items-center justify-between"
+            >
+              <div className="flex items-center gap-3">
+                <LifeBuoy size={18} className="text-muted-foreground" />
+                <div className="text-left">
+                  <p className="text-sm font-medium">Contact Support</p>
+                  <p className="text-xs text-muted-foreground">Send our team a message</p>
+                </div>
               </div>
-            </div>
-            <ChevronRight size={16} className="text-muted-foreground" />
-          </a>
+              <ChevronRight size={16} className={`text-muted-foreground transition-transform ${showSupportForm ? "rotate-90" : ""}`} />
+            </button>
+
+            {showSupportForm && (
+              <div className="mt-4 pt-4 border-t border-border space-y-3">
+                <textarea
+                  value={supportMessage}
+                  onChange={(e) => setSupportMessage(e.target.value)}
+                  placeholder="What's going on? The more detail, the faster we can help."
+                  rows={5}
+                  maxLength={4000}
+                  className="w-full bg-background border border-card-border rounded-xl p-3 text-sm resize-none focus:outline-none focus:border-primary/50"
+                />
+                <p className="text-xs text-muted-foreground">
+                  We'll reply to {email ?? "your account email"}.
+                </p>
+                <Button
+                  onClick={handleSendSupportMessage}
+                  disabled={!supportMessage.trim() || isSendingSupport}
+                  className="w-full h-11 rounded-xl bg-gradient-accent border-0"
+                >
+                  <Send size={16} className="mr-2" />
+                  {isSendingSupport ? "Sending..." : "Send Message"}
+                </Button>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Admin — only visible if the account has any admin access */}
