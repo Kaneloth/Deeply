@@ -10,14 +10,14 @@ const PASSPHRASE = process.env.PAYFAST_PASSPHRASE || undefined; // optional — 
 // PayFast's backend is PHP, and their signature check re-derives the
 // string using PHP's urlencode() — which differs from JS's
 // encodeURIComponent() in ways that silently break signatures if not
-// corrected: PHP encodes spaces as "+" (not "%20"), and PHP additionally
-// escapes a few characters ( ! ' ( ) * ) that encodeURIComponent leaves
-// untouched. This function corrects both differences so the string byte-
-// matches what PayFast's PHP server computes.
+// corrected: PHP encodes spaces as "+" (not "%20"), PHP additionally
+// escapes a few characters ( ! ' ( ) * ~ ) that encodeURIComponent
+// leaves untouched. This function corrects all of these so the string
+// byte-matches what PayFast's PHP server computes.
 function phpUrlEncode(value: string): string {
   return encodeURIComponent(value)
     .replace(/%20/g, "+")
-    .replace(/[!'()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+    .replace(/[!'()*~]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
 }
 
 // The signature is NOT alphabetical — it must follow this exact field
@@ -104,9 +104,19 @@ export async function validateItn(body: Record<string, string>): Promise<boolean
   // above, and NOT alphabetical. This relies on Express's urlencoded
   // body parser preserving field order from the raw POST body into
   // req.body, which holds true for the standard parser.
+  //
+  // IMPORTANT: unlike checkout signature generation (where empty
+  // optional fields get skipped, per PayFast's documented rule for that
+  // direction), every field is included here, even blank ones. The ITN
+  // is a complete, fixed payload PayFast constructs and signs on their
+  // own side — there's no confirmed evidence their own ITN signing
+  // skips blanks the same way, and PayFast ITN payloads routinely carry
+  // many blank fields (unused custom_str/custom_int slots, empty
+  // name_last, etc.) that must still be included for the signature to
+  // match.
   let pfOutput = "";
   for (const [key, val] of Object.entries(rest)) {
-    if (val !== undefined && val !== "") {
+    if (val !== undefined) {
       pfOutput += `${key}=${phpUrlEncode(String(val).trim())}&`;
     }
   }
@@ -115,6 +125,13 @@ export async function validateItn(body: Record<string, string>): Promise<boolean
     getString += `&passphrase=${phpUrlEncode(PASSPHRASE.trim())}`;
   }
   const expectedSignature = crypto.createHash("md5").update(getString).digest("hex");
+
+  // TEMPORARY — remove once the signature mismatch is resolved.
+  console.error("PAYFAST ITN DEBUG raw body:", JSON.stringify(rest));
+  console.error("PAYFAST ITN DEBUG computed string:", getString);
+  console.error("PAYFAST ITN DEBUG expected signature:", expectedSignature);
+  console.error("PAYFAST ITN DEBUG received signature:", receivedSignature);
+  console.error("PAYFAST ITN DEBUG passphrase configured:", PASSPHRASE ? "yes" : "no");
 
   if (expectedSignature !== receivedSignature) {
     console.error("PayFast ITN signature mismatch");
