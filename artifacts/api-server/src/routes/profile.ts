@@ -11,6 +11,8 @@ import { attachPhotoGalleries } from "../lib/photo-galleries";
 import { attachAudioPrompts } from "../lib/audio-prompts-helper";
 import { checkImageSafety } from "../lib/content-moderation";
 import { getEconomyConfig, invalidateEconomyConfigCache } from "../lib/economy-config";
+import { verifyAndConsumeGooglePurchase } from "../lib/google-play-helper";
+import { buildPayfastCheckout } from "../lib/payfast-helper";
 
 const router: IRouter = Router();
 
@@ -216,6 +218,31 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     }
     updates.is_incognito = is_incognito;
   }
+  // Founders program: award the badge + free verification at the exact
+  // moment onboarding_completed transitions from not-true to true — not
+  // just because this request happened to include that field (a
+  // resubmission of an already-completed profile must never re-claim a
+  // slot). The claim itself is a single atomic UPDATE server-side (see
+  // claim_founder_slot), so two users finishing onboarding within the
+  // same instant can't both claim the same slot — the 112 cutoff is
+  // exact, not a race.
+  if (onboarding_completed === true) {
+    const { data: currentProfile } = await supabase
+      .from("profiles")
+      .select("onboarding_completed")
+      .eq("id", req.user!.id)
+      .single();
+
+    if (currentProfile && !currentProfile.onboarding_completed) {
+      const { data: rank } = await supabase.rpc("claim_founder_slot", { cap: 112 });
+      if (typeof rank === "number") {
+        updates.is_founder = true;
+        updates.founder_rank = rank;
+        updates.free_verification = true;
+      }
+    }
+  }
+
   const { data: profile, error } = await supabase
     .from("profiles")
     .update(updates)
@@ -1819,23 +1846,51 @@ router.post("/verification/id/request-refund", requireAuth, async (req, res): Pr
   res.json({ success: true });
 });
 
-/** GET /api/verification/id/payment-status */
+const ID_VERIFICATION_GOOGLE_PRODUCT_ID = "id_verification_fee";
+
+/** GET /api/verification/id/payment-status — also reports whether this
+ *  user is eligible for a founders free verification grant they haven't
+ *  claimed yet, so the frontend can show "Claim Free Verification"
+ *  instead of a price. */
 router.get("/verification/id/payment-status", requireAuth, async (req, res): Promise<void> => {
-  const { data } = await supabase
+  const userId = req.user!.id;
+
+  const { data: payment } = await supabase
     .from("identity_verification_payments")
     .select("id")
-    .eq("user_id", req.user!.id)
+    .eq("user_id", userId)
     .eq("status", "paid")
     .maybeSingle();
-  res.json({ hasPaid: !!data });
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("free_verification")
+    .eq("id", userId)
+    .single();
+
+  res.json({
+    hasPaid: !!payment,
+    isFounderEligible: !!profile?.free_verification && !payment,
+  });
 });
 
-/** POST /api/verification/id/pay — TEMPORARY dev-only stub, same pattern
- *  as /sparks/purchase. Grants "paid" status instantly with no real
- *  payment gateway. Replace with real payment verification before this
- *  goes live to real users. */
-router.post("/verification/id/pay", requireAuth, async (req, res): Promise<void> => {
+/** POST /api/verification/id/claim-free — founders-only. Never trusts
+ *  the client's claim of eligibility; re-checks profiles.free_verification
+ *  server-side, since that flag is set exclusively by the atomic founders
+ *  claim in PUT /profile/me, never by anything client-controlled. */
+router.post("/verification/id/claim-free", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("free_verification")
+    .eq("id", userId)
+    .single();
+
+  if (!profile?.free_verification) {
+    res.status(403).json({ error: "You're not eligible for free verification" });
+    return;
+  }
 
   const { data: existing } = await supabase
     .from("identity_verification_payments")
@@ -1848,6 +1903,52 @@ router.post("/verification/id/pay", requireAuth, async (req, res): Promise<void>
     return;
   }
 
+  const { error } = await supabase.from("identity_verification_payments").insert({
+    user_id: userId,
+    amount: 0,
+    status: "paid",
+    is_founder_grant: true,
+  });
+  if (error) {
+    res.status(500).json({ error: `Failed to claim free verification: ${error.message}` });
+    return;
+  }
+
+  res.status(201).json({ success: true });
+});
+
+/** POST /api/verification/id/pay/google — verifies a completed Google
+ *  Play purchase for the ID verification fee before marking payment as
+ *  'paid'. Mirrors /api/sparks/purchase/google exactly — reuses the same
+ *  verification helper, which was already written generically. */
+router.post("/verification/id/pay/google", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const { purchase_token } = req.body as { purchase_token?: string };
+
+  if (!purchase_token) {
+    res.status(400).json({ error: "purchase_token is required" });
+    return;
+  }
+
+  const { data: existing } = await supabase
+    .from("identity_verification_payments")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("status", "paid")
+    .maybeSingle();
+  if (existing) {
+    res.json({ success: true, alreadyPaid: true });
+    return;
+  }
+
+  try {
+    await verifyAndConsumeGooglePurchase(ID_VERIFICATION_GOOGLE_PRODUCT_ID, purchase_token);
+  } catch (err) {
+    console.error("Google Play verification-fee purchase failed:", err);
+    res.status(402).json({ error: "Could not verify this purchase with Google Play. Please try again or contact support." });
+    return;
+  }
+
   const { id_verification_fee_zar } = await getEconomyConfig();
   const { error } = await supabase.from("identity_verification_payments").insert({
     user_id: userId,
@@ -1855,11 +1956,97 @@ router.post("/verification/id/pay", requireAuth, async (req, res): Promise<void>
     status: "paid",
   });
   if (error) {
-    res.status(500).json({ error: `[DEV] Payment failed: ${error.message}` });
+    res.status(500).json({ error: `Failed to record payment: ${error.message}` });
     return;
   }
 
   res.status(201).json({ success: true });
+});
+
+/** POST /api/verification/id/checkout/payfast — starts a PayFast
+ *  checkout for the ID verification fee. Web only — see
+ *  VerificationSection's platform check. Reuses the SAME
+ *  payfast_transactions table and the SAME ITN webhook endpoint already
+ *  configured in Hookdeck/PayFast for Sparks (no need to reconfigure
+ *  anything there) — the ITN handler in sparks.ts fulfills based on
+ *  purchase_type, so this only ever creates the pending row and hands
+ *  back signed checkout fields; payment is marked 'paid' only once that
+ *  shared ITN handler confirms it. */
+router.post("/verification/id/checkout/payfast", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+
+  const { data: existing } = await supabase
+    .from("identity_verification_payments")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("status", "paid")
+    .maybeSingle();
+  if (existing) {
+    res.status(400).json({ error: "You've already paid for ID verification" });
+    return;
+  }
+
+  const { data: userData } = await supabase.auth.admin.getUserById(userId);
+  const email = userData.user?.email;
+  const name = (userData.user?.user_metadata as { name?: string } | null)?.name;
+
+  const { id_verification_fee_zar } = await getEconomyConfig();
+
+  const { data: txn, error: insertError } = await supabase
+    .from("payfast_transactions")
+    .insert({
+      user_id: userId,
+      purchase_type: "id_verification",
+      amount_zar: id_verification_fee_zar,
+    })
+    .select("m_payment_id")
+    .single();
+
+  if (insertError || !txn) {
+    console.error("Failed to create PayFast verification transaction:", insertError);
+    res.status(500).json({ error: "Failed to start checkout. Please try again." });
+    return;
+  }
+
+  const baseUrl = process.env.APP_BASE_URL ?? "https://app.deeplydating.co.za";
+
+  try {
+    const checkout = buildPayfastCheckout({
+      m_payment_id: txn.m_payment_id,
+      amount: id_verification_fee_zar.toFixed(2),
+      item_name: "ID Verification",
+      custom_str1: userId,
+      name_first: name,
+      email_address: email,
+      return_url: `${baseUrl}/verification/payfast/return?m_payment_id=${txn.m_payment_id}`,
+      cancel_url: `${baseUrl}/verification/payfast/cancel`,
+      notify_url: process.env.PAYFAST_NOTIFY_URL ?? `${baseUrl}/api/sparks/payfast/itn`,
+    });
+    res.json(checkout);
+  } catch (err) {
+    console.error("Failed to build PayFast verification checkout:", err);
+    res.status(500).json({ error: "Payment processing is temporarily unavailable." });
+  }
+});
+
+/** GET /api/verification/id/payfast/status/:mPaymentId — mirrors
+ *  /api/sparks/payfast/status/:mPaymentId, for the verification-specific
+ *  return-landing page to poll. */
+router.get("/verification/id/payfast/status/:mPaymentId", requireAuth, async (req, res): Promise<void> => {
+  const { mPaymentId } = req.params;
+
+  const { data: txn } = await supabase
+    .from("payfast_transactions")
+    .select("status, user_id, purchase_type")
+    .eq("m_payment_id", mPaymentId)
+    .single();
+
+  if (!txn || txn.user_id !== req.user!.id || txn.purchase_type !== "id_verification") {
+    res.status(404).json({ error: "Transaction not found" });
+    return;
+  }
+
+  res.json({ status: txn.status });
 });
 
 /** POST /api/verification/id — paid tier. Requires an existing unused

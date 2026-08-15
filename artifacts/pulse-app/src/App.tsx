@@ -24,6 +24,8 @@ import ResetPasswordPage from '@/pages/ResetPasswordPage';
 import AuthCallbackPage from '@/pages/AuthCallbackPage';
 import PayfastReturnPage from '@/pages/PayfastReturnPage';
 import PayfastCancelPage from '@/pages/PayfastCancelPage';
+import VerificationPayfastReturnPage from '@/pages/VerificationPayfastReturnPage';
+import VerificationPayfastCancelPage from '@/pages/VerificationPayfastCancelPage';
 const queryClient = new QueryClient();
 function ProtectedRoute({ component: Component, ...rest }: any) {
   const { isAuthenticated } = useAuth();
@@ -66,6 +68,8 @@ function Router() {
         <Route path="/who-viewed-me" component={() => <ProtectedRoute component={WhoViewedMePage} />} />
         <Route path="/sparks/payfast/return" component={() => <ProtectedRoute component={PayfastReturnPage} />} />
         <Route path="/sparks/payfast/cancel" component={() => <ProtectedRoute component={PayfastCancelPage} />} />
+        <Route path="/verification/payfast/return" component={() => <ProtectedRoute component={VerificationPayfastReturnPage} />} />
+        <Route path="/verification/payfast/cancel" component={() => <ProtectedRoute component={VerificationPayfastCancelPage} />} />
         <Route path="/settings" component={() => <ProtectedRoute component={SettingsPage} />} />
         <Route path="/admin" component={() => <ProtectedRoute component={AdminPage} />} />
         

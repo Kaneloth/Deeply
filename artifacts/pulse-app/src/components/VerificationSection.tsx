@@ -1,8 +1,12 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { Capacitor } from "@capacitor/core";
+import { NativePurchases, PURCHASE_TYPE } from "@capgo/native-purchases";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
-import { ShieldCheck, Camera, Clock, XCircle, CheckCircle2, CreditCard, Upload } from "lucide-react";
+import { ShieldCheck, Camera, Clock, XCircle, CheckCircle2, CreditCard, Upload, Crown } from "lucide-react";
+
+const ID_VERIFICATION_GOOGLE_PRODUCT_ID = "id_verification_fee";
 
 interface SubmissionStatus {
   id: string;
@@ -24,12 +28,18 @@ export function VerificationSection() {
   const [status, setStatus] = useState<VerificationStatusResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [hasPaidForId, setHasPaidForId] = useState(false);
+  const [isFounderEligible, setIsFounderEligible] = useState(false);
   const [isPaying, setIsPaying] = useState(false);
   const [isSubmittingPhoto, setIsSubmittingPhoto] = useState(false);
   const [isSubmittingId, setIsSubmittingId] = useState(false);
   const [showIdForm, setShowIdForm] = useState(false);
   const [submitFailed, setSubmitFailed] = useState(false);
   const [isRequestingRefund, setIsRequestingRefund] = useState(false);
+
+  // Computed once — the only thing that decides which payment path
+  // shows. PayFast must never render inside the native app shell.
+  const isNative = useMemo(() => Capacitor.isNativePlatform(), []);
+  const [nativePrice, setNativePrice] = useState<string | null>(null);
 
   const selfieInputRef = useRef<HTMLInputElement>(null);
   const [idFrontFile, setIdFrontFile] = useState<File | null>(null);
@@ -43,7 +53,11 @@ export function VerificationSection() {
         fetch("/api/verification/id/payment-status", { headers: { Authorization: `Bearer ${token}` } }),
       ]);
       if (statusRes.ok) setStatus(await statusRes.json());
-      if (paymentRes.ok) setHasPaidForId((await paymentRes.json()).hasPaid);
+      if (paymentRes.ok) {
+        const paymentBody = await paymentRes.json();
+        setHasPaidForId(paymentBody.hasPaid);
+        setIsFounderEligible(!!paymentBody.isFounderEligible);
+      }
     } catch {
       // Silent — non-critical.
     } finally {
@@ -57,6 +71,21 @@ export function VerificationSection() {
     fetchStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!isNative) return;
+    NativePurchases.getProducts({
+      productIdentifiers: [ID_VERIFICATION_GOOGLE_PRODUCT_ID],
+      productType: PURCHASE_TYPE.INAPP,
+    })
+      .then(({ products }) => {
+        if (products[0]) setNativePrice(products[0].priceString);
+      })
+      .catch(() => {
+        // Silent — button stays disabled with a loading label until
+        // real price info is available.
+      });
+  }, [isNative]);
 
   const handleSelfieSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -87,26 +116,109 @@ export function VerificationSection() {
     }
   };
 
-  const handlePayForId = async () => {
+  const handleClaimFree = async () => {
     setIsPaying(true);
     try {
-      const res = await fetch("/api/verification/id/pay", {
+      const res = await fetch("/api/verification/id/claim-free", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "Failed to claim free verification");
+      setHasPaidForId(true);
+      toast({ title: "Free verification claimed", description: "You can now submit your ID documents." });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to claim free verification.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsPaying(false);
+    }
+  };
+
+  const handleGooglePay = async () => {
+    setIsPaying(true);
+    try {
+      const { isBillingSupported } = await NativePurchases.isBillingSupported();
+      if (!isBillingSupported) throw new Error("Purchases aren't supported on this device.");
+
+      const transaction = await NativePurchases.purchaseProduct({
+        productIdentifier: ID_VERIFICATION_GOOGLE_PRODUCT_ID,
+        productType: PURCHASE_TYPE.INAPP,
+        quantity: 1,
+        isConsumable: true,
+        // Acknowledged server-side only after our own verification
+        // succeeds — same reasoning as the Sparks purchase flow.
+        autoAcknowledgePurchases: false,
+      });
+
+      const res = await fetch("/api/verification/id/pay/google", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ purchase_token: transaction.purchaseToken }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? "Payment failed");
       setHasPaidForId(true);
       toast({ title: "Payment received", description: "You can now submit your ID documents." });
     } catch (err) {
-      toast({
-        title: "Error",
-        description: err instanceof Error ? err.message : "Payment failed.",
-        variant: "destructive",
-      });
+      // Don't show an error toast just because someone backed out of
+      // Google's own purchase sheet.
+      const message = err instanceof Error ? err.message : "Payment failed.";
+      if (!message.toLowerCase().includes("cancel")) {
+        toast({ title: "Error", description: message, variant: "destructive" });
+      }
     } finally {
       setIsPaying(false);
     }
+  };
+
+  const handlePayfastCheckout = async () => {
+    setIsPaying(true);
+    try {
+      const res = await fetch("/api/verification/id/checkout/payfast", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "Failed to start checkout");
+
+      // A real HTML form POST, not a fetch — needs to actually navigate
+      // the browser to PayFast's hosted payment page.
+      const form = document.createElement("form");
+      form.method = "POST";
+      form.action = body.action_url;
+      for (const [key, value] of Object.entries(body.fields as Record<string, string>)) {
+        if (value === undefined || value === null) continue;
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = key;
+        input.value = String(value);
+        form.appendChild(input);
+      }
+      document.body.appendChild(form);
+      form.submit();
+      // No finally-reset on the success path — the page is about to
+      // navigate away entirely.
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to start checkout.",
+        variant: "destructive",
+      });
+      setIsPaying(false);
+    }
+  };
+
+  const handlePayForId = () => {
+    if (isFounderEligible) return handleClaimFree();
+    if (isNative) return handleGooglePay();
+    return handlePayfastCheckout();
   };
 
   const handleSubmitId = async () => {
@@ -241,7 +353,9 @@ export function VerificationSection() {
       <div className="border-t border-border pt-4">
         <div className="flex items-center justify-between mb-2">
           <p className="text-sm font-semibold">ID Verified</p>
-          <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">R99 once-off</span>
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
+            {isFounderEligible ? "Free" : isNative ? (nativePrice ?? "...") : "R99 once-off"}
+          </span>
         </div>
         <p className="text-xs text-muted-foreground mb-3">
           Submit your ID (front & back) plus a selfie for full verification.
@@ -265,9 +379,19 @@ export function VerificationSection() {
             )}
 
             {!hasPaidForId ? (
-              <Button onClick={handlePayForId} disabled={isPaying} className="w-full h-11 rounded-xl gap-2 bg-gradient-accent border-0">
-                <CreditCard size={16} />
-                {isPaying ? "Processing..." : "Pay R99 to Start"}
+              <Button
+                onClick={handlePayForId}
+                disabled={isPaying || (isNative && !isFounderEligible && !nativePrice)}
+                className="w-full h-11 rounded-xl gap-2 bg-gradient-accent border-0"
+              >
+                {isFounderEligible ? <Crown size={16} /> : <CreditCard size={16} />}
+                {isPaying
+                  ? "Processing..."
+                  : isFounderEligible
+                    ? "Claim Free Verification (Founders)"
+                    : isNative
+                      ? (nativePrice ? `Pay ${nativePrice} to Start` : "Loading price...")
+                      : "Pay R99 to Start"}
               </Button>
             ) : !showIdForm ? (
               <Button onClick={() => setShowIdForm(true)} variant="outline" className="w-full h-11 rounded-xl gap-2">

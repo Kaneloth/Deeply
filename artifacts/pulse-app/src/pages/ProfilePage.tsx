@@ -6,7 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
-import { CheckCircle2, AlertCircle, Rocket, Plus, X, ImageIcon, Camera, Video, Mic, Play, Pause } from "lucide-react";
+import { CheckCircle2, AlertCircle, Rocket, Plus, X, ImageIcon, Camera, Video, Mic, Play, Pause, Crown } from "lucide-react";
 import { SparkIcon } from "@/components/Icons";
 import { SparksModal } from "@/components/SparksModal";
 import { motion, AnimatePresence } from "framer-motion";
@@ -838,11 +838,19 @@ export default function ProfilePage() {
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-44 h-44 rounded-full border border-primary/10" />
         </div>
         
-        <div className="mt-4 flex items-center gap-2 bg-secondary/50 border border-border px-3 py-1.5 rounded-full">
-          {profile?.is_verified ? (
-             <><CheckCircle2 size={14} className="text-green-500" /><span className="text-xs font-medium text-muted-foreground">Verified User</span></>
-          ) : (
-             <><AlertCircle size={14} className="text-accent" /><span className="text-xs font-medium text-muted-foreground">Unverified</span></>
+        <div className="mt-4 flex items-center gap-2">
+          <div className="flex items-center gap-2 bg-secondary/50 border border-border px-3 py-1.5 rounded-full">
+            {profile?.is_verified ? (
+               <><CheckCircle2 size={14} className="text-green-500" /><span className="text-xs font-medium text-muted-foreground">Verified User</span></>
+            ) : (
+               <><AlertCircle size={14} className="text-accent" /><span className="text-xs font-medium text-muted-foreground">Unverified</span></>
+            )}
+          </div>
+          {profile?.is_founder && (
+            <div className="flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/30 px-3 py-1.5 rounded-full">
+              <Crown size={14} className="text-amber-500" />
+              <span className="text-xs font-medium text-amber-600">Founder</span>
+            </div>
           )}
         </div>
       </div>

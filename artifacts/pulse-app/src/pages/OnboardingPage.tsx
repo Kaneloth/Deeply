@@ -6,7 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
-import { Image as ImageIcon, Check, ChevronLeft, Play, Pause } from "lucide-react";
+import { Image as ImageIcon, Check, ChevronLeft, Play, Pause, Crown } from "lucide-react";
 import { RadioList, ChipGrid } from "@/components/SelectorControls";
 import { RadiusSlider } from "@/components/DropdownControls";
 import { AudioRecorderControl } from "@/components/AudioRecorderControl";
@@ -97,6 +97,7 @@ export default function OnboardingPage() {
 
   const [step, setStep] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
+  const [founderReveal, setFounderReveal] = useState<{ rank: number } | null>(null);
 
   const [name, setName] = useState("");
   const [gender, setGender] = useState("");
@@ -293,7 +294,11 @@ export default function OnboardingPage() {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to save profile");
-      setLocation("/discover");
+      if (body.is_founder) {
+        setFounderReveal({ rank: body.founder_rank });
+      } else {
+        setLocation("/discover");
+      }
     } catch (err) {
       toast({
         title: "Error",
@@ -304,6 +309,29 @@ export default function OnboardingPage() {
       setIsSaving(false);
     }
   };
+
+  if (founderReveal) {
+    return (
+      <div className="min-h-[100dvh] flex flex-col items-center justify-center p-6 text-center bg-background relative">
+        <div className="absolute top-0 right-0 w-[200px] h-[200px] bg-primary/10 blur-[80px] rounded-full pointer-events-none" />
+        <div className="w-16 h-16 rounded-full bg-gradient-accent flex items-center justify-center mb-6">
+          <Crown size={28} className="text-white" />
+        </div>
+        <h1 className="text-3xl font-['Syne'] font-bold mb-3">You're a Founder!</h1>
+        <p className="text-muted-foreground max-w-xs">
+          You're one of the first 112 people to join Deeply. You've earned the{" "}
+          <span className="text-foreground font-semibold">Founders Badge</span> and{" "}
+          <span className="text-foreground font-semibold">free ID verification</span> — no charge, ever.
+        </p>
+        <Button
+          onClick={() => setLocation("/discover")}
+          className="w-full h-14 rounded-xl text-lg font-semibold bg-gradient-accent border-0 mt-8 shadow-[0_4px_20px_rgba(225,29,72,0.3)]"
+        >
+          Continue
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-[100dvh] flex flex-col p-6 w-full bg-background relative pt-12 pb-8">

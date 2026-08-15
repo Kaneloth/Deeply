@@ -250,7 +250,19 @@ router.post("/sparks/payfast/itn", async (req, res): Promise<void> => {
       return;
     }
 
-    await addPaidSparks(txn.user_id, txn.sparks, `Purchased ${txn.bundle_id} bundle via PayFast`);
+    // Fulfillment branches by purchase type — this single ITN handler
+    // now serves both Sparks and ID verification purchases, since they
+    // share the same underlying payfast_transactions table and signed-
+    // checkout/webhook mechanism rather than duplicating it per feature.
+    if (txn.purchase_type === "id_verification") {
+      await supabase.from("identity_verification_payments").insert({
+        user_id: txn.user_id,
+        amount: txn.amount_zar,
+        status: "paid",
+      });
+    } else {
+      await addPaidSparks(txn.user_id, txn.sparks, `Purchased ${txn.bundle_id} bundle via PayFast`);
+    }
     res.sendStatus(200);
   } catch (err) {
     console.error("Error processing PayFast ITN:", err);

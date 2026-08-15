@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { MapPin, Baby, Users, Cigarette, Wine, Mic, Play, Pause, BadgeCheck, Camera, Wind, PenTool, PawPrint, Dumbbell, PartyPopper, Ruler } from "lucide-react";
+import { MapPin, Baby, Users, Cigarette, Wine, Mic, Play, Pause, BadgeCheck, Camera, Wind, PenTool, PawPrint, Dumbbell, PartyPopper, Ruler, Crown } from "lucide-react";
 import { PhotoCarousel, type CarouselPhoto } from "@/components/PhotoCarousel";
 import { TATTOO_OPTIONS, VAPING_OPTIONS, PETS_OPTIONS, ACTIVITY_LEVEL_OPTIONS, NIGHTLIFE_OPTIONS, cmToDisplay } from "@/lib/lifestylePreferenceOptions";
 
@@ -20,6 +20,7 @@ export interface ProfileCardData {
   city: string | null;
   distance_km?: number | null;
   is_verified?: boolean;
+  is_founder?: boolean;
   photo_verified?: boolean;
   photos: CarouselPhoto[];
   personality_tags: string[];
@@ -234,6 +235,15 @@ export function ProfileCard({
                   <Camera size={10} className="text-white" strokeWidth={2.75} />
                 </span>
               ) : null}
+              {profile.is_founder && (
+                <span
+                  title="Founder"
+                  className="inline-flex items-center gap-0.5 pl-1 pr-1.5 py-0.5 rounded-full bg-amber-500 text-white shrink-0 mb-0.5 ring-2 ring-black/10"
+                >
+                  <Crown size={11} strokeWidth={3} />
+                  <span className="text-[10px] font-extrabold font-sans leading-none tracking-wide">FOUNDER</span>
+                </span>
+              )}
             </h2>
             {(profile.city || profile.distance_km != null) && (
               <div className="flex items-center gap-1 text-white/70 text-xs mt-0.5">
