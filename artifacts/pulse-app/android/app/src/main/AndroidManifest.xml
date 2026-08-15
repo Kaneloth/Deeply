@@ -22,6 +22,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- Deep link target for native Google Sign-In. Must exactly
+                 match the redirectTo used in AuthPage.tsx's native branch,
+                 and must be added to Supabase's Redirect URLs allow-list
+                 as za.co.deeplydating.app://auth-callback -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="za.co.deeplydating.app" android:host="auth-callback" />
+            </intent-filter>
+
         </activity>
 
         <provider
