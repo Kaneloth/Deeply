@@ -144,7 +144,10 @@ router.post("/sparks/checkout/payfast", requireAuth, async (req, res): Promise<v
       email_address: email,
       return_url: `${baseUrl}/sparks/payfast/return?m_payment_id=${txn.m_payment_id}`,
       cancel_url: `${baseUrl}/sparks/payfast/cancel`,
-      notify_url: `${baseUrl}/api/sparks/payfast/itn`,
+      // Routed through Hookdeck rather than straight to this backend —
+      // falls back to calling this endpoint directly if Hookdeck isn't
+      // configured (e.g. local/dev testing).
+      notify_url: process.env.PAYFAST_NOTIFY_URL ?? `${baseUrl}/api/sparks/payfast/itn`,
     });
     res.json(checkout);
   } catch (err) {
@@ -180,17 +183,13 @@ router.get("/sparks/payfast/status/:mPaymentId", requireAuth, async (req, res): 
  *  the payload until validateItn() confirms both the signature AND a
  *  direct server-to-server check with PayFast itself. */
 router.post("/sparks/payfast/itn", async (req, res): Promise<void> => {
-  // Respond 200 immediately — PayFast retries on non-200, and none of
-  // the validation/processing below should block or delay that
-  // acknowledgment.
-  res.sendStatus(200);
-
   const body = req.body as Record<string, string>;
 
   try {
     const isValid = await validateItn(body);
     if (!isValid) {
       console.error("Rejected invalid PayFast ITN for m_payment_id:", body.m_payment_id);
+      res.status(400).send("Invalid ITN");
       return;
     }
 
@@ -203,6 +202,7 @@ router.post("/sparks/payfast/itn", async (req, res): Promise<void> => {
 
     if (fetchError || !txn) {
       console.error(`PayFast ITN for unknown transaction: ${mPaymentId}`);
+      res.status(404).send("Unknown transaction");
       return;
     }
 
@@ -212,6 +212,7 @@ router.post("/sparks/payfast/itn", async (req, res): Promise<void> => {
         .update({ status: "failed" })
         .eq("m_payment_id", mPaymentId)
         .eq("status", "pending");
+      res.sendStatus(200); // valid ITN, just not a completed payment — nothing more to do, not an error
       return;
     }
 
@@ -226,6 +227,7 @@ router.post("/sparks/payfast/itn", async (req, res): Promise<void> => {
         .update({ status: "failed" })
         .eq("m_payment_id", mPaymentId)
         .eq("status", "pending");
+      res.status(400).send("Amount mismatch");
       return;
     }
 
@@ -242,13 +244,17 @@ router.post("/sparks/payfast/itn", async (req, res): Promise<void> => {
 
     if (!claimed || claimed.length === 0) {
       // Someone else (a concurrent duplicate ITN) already completed
-      // this transaction between our fetch and this update.
+      // this transaction between our fetch and this update — not an
+      // error, just nothing further to do.
+      res.sendStatus(200);
       return;
     }
 
     await addPaidSparks(txn.user_id, txn.sparks, `Purchased ${txn.bundle_id} bundle via PayFast`);
+    res.sendStatus(200);
   } catch (err) {
     console.error("Error processing PayFast ITN:", err);
+    res.status(500).send("Internal error");
   }
 });
 
