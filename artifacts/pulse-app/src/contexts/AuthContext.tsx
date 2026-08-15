@@ -1,8 +1,11 @@
 import React, { createContext, useContext, useEffect, useRef, useState, ReactNode } from "react";
+import { Capacitor } from "@capacitor/core";
+import { App } from "@capacitor/app";
 import { useQueryClient } from "@tanstack/react-query";
 import { setAuthTokenGetter } from "@workspace/api-client-react";
 import { useLocation } from "wouter";
 import type { BlockInfo } from "@/components/BlockedAccountScreen";
+import { supabaseClient } from "@/lib/supabaseClient";
 
 const ACCESS_TOKEN_KEY = "deeply_access_token";
 const REFRESH_TOKEN_KEY = "deeply_refresh_token";
@@ -201,6 +204,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => {
       window.fetch = original;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Native only: completes Google Sign-In when Android reopens the app
+  // via the za.co.deeplydating.app://auth-callback deep link (registered
+  // in AndroidManifest.xml, requested as redirectTo in AuthPage.tsx).
+  // This has no page of its own to land on the way /auth/callback does
+  // for web — it's an app-reopen event, not a route — so it establishes
+  // the session and navigates explicitly itself.
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    let listenerHandle: { remove: () => void } | undefined;
+
+    App.addListener("appUrlOpen", async ({ url }) => {
+      if (!url.startsWith("za.co.deeplydating.app://auth-callback")) return;
+
+      try {
+        const code = new URL(url).searchParams.get("code");
+        if (!code) return;
+
+        const { data, error } = await supabaseClient.auth.exchangeCodeForSession(code);
+        if (error || !data.session) {
+          console.error("Native OAuth exchange failed:", error);
+          return;
+        }
+
+        const { access_token, refresh_token, expires_in } = data.session;
+        login(access_token, refresh_token, expires_in);
+
+        // Same onboarding check AuthCallbackPage does for the web flow.
+        try {
+          const res = await fetch("/api/profile/me", {
+            headers: { Authorization: `Bearer ${access_token}` },
+          });
+          const profile = res.ok ? await res.json() : null;
+          setLocation(profile?.onboarding_completed ? "/discover" : "/onboarding");
+        } catch {
+          setLocation("/discover");
+        }
+      } catch (err) {
+        console.error("Error handling native OAuth deep link:", err);
+      }
+    }).then((handle) => {
+      listenerHandle = handle;
+    });
+
+    return () => {
+      listenerHandle?.remove();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

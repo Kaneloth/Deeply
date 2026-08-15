@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Capacitor } from "@capacitor/core";
 import { useAuth } from "@/contexts/AuthContext";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
@@ -256,7 +257,15 @@ export default function AuthPage() {
       const { error } = await supabaseClient.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
+          // Native: a custom URL scheme so Android hands the redirect
+          // back to THIS app (via the appUrlOpen listener in
+          // AuthContext.tsx) instead of stranding the user in whatever
+          // browser Google's sign-in opened in. Must exactly match the
+          // intent-filter in AndroidManifest.xml and the URL added to
+          // Supabase's Redirect URLs allow-list.
+          redirectTo: Capacitor.isNativePlatform()
+            ? "za.co.deeplydating.app://auth-callback"
+            : `${window.location.origin}/auth/callback`,
           // Without this, Google silently reuses whichever of the
           // browser's signed-in Google accounts was last active instead
           // of showing the picker — a real problem on a shared/dev
