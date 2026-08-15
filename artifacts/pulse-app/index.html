@@ -19,6 +19,48 @@
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+
+    <!-- TEMPORARY — remove once the blank-screen crash is diagnosed.
+         Runs as a plain (non-module) script, so it executes and attaches
+         its handlers BEFORE main.tsx is even parsed. If anything crashes
+         during module loading — the actual suspected cause here — this
+         writes the real error directly onto the screen instead of it
+         just staying blank with nothing visible anywhere. -->
+    <div
+      id="debug-error-overlay"
+      style="display:none; position:fixed; inset:0; background:#000; color:#0f0; font-family:monospace; font-size:12px; padding:16px; overflow:auto; z-index:999999; white-space:pre-wrap; word-break:break-word;"
+    ></div>
+    <script>
+      (function () {
+        var overlay = document.getElementById("debug-error-overlay");
+        function showError(title, detail) {
+          overlay.style.display = "block";
+          var entry = document.createElement("div");
+          entry.style.marginBottom = "16px";
+          entry.style.borderBottom = "1px solid #333";
+          entry.style.paddingBottom = "16px";
+          entry.textContent = title + "\n" + detail;
+          overlay.appendChild(entry);
+        }
+        window.onerror = function (message, source, lineno, colno, error) {
+          showError(
+            "window.onerror",
+            message +
+              "\nsource: " + source + ":" + lineno + ":" + colno +
+              (error && error.stack ? "\nstack:\n" + error.stack : ""),
+          );
+        };
+        window.addEventListener("unhandledrejection", function (event) {
+          var reason = event.reason;
+          var detail = reason && reason.stack ? reason.stack : String(reason);
+          showError("unhandledrejection", detail);
+        });
+      })();
+    </script>
+    <script
+      type="module"
+      src="/src/main.tsx"
+      onerror="document.getElementById('debug-error-overlay').style.display='block'; document.getElementById('debug-error-overlay').textContent='FAILED TO LOAD /src/main.tsx — the module script itself did not load (build/path issue).';"
+    ></script>
   </body>
 </html>
