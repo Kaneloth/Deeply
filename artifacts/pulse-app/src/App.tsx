@@ -22,6 +22,8 @@ import SettingsPage from '@/pages/SettingsPage';
 import AdminPage from '@/pages/AdminPage';
 import ResetPasswordPage from '@/pages/ResetPasswordPage';
 import AuthCallbackPage from '@/pages/AuthCallbackPage';
+import PayfastReturnPage from '@/pages/PayfastReturnPage';
+import PayfastCancelPage from '@/pages/PayfastCancelPage';
 const queryClient = new QueryClient();
 function ProtectedRoute({ component: Component, ...rest }: any) {
   const { isAuthenticated } = useAuth();
@@ -62,6 +64,8 @@ function Router() {
         <Route path="/preferences" component={() => <ProtectedRoute component={PreferencesPage} />} />
         <Route path="/notifications" component={() => <ProtectedRoute component={NotificationsPage} />} />
         <Route path="/who-viewed-me" component={() => <ProtectedRoute component={WhoViewedMePage} />} />
+        <Route path="/sparks/payfast/return" component={() => <ProtectedRoute component={PayfastReturnPage} />} />
+        <Route path="/sparks/payfast/cancel" component={() => <ProtectedRoute component={PayfastCancelPage} />} />
         <Route path="/settings" component={() => <ProtectedRoute component={SettingsPage} />} />
         <Route path="/admin" component={() => <ProtectedRoute component={AdminPage} />} />
         
