@@ -126,6 +126,13 @@ export async function validateItn(body: Record<string, string>): Promise<boolean
   }
   const expectedSignature = crypto.createHash("md5").update(getString).digest("hex");
 
+  // TEMPORARY — remove once the signature mismatch is resolved.
+  console.error("PAYFAST ITN DEBUG raw body:", JSON.stringify(rest));
+  console.error("PAYFAST ITN DEBUG computed string:", getString);
+  console.error("PAYFAST ITN DEBUG expected signature:", expectedSignature);
+  console.error("PAYFAST ITN DEBUG received signature:", receivedSignature);
+  console.error("PAYFAST ITN DEBUG passphrase configured:", PASSPHRASE ? "yes" : "no");
+
   if (expectedSignature !== receivedSignature) {
     console.error("PayFast ITN signature mismatch");
     return false;
