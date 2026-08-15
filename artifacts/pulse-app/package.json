@@ -77,6 +77,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.110.7",
     "@capacitor/core": "^8.5.0",
+    "@capacitor/app": "^8.0.0",
     "@capgo/native-purchases": "^8.0.0"
   }
 }
