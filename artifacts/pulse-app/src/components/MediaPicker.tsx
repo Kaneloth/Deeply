@@ -1,12 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Search, Loader2 } from "lucide-react";
 
-// GIPHY API key. Set VITE_GIPHY_API_KEY in your environment (Netlify env
-// vars) to use your own free key from developers.giphy.com — falls back
-// to GIPHY's public "beta" demo key otherwise, which works immediately
-// but is shared across countless demo apps and heavily rate-limited.
-const GIPHY_API_KEY = import.meta.env.VITE_GIPHY_API_KEY || "dc6zaTOxFJmzC";
-
 const STICKERS = [
   "😍", "😂", "😘", "🥰", "😎", "🤩", "🥳", "😭", "🔥", "❤️",
   "💯", "👏", "🙌", "🎉", "😉", "🤔", "😅", "🙈", "💕", "✨",
@@ -22,9 +16,11 @@ interface GifResult {
 export function MediaPicker({
   onSelectSticker,
   onSelectGif,
+  token,
 }: {
   onSelectSticker: (emoji: string) => void;
   onSelectGif: (url: string) => void;
+  token: string | null;
 }) {
   const [tab, setTab] = useState<"stickers" | "gifs">("stickers");
   const [query, setQuery] = useState("");
@@ -32,33 +28,29 @@ export function MediaPicker({
   const [isLoadingGifs, setIsLoadingGifs] = useState(false);
   const [gifError, setGifError] = useState<string | null>(null);
 
-  const fetchGifs = useCallback(async (searchTerm: string) => {
-    setIsLoadingGifs(true);
-    setGifError(null);
-    try {
-      const endpoint = searchTerm.trim()
-        ? `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(searchTerm)}&limit=24&rating=pg-13`
-        : `https://api.giphy.com/v1/gifs/trending?api_key=${GIPHY_API_KEY}&limit=24&rating=pg-13`;
-      const res = await fetch(endpoint);
-      const body = await res.json();
-
-      if (!res.ok || body.meta?.status >= 400) {
-        throw new Error(body.meta?.msg || `GIPHY request failed (${res.status})`);
+  const fetchGifs = useCallback(
+    async (searchTerm: string) => {
+      setIsLoadingGifs(true);
+      setGifError(null);
+      try {
+        const endpoint = searchTerm.trim()
+          ? `/api/gifs/search?q=${encodeURIComponent(searchTerm)}`
+          : `/api/gifs/trending`;
+        const res = await fetch(endpoint, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? `GIF request failed (${res.status})`);
+        setGifs(body ?? []);
+      } catch (err) {
+        setGifs([]);
+        setGifError(err instanceof Error ? err.message : "Couldn't load GIFs");
+      } finally {
+        setIsLoadingGifs(false);
       }
-
-      const results: GifResult[] = (body.data ?? []).map((g: any) => ({
-        id: g.id,
-        url: g.images?.fixed_height?.url ?? g.images?.original?.url,
-        previewUrl: g.images?.fixed_height_small?.url ?? g.images?.fixed_height?.url,
-      }));
-      setGifs(results);
-    } catch (err) {
-      setGifs([]);
-      setGifError(err instanceof Error ? err.message : "Couldn't load GIFs");
-    } finally {
-      setIsLoadingGifs(false);
-    }
-  }, []);
+    },
+    [token],
+  );
 
   useEffect(() => {
     if (tab !== "gifs") return;

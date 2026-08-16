@@ -878,6 +878,7 @@ export default function ChatPage() {
             <MediaPicker
               onSelectSticker={(emoji) => sendMediaMessage("sticker", emoji)}
               onSelectGif={(url) => sendMediaMessage("gif", "GIF", url)}
+              token={token}
             />
           </div>
         )}
