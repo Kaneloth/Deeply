@@ -250,6 +250,12 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     .select("*")
     .single();
   if (error || !profile) {
+    // TEMPORARY — remove once this is diagnosed. error.message alone
+    // (what the client sees) often omits detail/hint/code fields that
+    // pinpoint the actual Postgres-level cause.
+    console.error("PUT /profile/me FAILED — full error object:", JSON.stringify(error, null, 2));
+    console.error("PUT /profile/me FAILED — updates object was:", JSON.stringify(updates, null, 2));
+    console.error("PUT /profile/me FAILED — user id was:", req.user!.id);
     res.status(400).json({ error: error?.message ?? "Update failed" });
     return;
   }
@@ -1175,7 +1181,160 @@ router.post("/admin/users/:userId/ban", requireAuth, requireAdminScope("manage_u
   res.sendStatus(204);
 });
 
-/** POST /api/admin/users/:userId/unban */
+/** PUT /api/admin/users/:userId/profile — lets an admin edit a user's
+ *  profile on their behalf (e.g. when the user reports being unable to
+ *  save changes themselves). Deliberately kept as its own self-contained
+ *  handler rather than sharing code with PUT /profile/me — that endpoint
+ *  already has the founders-program side effect interleaved into it,
+ *  which must never fire from an admin edit, and keeping these fully
+ *  separate avoids any risk of that logic leaking across concerns. */
+router.put("/admin/users/:userId/profile", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const userId = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
+
+  const {
+    name, bio, city, personality_tags,
+    birthday, gender, looking_for_gender, distance_km,
+    relationship_type, dating_intentions,
+    num_kids, smoking_status, drinking_status, languages_spoken,
+    languages_other, love_language, education, family_plans,
+    has_tattoos, vaping_status, pets, height_cm, activity_level, nightlife_frequency,
+    pref_num_kids, pref_family_plans, pref_smoking_status, pref_drinking_status,
+    pref_vaping_status, pref_has_tattoos, pref_pets, pref_activity_level,
+    pref_height_min_cm, pref_height_max_cm, pref_nightlife_frequency, dealbreakers,
+    pref_age_min, pref_age_max,
+  } = req.body as {
+    name?: string;
+    bio?: string;
+    city?: string;
+    personality_tags?: string[];
+    birthday?: string;
+    gender?: string;
+    looking_for_gender?: string;
+    distance_km?: number;
+    relationship_type?: string;
+    dating_intentions?: string[];
+    num_kids?: string;
+    smoking_status?: string;
+    drinking_status?: string;
+    languages_spoken?: string[];
+    languages_other?: string;
+    love_language?: string;
+    education?: string;
+    family_plans?: string;
+    has_tattoos?: string;
+    vaping_status?: string;
+    pets?: string;
+    height_cm?: number;
+    activity_level?: string;
+    nightlife_frequency?: string;
+    pref_num_kids?: string;
+    pref_family_plans?: string;
+    pref_smoking_status?: string;
+    pref_drinking_status?: string;
+    pref_vaping_status?: string;
+    pref_has_tattoos?: string;
+    pref_pets?: string;
+    pref_activity_level?: string;
+    pref_height_min_cm?: number;
+    pref_height_max_cm?: number;
+    pref_nightlife_frequency?: string;
+    dealbreakers?: string[];
+    pref_age_min?: number;
+    pref_age_max?: number;
+  };
+
+  if (birthday) {
+    const dob = new Date(birthday);
+    const today = new Date();
+    let age = today.getFullYear() - dob.getFullYear();
+    const hasHadBirthdayThisYear =
+      today.getMonth() > dob.getMonth() ||
+      (today.getMonth() === dob.getMonth() && today.getDate() >= dob.getDate());
+    if (!hasHadBirthdayThisYear) age -= 1;
+
+    if (isNaN(dob.getTime()) || age < 18) {
+      res.status(400).json({ error: "This user must be at least 18 years old" });
+      return;
+    }
+  }
+
+  const updates: Record<string, unknown> = {};
+  if (name !== undefined) updates.name = name;
+  if (bio !== undefined) updates.bio = bio;
+  if (city !== undefined) updates.city = city;
+  if (personality_tags !== undefined) updates.personality_tags = personality_tags;
+  if (birthday !== undefined) updates.birthday = birthday || null;
+  if (gender !== undefined) updates.gender = gender || null;
+  if (looking_for_gender !== undefined) updates.looking_for_gender = looking_for_gender || null;
+  if (distance_km !== undefined) updates.distance_km = distance_km;
+  if (relationship_type !== undefined) updates.relationship_type = relationship_type || null;
+  if (dating_intentions !== undefined) updates.dating_intentions = dating_intentions;
+  if (num_kids !== undefined) updates.num_kids = num_kids || null;
+  if (smoking_status !== undefined) updates.smoking_status = smoking_status || null;
+  if (drinking_status !== undefined) updates.drinking_status = drinking_status || null;
+  if (languages_spoken !== undefined) updates.languages_spoken = languages_spoken;
+  if (languages_other !== undefined) updates.languages_other = languages_other;
+  if (love_language !== undefined) updates.love_language = love_language || null;
+  if (education !== undefined) updates.education = education || null;
+  if (family_plans !== undefined) updates.family_plans = family_plans || null;
+  if (has_tattoos !== undefined) updates.has_tattoos = has_tattoos || null;
+  if (vaping_status !== undefined) updates.vaping_status = vaping_status || null;
+  if (pets !== undefined) updates.pets = pets || null;
+  if (height_cm !== undefined) updates.height_cm = height_cm;
+  if (activity_level !== undefined) updates.activity_level = activity_level || null;
+  if (nightlife_frequency !== undefined) updates.nightlife_frequency = nightlife_frequency || null;
+  if (pref_num_kids !== undefined) updates.pref_num_kids = pref_num_kids || null;
+  if (pref_family_plans !== undefined) updates.pref_family_plans = pref_family_plans || null;
+  if (pref_smoking_status !== undefined) updates.pref_smoking_status = pref_smoking_status || null;
+  if (pref_drinking_status !== undefined) updates.pref_drinking_status = pref_drinking_status || null;
+  if (pref_vaping_status !== undefined) updates.pref_vaping_status = pref_vaping_status || null;
+  if (pref_has_tattoos !== undefined) updates.pref_has_tattoos = pref_has_tattoos || null;
+  if (pref_pets !== undefined) updates.pref_pets = pref_pets || null;
+  if (pref_activity_level !== undefined) updates.pref_activity_level = pref_activity_level || null;
+  if (pref_height_min_cm !== undefined) updates.pref_height_min_cm = pref_height_min_cm;
+  if (pref_height_max_cm !== undefined) updates.pref_height_max_cm = pref_height_max_cm;
+  if (pref_nightlife_frequency !== undefined) updates.pref_nightlife_frequency = pref_nightlife_frequency || null;
+  if (pref_age_min !== undefined || pref_age_max !== undefined) {
+    const min = pref_age_min ?? 18;
+    const max = pref_age_max ?? 99;
+    if (min < 18 || max < min) {
+      res.status(400).json({ error: "Invalid age range — minimum must be 18 or older, and maximum can't be below minimum." });
+      return;
+    }
+    if (pref_age_min !== undefined) updates.pref_age_min = min;
+    if (pref_age_max !== undefined) updates.pref_age_max = max;
+  }
+  if (dealbreakers !== undefined) {
+    if (dealbreakers.length > 0) {
+      const { data: setting } = await supabase.from("app_settings").select("value").eq("key", "dealbreakers_enabled").single();
+      if (setting?.value !== true) {
+        res.status(403).json({ error: "Dealbreakers are not currently available." });
+        return;
+      }
+    }
+    updates.dealbreakers = dealbreakers;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    res.status(400).json({ error: "No fields to update" });
+    return;
+  }
+
+  const { data: profile, error } = await supabase
+    .from("profiles")
+    .update(updates)
+    .eq("id", userId)
+    .select("*")
+    .single();
+  if (error || !profile) {
+    console.error("PUT /admin/users/:userId/profile FAILED:", error, "updates:", updates, "userId:", userId);
+    res.status(400).json({ error: error?.message ?? "Update failed" });
+    return;
+  }
+  res.json(withComputedAge(profile));
+});
+
+
 router.post("/admin/users/:userId/unban", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
   const userId = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
   const { error } = await supabase.from("profiles").update({ banned: false, ban_reason: null }).eq("id", userId);
