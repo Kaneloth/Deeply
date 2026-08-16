@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { ChevronLeft, Send, Undo2, Eye, CheckCheck, Smile, ImagePlus, X, MoreVertical, UserX, Flag, Copy, Trash2, Reply } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { EmojiPicker } from "@/components/EmojiPicker";
+import ReactionPicker from "emoji-picker-react";
 import { ReportBlockModal } from "@/components/ReportBlockModal";
 import { MediaPicker } from "@/components/MediaPicker";
 
@@ -52,7 +53,10 @@ interface Message {
   reply_to: ReplyPreview | null;
 }
 
-const QUICK_REACT_EMOJIS = ["❤️", "😂", "😮", "😢", "👍", "🔥"];
+// Same six reactions as before, but as unified emoji IDs — the format
+// emoji-picker-react's `reactions` prop expects for its compact
+// reactions-mode row.
+const REACTION_UNIFIED_IDS = ["2764-fe0f", "1f602", "1f62e", "1f622", "1f44d", "1f525"];
 
 export default function ChatPage() {
   const params = useParams();
@@ -83,7 +87,6 @@ export default function ChatPage() {
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longTriggered = useRef(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const reactBarRef = useRef<HTMLDivElement>(null);
 
   // Swipe-to-reply
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
@@ -154,34 +157,6 @@ export default function ChatPage() {
       document.removeEventListener("touchstart", handleOutsideClick);
     };
   }, [selectedMsgId]);
-
-  useEffect(() => {
-    if (!reactingToMessageId) return;
-    const handleOutsideClick = (e: MouseEvent | TouchEvent) => {
-      if (reactBarRef.current && !reactBarRef.current.contains(e.target as Node)) {
-        setReactingToMessageId(null);
-      }
-    };
-    document.addEventListener("mousedown", handleOutsideClick);
-    document.addEventListener("touchstart", handleOutsideClick);
-    return () => {
-      document.removeEventListener("mousedown", handleOutsideClick);
-      document.removeEventListener("touchstart", handleOutsideClick);
-    };
-  }, [reactingToMessageId]);
-
-  // The react bar renders in normal document flow — if it appears near
-  // the bottom of the currently-loaded messages, it can end up below the
-  // visible scroll position (the container's own height stops above the
-  // fixed input bar) with nothing bringing it into view automatically.
-  useEffect(() => {
-    if (!reactingToMessageId) return;
-    // Wait a tick for the bar to actually render before measuring it.
-    const timer = setTimeout(() => {
-      reactBarRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }, 50);
-    return () => clearTimeout(timer);
-  }, [reactingToMessageId]);
 
   const decideMenuDirection = (target: HTMLElement | null | undefined) => {
     if (!target) return;
@@ -798,26 +773,6 @@ export default function ChatPage() {
                   )}
                 </div>
 
-                {reactingToMessageId === msg.id && (
-                  <div
-                    ref={reactBarRef}
-                    className={`flex gap-1 mt-1.5 ${msg.reactions.length > 0 ? "mt-4" : ""} ${mine ? "justify-end pr-8" : "justify-start pl-8"}`}
-                  >
-                    {QUICK_REACT_EMOJIS.map((emoji) => (
-                      <button
-                        key={emoji}
-                        onClick={() => {
-                          handleReact(msg.id, emoji);
-                          setReactingToMessageId(null);
-                        }}
-                        className="w-8 h-8 rounded-full bg-card border border-card-border flex items-center justify-center text-base hover:scale-110 transition-transform"
-                      >
-                        {emoji}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
                 {showReadIndicator && (
                   <div className="flex items-center justify-end gap-1 mt-1 pr-1 text-[11px] text-muted-foreground">
                     {msg.is_read ? (
@@ -927,6 +882,43 @@ export default function ChatPage() {
           </div>
         )}
       </div>
+
+      {/* Reaction picker — one shared instance for every message, rather
+          than one per message bubble. Opens as a fixed bottom sheet, so
+          it's always fully visible regardless of scroll position, and
+          large enough to comfortably fit the expanded full picker board
+          once the user taps the + button. */}
+      {reactingToMessageId && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/40 flex items-end"
+          onClick={() => setReactingToMessageId(null)}
+        >
+          <div
+            className="w-full max-w-[430px] mx-auto bg-card rounded-t-3xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-center pt-3 pb-1">
+              <div className="w-10 h-1 rounded-full bg-border" />
+            </div>
+            <ReactionPicker
+              reactionsDefaultOpen
+              reactions={REACTION_UNIFIED_IDS}
+              allowExpandReactions
+              theme="light"
+              width="100%"
+              height={420}
+              onReactionClick={(emojiData) => {
+                handleReact(reactingToMessageId!, emojiData.emoji);
+                setReactingToMessageId(null);
+              }}
+              onEmojiClick={(emojiData) => {
+                handleReact(reactingToMessageId!, emojiData.emoji);
+                setReactingToMessageId(null);
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

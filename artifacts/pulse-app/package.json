@@ -81,6 +81,7 @@
     "@capgo/native-purchases": "^8.0.0",
     "@sentry/capacitor": "^1.0.0",
     "@sentry/react": "8.55.0",
+    "emoji-picker-react": "^4.19.1",
     "@capawesome/capacitor-google-sign-in": "^0.1.2"
   }
 }
