@@ -1,11 +1,10 @@
 import React, { createContext, useContext, useEffect, useRef, useState, ReactNode } from "react";
 import { Capacitor } from "@capacitor/core";
-import { App } from "@capacitor/app";
+import { GoogleSignIn } from "@capawesome/capacitor-google-sign-in";
 import { useQueryClient } from "@tanstack/react-query";
 import { setAuthTokenGetter } from "@workspace/api-client-react";
 import { useLocation } from "wouter";
 import type { BlockInfo } from "@/components/BlockedAccountScreen";
-import { supabaseClient } from "@/lib/supabaseClient";
 
 const ACCESS_TOKEN_KEY = "deeply_access_token";
 const REFRESH_TOKEN_KEY = "deeply_refresh_token";
@@ -56,6 +55,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(EXPIRES_AT_KEY);
     setAuthTokenGetter(() => null);
     setToken(null);
+    if (Capacitor.isNativePlatform()) {
+      GoogleSignIn.signOut().catch(() => {
+        // Non-fatal — our own session is already cleared above regardless.
+      });
+    }
     // Wipe every cached query — without this, react-query's cache is a
     // module-level singleton that outlives logout, so anything fetched
     // via a hook (profile, matches, messages, discover deck) can still
@@ -208,54 +212,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Native only: completes Google Sign-In when Android reopens the app
-  // via the za.co.deeplydating.app://auth-callback deep link (registered
-  // in AndroidManifest.xml, requested as redirectTo in AuthPage.tsx).
-  // This has no page of its own to land on the way /auth/callback does
-  // for web — it's an app-reopen event, not a route — so it establishes
-  // the session and navigates explicitly itself.
+  // Native only: one-time setup so GoogleSignIn.signIn() is ready by the
+  // time the user taps the button on AuthPage — must run before any
+  // sign-in attempt, and before logout()'s signOut() call below too, so
+  // this lives at the top of the provider's lifetime rather than lazily
+  // on AuthPage itself.
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
-
-    let listenerHandle: { remove: () => void } | undefined;
-
-    App.addListener("appUrlOpen", async ({ url }) => {
-      if (!url.startsWith("za.co.deeplydating.app://auth-callback")) return;
-
-      try {
-        const code = new URL(url).searchParams.get("code");
-        if (!code) return;
-
-        const { data, error } = await supabaseClient.auth.exchangeCodeForSession(code);
-        if (error || !data.session) {
-          console.error("Native OAuth exchange failed:", error);
-          return;
-        }
-
-        const { access_token, refresh_token, expires_in } = data.session;
-        login(access_token, refresh_token, expires_in);
-
-        // Same onboarding check AuthCallbackPage does for the web flow.
-        try {
-          const res = await fetch("/api/profile/me", {
-            headers: { Authorization: `Bearer ${access_token}` },
-          });
-          const profile = res.ok ? await res.json() : null;
-          setLocation(profile?.onboarding_completed ? "/discover" : "/onboarding");
-        } catch {
-          setLocation("/discover");
-        }
-      } catch (err) {
-        console.error("Error handling native OAuth deep link:", err);
-      }
-    }).then((handle) => {
-      listenerHandle = handle;
+    GoogleSignIn.initialize({
+      // The WEB client ID from Google Cloud Console — NOT the Android
+      // client ID. Android's Credential Manager verifies the calling
+      // app via the separate Android OAuth client (package name + SHA-1
+      // fingerprint), but the token it returns asserts this Web client
+      // as its audience, which is what Supabase's signInWithIdToken
+      // expects to see.
+      clientId: "994284965352-vhmhm0pv3jt451b3nemha4119uj2vbr4.apps.googleusercontent.com",
+    }).catch((err) => {
+      console.error("Failed to initialize GoogleSignIn:", err);
     });
-
-    return () => {
-      listenerHandle?.remove();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Capacitor } from "@capacitor/core";
+import { GoogleSignIn } from "@capawesome/capacitor-google-sign-in";
 import { useAuth } from "@/contexts/AuthContext";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
@@ -253,19 +254,68 @@ export default function AuthPage() {
   // ones, so there's no separate "Google sign up" action needed.
   const onGoogleSignIn = async () => {
     setIsGoogleLoading(true);
+
+    // Native: shows Android's own account picker directly via Credential
+    // Manager — no browser handoff, no deep link, no PKCE exchange. The
+    // whole class of "stuck in browser" / "stuck on Redirecting..." problems
+    // simply doesn't exist with this approach, since there's no redirect to
+    // lose track of in the first place.
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const result = await GoogleSignIn.signIn();
+        if (!result?.idToken) {
+          throw new Error("No ID token returned from Google.");
+        }
+
+        const { data, error } = await supabaseClient.auth.signInWithIdToken({
+          provider: "google",
+          token: result.idToken,
+        });
+        if (error) throw error;
+        if (!data.session) {
+          throw new Error("Sign-in succeeded but no session was returned.");
+        }
+
+        const { access_token, refresh_token, expires_in } = data.session;
+        login(access_token, refresh_token, expires_in);
+
+        // Same onboarding check the web flow's AuthCallbackPage does —
+        // called explicitly here since login() alone would otherwise let
+        // PublicRoute's own isAuthenticated redirect send everyone
+        // (including brand-new users who still need onboarding) straight
+        // to /discover.
+        try {
+          const res = await fetch("/api/profile/me", {
+            headers: { Authorization: `Bearer ${access_token}` },
+          });
+          const profile = res.ok ? await res.json() : null;
+          setLocation(profile?.onboarding_completed ? "/discover" : "/onboarding");
+        } catch {
+          setLocation("/discover");
+        }
+      } catch (err) {
+        // Don't show a scary error toast just because someone backed out
+        // of the native account picker.
+        const code = (err as { code?: string } | undefined)?.code;
+        if (code !== "canceled" && code !== "cancelled") {
+          toast({
+            title: "Error",
+            description: err instanceof Error ? err.message : "Google sign-in failed.",
+            variant: "destructive",
+          });
+        }
+      } finally {
+        setIsGoogleLoading(false);
+      }
+      return;
+    }
+
+    // Web: unchanged browser-redirect OAuth flow.
     try {
       const { error } = await supabaseClient.auth.signInWithOAuth({
         provider: "google",
         options: {
-          // Native: a custom URL scheme so Android hands the redirect
-          // back to THIS app (via the appUrlOpen listener in
-          // AuthContext.tsx) instead of stranding the user in whatever
-          // browser Google's sign-in opened in. Must exactly match the
-          // intent-filter in AndroidManifest.xml and the URL added to
-          // Supabase's Redirect URLs allow-list.
-          redirectTo: Capacitor.isNativePlatform()
-            ? "za.co.deeplydating.app://auth-callback"
-            : `${window.location.origin}/auth/callback`,
+          redirectTo: `${window.location.origin}/auth/callback`,
           // Without this, Google silently reuses whichever of the
           // browser's signed-in Google accounts was last active instead
           // of showing the picker — a real problem on a shared/dev
