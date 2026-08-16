@@ -173,7 +173,12 @@ export default function ChatPage() {
   const decideMenuDirection = (target: HTMLElement | null | undefined) => {
     if (!target) return;
     const rect = target.getBoundingClientRect();
-    const spaceBelow = window.innerHeight - rect.bottom;
+    // window.innerHeight includes the space behind the fixed input bar,
+    // which isn't actually available to the menu — measuring against the
+    // real scrollable container's own bottom edge instead is what
+    // correctly accounts for that.
+    const containerBottom = scrollRef.current?.getBoundingClientRect().bottom ?? window.innerHeight;
+    const spaceBelow = containerBottom - rect.bottom;
     setMenuOpenUp(spaceBelow < 180);
   };
 
@@ -526,7 +531,7 @@ export default function ChatPage() {
       {/* Header — AppShell's persistent top bar already reserves the
           safe-area/status-bar space, so this header just needs normal
           padding, not its own extra top offset. */}
-      <header className="flex-none bg-card/90 backdrop-blur-xl border-b border-card-border py-4 px-4">
+      <header className="relative z-30 flex-none bg-card/90 backdrop-blur-xl border-b border-card-border py-4 px-4">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <Link href="/matches" className="w-10 h-10 flex items-center justify-center rounded-full bg-secondary text-foreground hover:bg-secondary/80 transition-colors shrink-0">
@@ -574,14 +579,14 @@ export default function ChatPage() {
             {showHeaderMenu && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowHeaderMenu(false)} />
-                <div className="absolute right-0 top-11 z-50 bg-card border border-card-border rounded-xl shadow-lg overflow-hidden min-w-[170px]">
+                <div className="absolute right-0 top-11 z-50 bg-card border border-card-border rounded-xl shadow-lg overflow-hidden min-w-[190px]">
                   <button
                     onClick={() => {
                       setShowHeaderMenu(false);
                       handleBlock();
                     }}
                     disabled={isBlocking}
-                    className="flex items-center gap-2.5 w-full px-4 py-3 text-sm text-foreground hover:bg-secondary transition-colors disabled:opacity-50"
+                    className="flex items-center gap-2.5 w-full px-4 py-3 text-sm text-foreground hover:bg-secondary transition-colors disabled:opacity-50 whitespace-nowrap"
                   >
                     <UserX size={15} className="text-muted-foreground" /> Block user
                   </button>
@@ -590,7 +595,7 @@ export default function ChatPage() {
                       setShowHeaderMenu(false);
                       setShowReportModal(true);
                     }}
-                    className="flex items-center gap-2.5 w-full px-4 py-3 text-sm text-destructive hover:bg-secondary transition-colors"
+                    className="flex items-center gap-2.5 w-full px-4 py-3 text-sm text-destructive hover:bg-secondary transition-colors whitespace-nowrap"
                   >
                     <Flag size={15} /> Report and block
                   </button>
