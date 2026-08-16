@@ -935,7 +935,7 @@ export default function ChatPage() {
           }}
         >
           <div
-            className="w-full max-w-[430px] mx-auto bg-card rounded-t-3xl overflow-hidden"
+            className="w-full max-w-[430px] mx-auto bg-card rounded-t-3xl overflow-hidden max-h-[65vh]"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex justify-center pt-3 pb-1">
@@ -945,7 +945,8 @@ export default function ChatPage() {
               theme="light"
               autoFocusSearch={false}
               width="100%"
-              height={420}
+              height={340}
+              previewConfig={{ showPreview: false }}
               onEmojiClick={(emojiData) => {
                 handleReact(reactingToMessageId!, emojiData.emoji);
                 setReactingToMessageId(null);
