@@ -83,6 +83,7 @@ export default function ChatPage() {
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longTriggered = useRef(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const reactBarRef = useRef<HTMLDivElement>(null);
 
   // Swipe-to-reply
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
@@ -153,6 +154,21 @@ export default function ChatPage() {
       document.removeEventListener("touchstart", handleOutsideClick);
     };
   }, [selectedMsgId]);
+
+  useEffect(() => {
+    if (!reactingToMessageId) return;
+    const handleOutsideClick = (e: MouseEvent | TouchEvent) => {
+      if (reactBarRef.current && !reactBarRef.current.contains(e.target as Node)) {
+        setReactingToMessageId(null);
+      }
+    };
+    document.addEventListener("mousedown", handleOutsideClick);
+    document.addEventListener("touchstart", handleOutsideClick);
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+      document.removeEventListener("touchstart", handleOutsideClick);
+    };
+  }, [reactingToMessageId]);
 
   const decideMenuDirection = (target: HTMLElement | null | undefined) => {
     if (!target) return;
@@ -670,15 +686,16 @@ export default function ChatPage() {
                     </div>
                   )}
 
-                  {/* Swipe-to-reply indicator — fades in as the bubble is
-                      dragged right, matching WhatsApp/TikTok's pattern. */}
-                  {!msg.is_unsent && (
+                  {/* Swipe-to-reply indicator — only rendered during an
+                      active swipe (not a permanent, invisible flex
+                      sibling), and positioned absolute so it never
+                      affects the bubble's own width. */}
+                  {!msg.is_unsent && swipingMessageId === msg.id && (
                     <div
-                      className="flex items-center justify-center w-7 h-7 rounded-full bg-secondary text-muted-foreground shrink-0 mb-1 transition-opacity"
-                      style={{
-                        opacity: swipingMessageId === msg.id ? Math.min(swipeOffset / SWIPE_TRIGGER, 1) : 0,
-                        order: mine ? 2 : -1,
-                      }}
+                      className={`absolute bottom-1 flex items-center justify-center w-7 h-7 rounded-full bg-secondary text-muted-foreground ${
+                        mine ? "right-full mr-1" : "left-full ml-1"
+                      }`}
+                      style={{ opacity: Math.min(swipeOffset / SWIPE_TRIGGER, 1) }}
                     >
                       <Reply size={14} />
                     </div>
@@ -690,6 +707,7 @@ export default function ChatPage() {
                     </div>
                   ) : (
                     <div
+                      className="relative inline-block max-w-[75%]"
                       onMouseDown={(e) => handleBubbleTouchStart(msg, e)}
                       onMouseMove={(e) => handleBubbleTouchMove(msg, e)}
                       onMouseUp={() => handleBubbleTouchEnd(msg)}
@@ -706,30 +724,26 @@ export default function ChatPage() {
                       {msg.reply_to && (
                         <button
                           onClick={() => scrollToMessage(msg.reply_to!.id)}
-                          className={`block max-w-[75%] mb-1 px-3 py-1.5 rounded-xl border-l-2 border-primary bg-secondary/60 text-left ${
-                            mine ? "ml-auto" : ""
-                          }`}
+                          className="block w-full mb-1 px-3 py-1.5 rounded-xl border-l-2 border-primary bg-secondary/60 text-left"
                         >
                           <p className="text-xs text-muted-foreground truncate">
                             {msg.reply_to.is_unsent
                               ? "Message unsent"
                               : msg.reply_to.message_type === "gif"
                                 ? "GIF"
-                                : msg.reply_to.message_type === "sticker"
-                                  ? msg.reply_to.content
-                                  : msg.reply_to.content}
+                                : msg.reply_to.content}
                           </p>
                         </button>
                       )}
                       {msg.message_type === "sticker" ? (
                         <div className="text-6xl leading-none">{msg.content}</div>
                       ) : msg.message_type === "gif" ? (
-                        <div className="max-w-[65%] rounded-2xl overflow-hidden">
+                        <div className="rounded-2xl overflow-hidden">
                           <img src={msg.media_url ?? ""} alt="GIF" className="w-full h-auto" />
                         </div>
                       ) : (
                         <div
-                          className={`max-w-[75%] px-4 py-2.5 text-[15px] leading-snug select-none ${
+                          className={`px-4 py-2.5 text-[15px] leading-snug select-none ${
                             mine
                               ? "bg-primary text-white rounded-2xl rounded-tr-sm"
                               : "bg-secondary text-foreground rounded-2xl rounded-tl-sm"
@@ -738,36 +752,49 @@ export default function ChatPage() {
                           {msg.content}
                         </div>
                       )}
+
+                      {/* Reactions — overlaid on the bubble's own bottom
+                          corner (WhatsApp/iMessage-style), not a separate
+                          block that reads as its own message. */}
+                      {msg.reactions.length > 0 && (
+                        <div
+                          className={`absolute -bottom-2.5 z-10 flex flex-wrap gap-1 ${mine ? "right-1" : "left-1"}`}
+                        >
+                          {msg.reactions.map((r) => (
+                            <button
+                              key={r.emoji}
+                              onClick={() => handleReact(msg.id, r.emoji)}
+                              className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs border shadow-sm transition-colors ${
+                                r.reactedByMe
+                                  ? "bg-primary/15 border-primary text-primary"
+                                  : "bg-card border-card-border text-muted-foreground"
+                              }`}
+                            >
+                              <span>{r.emoji}</span>
+                              {r.count > 1 && <span>{r.count}</span>}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
 
                 {reactingToMessageId === msg.id && (
-                  <div className={`flex gap-1 mt-1.5 ${mine ? "justify-end pr-8" : "justify-start pl-8"}`}>
+                  <div
+                    ref={reactBarRef}
+                    className={`flex gap-1 mt-1.5 ${msg.reactions.length > 0 ? "mt-4" : ""} ${mine ? "justify-end pr-8" : "justify-start pl-8"}`}
+                  >
                     {QUICK_REACT_EMOJIS.map((emoji) => (
                       <button
                         key={emoji}
-                        onClick={() => handleReact(msg.id, emoji)}
+                        onClick={() => {
+                          handleReact(msg.id, emoji);
+                          setReactingToMessageId(null);
+                        }}
                         className="w-8 h-8 rounded-full bg-card border border-card-border flex items-center justify-center text-base hover:scale-110 transition-transform"
                       >
                         {emoji}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {msg.reactions.length > 0 && (
-                  <div className={`flex flex-wrap gap-1 mt-1.5 ${mine ? "justify-end" : "justify-start"} ${isMedia ? "" : ""}`}>
-                    {msg.reactions.map((r) => (
-                      <button
-                        key={r.emoji}
-                        onClick={() => handleReact(msg.id, r.emoji)}
-                        className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border transition-colors ${
-                          r.reactedByMe ? "bg-primary/15 border-primary text-primary" : "bg-secondary border-card-border text-muted-foreground"
-                        }`}
-                      >
-                        <span>{r.emoji}</span>
-                        {r.count > 1 && <span>{r.count}</span>}
                       </button>
                     ))}
                   </div>
