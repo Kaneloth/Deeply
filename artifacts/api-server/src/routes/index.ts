@@ -7,6 +7,7 @@ import matchesRouter from "./matches";
 import messagesRouter from "./messages";
 import sparksRouter from "./sparks";
 import supportRouter from "./support";
+import gifsRouter from "./gifs";
 
 const router: IRouter = Router();
 
@@ -18,5 +19,6 @@ router.use(matchesRouter);
 router.use(messagesRouter);
 router.use(sparksRouter);
 router.use(supportRouter);
+router.use(gifsRouter);
 
 export default router;
