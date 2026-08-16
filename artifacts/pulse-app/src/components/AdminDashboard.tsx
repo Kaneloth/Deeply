@@ -939,6 +939,7 @@ function UserDetailSheet({
   const [suspendReason, setSuspendReason] = useState("");
   const [sparksAmount, setSparksAmount] = useState("50");
   const [scopes, setScopes] = useState<AdminScope[]>(user.admin_scopes ?? []);
+  const [showEditProfile, setShowEditProfile] = useState(false);
 
   const isSuspended = user.suspended_until && new Date(user.suspended_until) > new Date();
 
@@ -1063,6 +1064,27 @@ function UserDetailSheet({
           {user.suspension_reason && <Row label="Suspension Reason" value={user.suspension_reason} />}
         </div>
 
+        {!showEditProfile && (
+          <button
+            onClick={() => setShowEditProfile(true)}
+            className="w-full h-10 rounded-xl text-xs font-semibold border border-card-border mb-4"
+          >
+            Edit Profile
+          </button>
+        )}
+
+        {showEditProfile ? (
+          <EditProfileForm
+            user={user}
+            token={token}
+            toast={toast}
+            onCancel={() => setShowEditProfile(false)}
+            onSaved={(patch) => {
+              onUpdated(patch);
+              setShowEditProfile(false);
+            }}
+          />
+        ) : (
         <div className="space-y-4">
           {/* Ban */}
           <div className="space-y-2">
@@ -1173,6 +1195,7 @@ function UserDetailSheet({
             </div>
           )}
         </div>
+        )}
       </div>
     </div>
   );
@@ -1184,6 +1207,270 @@ function Row({ label, value }: { label: string; value: any }) {
     <div className="flex justify-between border-b border-border/50 py-1.5">
       <span className="text-muted-foreground">{label}</span>
       <span className="font-medium text-right max-w-[60%] truncate">{value}</span>
+    </div>
+  );
+}
+
+// Text inputs (not <select>) are used deliberately for enum-like fields
+// below (gender, relationship_type, education, etc.) rather than
+// dropdowns — several of these columns have Postgres CHECK constraints
+// with specific allowed values that aren't fully documented here, and a
+// guessed-wrong dropdown option would submit an invalid value and fail.
+// A pre-filled text field showing the user's CURRENT value is always
+// safe, and an admin editing "on behalf of" a stuck user will usually
+// only need to fix one or two fields, not pick from scratch.
+function EditProfileForm({
+  user,
+  token,
+  toast,
+  onCancel,
+  onSaved,
+}: {
+  user: any;
+  token: string | null;
+  toast: any;
+  onCancel: () => void;
+  onSaved: (patch: any) => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    name: user.name ?? "",
+    bio: user.bio ?? "",
+    city: user.city ?? "",
+    birthday: user.birthday ?? "",
+    personality_tags: (user.personality_tags ?? []).join(", "),
+    gender: user.gender ?? "",
+    looking_for_gender: user.looking_for_gender ?? "",
+    distance_km: user.distance_km ?? "",
+    relationship_type: user.relationship_type ?? "",
+    dating_intentions: (user.dating_intentions ?? []).join(", "),
+    num_kids: user.num_kids ?? "",
+    family_plans: user.family_plans ?? "",
+    smoking_status: user.smoking_status ?? "",
+    drinking_status: user.drinking_status ?? "",
+    vaping_status: user.vaping_status ?? "",
+    has_tattoos: user.has_tattoos ?? "",
+    pets: user.pets ?? "",
+    height_cm: user.height_cm ?? "",
+    activity_level: user.activity_level ?? "",
+    nightlife_frequency: user.nightlife_frequency ?? "",
+    languages_spoken: (user.languages_spoken ?? []).join(", "),
+    languages_other: user.languages_other ?? "",
+    love_language: user.love_language ?? "",
+    education: user.education ?? "",
+    pref_num_kids: user.pref_num_kids ?? "",
+    pref_family_plans: user.pref_family_plans ?? "",
+    pref_smoking_status: user.pref_smoking_status ?? "",
+    pref_drinking_status: user.pref_drinking_status ?? "",
+    pref_vaping_status: user.pref_vaping_status ?? "",
+    pref_has_tattoos: user.pref_has_tattoos ?? "",
+    pref_pets: user.pref_pets ?? "",
+    pref_activity_level: user.pref_activity_level ?? "",
+    pref_height_min_cm: user.pref_height_min_cm ?? "",
+    pref_height_max_cm: user.pref_height_max_cm ?? "",
+    pref_nightlife_frequency: user.pref_nightlife_frequency ?? "",
+    pref_age_min: user.pref_age_min ?? "",
+    pref_age_max: user.pref_age_max ?? "",
+    dealbreakers: (user.dealbreakers ?? []).join(", "),
+  });
+
+  const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+    setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const toArray = (s: string) =>
+    s.trim() === "" ? [] : s.split(",").map((x) => x.trim()).filter(Boolean);
+  const toNumOrUndefined = (s: string) => (s === "" ? undefined : Number(s));
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const payload = {
+        name: form.name,
+        bio: form.bio,
+        city: form.city,
+        birthday: form.birthday,
+        personality_tags: toArray(form.personality_tags),
+        gender: form.gender,
+        looking_for_gender: form.looking_for_gender,
+        distance_km: toNumOrUndefined(form.distance_km as any),
+        relationship_type: form.relationship_type,
+        dating_intentions: toArray(form.dating_intentions),
+        num_kids: form.num_kids,
+        family_plans: form.family_plans,
+        smoking_status: form.smoking_status,
+        drinking_status: form.drinking_status,
+        vaping_status: form.vaping_status,
+        has_tattoos: form.has_tattoos,
+        pets: form.pets,
+        height_cm: toNumOrUndefined(form.height_cm as any),
+        activity_level: form.activity_level,
+        nightlife_frequency: form.nightlife_frequency,
+        languages_spoken: toArray(form.languages_spoken),
+        languages_other: form.languages_other,
+        love_language: form.love_language,
+        education: form.education,
+        pref_num_kids: form.pref_num_kids,
+        pref_family_plans: form.pref_family_plans,
+        pref_smoking_status: form.pref_smoking_status,
+        pref_drinking_status: form.pref_drinking_status,
+        pref_vaping_status: form.pref_vaping_status,
+        pref_has_tattoos: form.pref_has_tattoos,
+        pref_pets: form.pref_pets,
+        pref_activity_level: form.pref_activity_level,
+        pref_height_min_cm: toNumOrUndefined(form.pref_height_min_cm as any),
+        pref_height_max_cm: toNumOrUndefined(form.pref_height_max_cm as any),
+        pref_nightlife_frequency: form.pref_nightlife_frequency,
+        pref_age_min: toNumOrUndefined(form.pref_age_min as any),
+        pref_age_max: toNumOrUndefined(form.pref_age_max as any),
+        dealbreakers: toArray(form.dealbreakers),
+      };
+
+      const res = await fetch(`/api/admin/users/${user.id}/profile`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "Failed to update profile");
+      toast({ title: "Profile updated" });
+      onSaved(body);
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to update profile.",
+        variant: "destructive",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const Field = ({ label, keyName, type = "text" }: { label: string; keyName: keyof typeof form; type?: string }) => (
+    <div>
+      <label className="text-[10px] font-medium text-muted-foreground">{label}</label>
+      <input
+        type={type}
+        value={form[keyName] as any}
+        onChange={set(keyName)}
+        className="w-full h-9 mt-0.5 rounded-lg bg-background border border-card-border text-xs px-2.5 outline-none"
+      />
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-semibold text-muted-foreground">Editing on behalf of {user.name}</p>
+        <button onClick={onCancel} className="text-xs text-muted-foreground hover:text-foreground">
+          ← Back
+        </button>
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">About</p>
+        <Field label="Name" keyName="name" />
+        <Field label="Birthday" keyName="birthday" type="date" />
+        <Field label="City" keyName="city" />
+        <div>
+          <label className="text-[10px] font-medium text-muted-foreground">Bio</label>
+          <textarea
+            value={form.bio}
+            onChange={set("bio")}
+            rows={3}
+            className="w-full mt-0.5 rounded-lg bg-background border border-card-border text-xs px-2.5 py-2 outline-none resize-none"
+          />
+        </div>
+        <div>
+          <label className="text-[10px] font-medium text-muted-foreground">Personality tags (comma-separated)</label>
+          <input value={form.personality_tags} onChange={set("personality_tags")} className="w-full h-9 mt-0.5 rounded-lg bg-background border border-card-border text-xs px-2.5 outline-none" />
+        </div>
+      </div>
+
+      <div className="space-y-2 border-t border-border pt-3">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Dating</p>
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="Gender" keyName="gender" />
+          <Field label="Looking for" keyName="looking_for_gender" />
+          <Field label="Max distance (km)" keyName="distance_km" type="number" />
+          <Field label="Relationship type" keyName="relationship_type" />
+        </div>
+        <div>
+          <label className="text-[10px] font-medium text-muted-foreground">Dating intentions (comma-separated)</label>
+          <input value={form.dating_intentions} onChange={set("dating_intentions")} className="w-full h-9 mt-0.5 rounded-lg bg-background border border-card-border text-xs px-2.5 outline-none" />
+        </div>
+      </div>
+
+      <div className="space-y-2 border-t border-border pt-3">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Lifestyle</p>
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="Kids" keyName="num_kids" />
+          <Field label="Family plans" keyName="family_plans" />
+          <Field label="Smoking" keyName="smoking_status" />
+          <Field label="Drinking" keyName="drinking_status" />
+          <Field label="Vaping" keyName="vaping_status" />
+          <Field label="Tattoos" keyName="has_tattoos" />
+          <Field label="Pets" keyName="pets" />
+          <Field label="Height (cm)" keyName="height_cm" type="number" />
+          <Field label="Activity level" keyName="activity_level" />
+          <Field label="Nightlife" keyName="nightlife_frequency" />
+        </div>
+      </div>
+
+      <div className="space-y-2 border-t border-border pt-3">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Language & Education</p>
+        <div>
+          <label className="text-[10px] font-medium text-muted-foreground">Languages spoken (comma-separated)</label>
+          <input value={form.languages_spoken} onChange={set("languages_spoken")} className="w-full h-9 mt-0.5 rounded-lg bg-background border border-card-border text-xs px-2.5 outline-none" />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="Other language" keyName="languages_other" />
+          <Field label="Love language" keyName="love_language" />
+          <Field label="Education" keyName="education" />
+        </div>
+      </div>
+
+      <div className="space-y-2 border-t border-border pt-3">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Partner Preferences</p>
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="Pref. kids" keyName="pref_num_kids" />
+          <Field label="Pref. family plans" keyName="pref_family_plans" />
+          <Field label="Pref. smoking" keyName="pref_smoking_status" />
+          <Field label="Pref. drinking" keyName="pref_drinking_status" />
+          <Field label="Pref. vaping" keyName="pref_vaping_status" />
+          <Field label="Pref. tattoos" keyName="pref_has_tattoos" />
+          <Field label="Pref. pets" keyName="pref_pets" />
+          <Field label="Pref. activity level" keyName="pref_activity_level" />
+          <Field label="Pref. nightlife" keyName="pref_nightlife_frequency" />
+          <Field label="Min height (cm)" keyName="pref_height_min_cm" type="number" />
+          <Field label="Max height (cm)" keyName="pref_height_max_cm" type="number" />
+          <Field label="Min age" keyName="pref_age_min" type="number" />
+          <Field label="Max age" keyName="pref_age_max" type="number" />
+        </div>
+      </div>
+
+      <div className="space-y-2 border-t border-border pt-3">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Safety</p>
+        <div>
+          <label className="text-[10px] font-medium text-muted-foreground">Dealbreakers (comma-separated)</label>
+          <input value={form.dealbreakers} onChange={set("dealbreakers")} className="w-full h-9 mt-0.5 rounded-lg bg-background border border-card-border text-xs px-2.5 outline-none" />
+        </div>
+      </div>
+
+      <div className="flex gap-2 pt-2">
+        <button onClick={onCancel} className="flex-1 h-10 rounded-xl text-xs font-semibold border border-card-border">
+          Cancel
+        </button>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="flex-1 h-10 rounded-xl text-xs font-semibold bg-gradient-accent border-0 disabled:opacity-50"
+        >
+          {saving ? "Saving..." : "Save Changes"}
+        </button>
+      </div>
     </div>
   );
 }
