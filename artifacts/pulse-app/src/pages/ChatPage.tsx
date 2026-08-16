@@ -170,6 +170,19 @@ export default function ChatPage() {
     };
   }, [reactingToMessageId]);
 
+  // The react bar renders in normal document flow — if it appears near
+  // the bottom of the currently-loaded messages, it can end up below the
+  // visible scroll position (the container's own height stops above the
+  // fixed input bar) with nothing bringing it into view automatically.
+  useEffect(() => {
+    if (!reactingToMessageId) return;
+    // Wait a tick for the bar to actually render before measuring it.
+    const timer = setTimeout(() => {
+      reactBarRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [reactingToMessageId]);
+
   const decideMenuDirection = (target: HTMLElement | null | undefined) => {
     if (!target) return;
     const rect = target.getBoundingClientRect();
