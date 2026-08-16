@@ -53,10 +53,9 @@ interface Message {
   reply_to: ReplyPreview | null;
 }
 
-// Same six reactions as before, but as unified emoji IDs — the format
-// emoji-picker-react's `reactions` prop expects for its compact
-// reactions-mode row.
-const REACTION_UNIFIED_IDS = ["2764-fe0f", "1f602", "1f62e", "1f622", "1f44d", "1f525"];
+// Raw characters for the compact row we build ourselves (exact-fit, no
+// wasted space).
+const QUICK_REACT_EMOJIS = ["❤️", "😂", "😮", "😢", "👍", "🔥"];
 
 export default function ChatPage() {
   const params = useParams();
@@ -73,6 +72,7 @@ export default function ChatPage() {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showMediaPicker, setShowMediaPicker] = useState(false);
   const [reactingToMessageId, setReactingToMessageId] = useState<string | null>(null);
+  const [showFullEmojiPicker, setShowFullEmojiPicker] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
@@ -883,15 +883,56 @@ export default function ChatPage() {
         )}
       </div>
 
-      {/* Reaction picker — one shared instance for every message, rather
-          than one per message bubble. Opens as a fixed bottom sheet, so
-          it's always fully visible regardless of scroll position, and
-          large enough to comfortably fit the expanded full picker board
-          once the user taps the + button. */}
-      {reactingToMessageId && (
+      {/* Reaction picker — compact row is hand-built (exact-fit, and
+          crucially has no search input to accidentally trigger the
+          device's native keyboard). Tapping + mounts the full library
+          picker separately, sized generously since at that point it's
+          the only thing on screen — avoiding the alternative of a single
+          fixed-height container that has to compromise between "snug for
+          six emojis" and "roomy enough for the full board." */}
+      {reactingToMessageId && !showFullEmojiPicker && (
         <div
           className="fixed inset-0 z-[100] bg-black/40 flex items-end"
           onClick={() => setReactingToMessageId(null)}
+        >
+          <div
+            className="w-full max-w-[430px] mx-auto bg-card rounded-t-3xl overflow-hidden pb-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-center pt-3 pb-2">
+              <div className="w-10 h-1 rounded-full bg-border" />
+            </div>
+            <div className="flex items-center justify-center gap-2 px-4">
+              {QUICK_REACT_EMOJIS.map((emoji) => (
+                <button
+                  key={emoji}
+                  onClick={() => {
+                    handleReact(reactingToMessageId, emoji);
+                    setReactingToMessageId(null);
+                  }}
+                  className="w-11 h-11 rounded-full bg-secondary flex items-center justify-center text-2xl hover:scale-110 transition-transform"
+                >
+                  {emoji}
+                </button>
+              ))}
+              <button
+                onClick={() => setShowFullEmojiPicker(true)}
+                className="w-11 h-11 rounded-full bg-secondary flex items-center justify-center text-muted-foreground text-xl font-semibold"
+              >
+                +
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {reactingToMessageId && showFullEmojiPicker && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/40 flex items-end"
+          onClick={() => {
+            setReactingToMessageId(null);
+            setShowFullEmojiPicker(false);
+          }}
         >
           <div
             className="w-full max-w-[430px] mx-auto bg-card rounded-t-3xl overflow-hidden"
@@ -901,19 +942,14 @@ export default function ChatPage() {
               <div className="w-10 h-1 rounded-full bg-border" />
             </div>
             <ReactionPicker
-              reactionsDefaultOpen
-              reactions={REACTION_UNIFIED_IDS}
-              allowExpandReactions
               theme="light"
+              autoFocusSearch={false}
               width="100%"
               height={420}
-              onReactionClick={(emojiData) => {
-                handleReact(reactingToMessageId!, emojiData.emoji);
-                setReactingToMessageId(null);
-              }}
               onEmojiClick={(emojiData) => {
                 handleReact(reactingToMessageId!, emojiData.emoji);
                 setReactingToMessageId(null);
+                setShowFullEmojiPicker(false);
               }}
             />
           </div>
