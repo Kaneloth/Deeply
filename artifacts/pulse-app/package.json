@@ -79,6 +79,8 @@
     "@capacitor/core": "^8.5.0",
     "@capacitor/app": "^8.0.0",
     "@capgo/native-purchases": "^8.0.0",
+    "@sentry/capacitor": "^1.0.0",
+    "@sentry/react": "^8.0.0",
     "@capawesome/capacitor-google-sign-in": "^0.1.2"
   }
 }

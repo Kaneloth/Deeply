@@ -1,10 +1,13 @@
 import { createRoot } from 'react-dom/client';
 import { Capacitor } from '@capacitor/core';
 import { setBaseUrl } from '@workspace/api-client-react';
+import { initSentry, SentryErrorBoundary } from '@/lib/sentry';
 
 import App from './App';
 
 import './index.css';
+
+initSentry();
 
 // Native-only fix so relative API calls actually reach the real backend
 // instead of the WebView trying (and failing) to resolve them locally.
@@ -44,4 +47,8 @@ if (Capacitor.isNativePlatform()) {
   };
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
+createRoot(document.getElementById('root')!).render(
+  <SentryErrorBoundary fallback={<p>Something went wrong. Please refresh.</p>}>
+    <App />
+  </SentryErrorBoundary>,
+);

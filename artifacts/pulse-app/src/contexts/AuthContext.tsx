@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { setAuthTokenGetter } from "@workspace/api-client-react";
 import { useLocation } from "wouter";
 import type { BlockInfo } from "@/components/BlockedAccountScreen";
+import { setUser as setSentryUser } from "@/lib/sentry";
 
 const ACCESS_TOKEN_KEY = "deeply_access_token";
 const REFRESH_TOKEN_KEY = "deeply_refresh_token";
@@ -55,6 +56,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(EXPIRES_AT_KEY);
     setAuthTokenGetter(() => null);
     setToken(null);
+    setSentryUser(null);
     if (Capacitor.isNativePlatform()) {
       GoogleSignIn.signOut().catch(() => {
         // Non-fatal — our own session is already cleared above regardless.
@@ -129,6 +131,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = (accessToken: string, refreshToken: string, expiresIn: number) => {
     queryClient.clear();
     applySession(accessToken, refreshToken, expiresIn);
+
+    // Tag Sentry with who this is, straight from the JWT's own payload —
+    // avoids an extra network round-trip just to attach an identity to
+    // error reports.
+    try {
+      const payload = JSON.parse(atob(accessToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+      setSentryUser({ id: payload.sub, email: payload.email });
+    } catch {
+      // Non-fatal — error reports just won't have a user attached.
+    }
   };
 
   // On app load: if we have a stored session, refresh immediately when
