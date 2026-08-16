@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Capacitor } from "@capacitor/core";
+import { Camera as CapacitorCamera, CameraResultType, CameraSource } from "@capacitor/camera";
 import { NativePurchases, PURCHASE_TYPE } from "@capgo/native-purchases";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -7,6 +8,27 @@ import { Button } from "@/components/ui/button";
 import { ShieldCheck, Camera, Clock, XCircle, CheckCircle2, CreditCard, Upload, Crown } from "lucide-react";
 
 const ID_VERIFICATION_GOOGLE_PRODUCT_ID = "id_verification_fee";
+
+/** Opens the device's native camera directly (not a chooser between
+ *  camera/gallery — the HTML file input's capture="user" attribute is
+ *  only ever a *hint*, and Android's WebView doesn't reliably honor it,
+ *  which is exactly why this exists instead). Returns null if the user
+ *  cancels or camera access is denied. */
+async function capturePhoto(): Promise<File | null> {
+  try {
+    const photo = await CapacitorCamera.getPhoto({
+      resultType: CameraResultType.Uri,
+      source: CameraSource.Camera,
+      quality: 85,
+    });
+    if (!photo.webPath) return null;
+    const response = await fetch(photo.webPath);
+    const blob = await response.blob();
+    return new File([blob], `selfie-${Date.now()}.jpg`, { type: blob.type || "image/jpeg" });
+  } catch {
+    return null;
+  }
+}
 
 interface SubmissionStatus {
   id: string;
@@ -41,7 +63,6 @@ export function VerificationSection() {
   const isNative = useMemo(() => Capacitor.isNativePlatform(), []);
   const [nativePrice, setNativePrice] = useState<string | null>(null);
 
-  const selfieInputRef = useRef<HTMLInputElement>(null);
   const [idFrontFile, setIdFrontFile] = useState<File | null>(null);
   const [idBackFile, setIdBackFile] = useState<File | null>(null);
   const [idSelfieFile, setIdSelfieFile] = useState<File | null>(null);
@@ -87,9 +108,8 @@ export function VerificationSection() {
       });
   }, [isNative]);
 
-  const handleSelfieSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
+  const handleTakeSelfie = async () => {
+    const file = await capturePhoto();
     if (!file) return;
 
     setIsSubmittingPhoto(true);
@@ -328,16 +348,8 @@ export function VerificationSection() {
                 <span>{photoStatus.rejection_reason || "Your submission was rejected."}</span>
               </div>
             )}
-            <input
-              ref={selfieInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              capture="user"
-              onChange={handleSelfieSelected}
-              className="hidden"
-            />
             <Button
-              onClick={() => selfieInputRef.current?.click()}
+              onClick={handleTakeSelfie}
               disabled={isSubmittingPhoto}
               variant="outline"
               className="w-full h-11 rounded-xl gap-2"
@@ -457,18 +469,29 @@ function FilePickerRow({
   capture?: boolean;
 }) {
   const ref = useRef<HTMLInputElement>(null);
+
+  const handleClick = async () => {
+    if (capture) {
+      const captured = await capturePhoto();
+      if (captured) onChange(captured);
+      return;
+    }
+    ref.current?.click();
+  };
+
   return (
     <div>
-      <input
-        ref={ref}
-        type="file"
-        accept="image/jpeg,image/png,image/webp"
-        capture={capture ? "user" : undefined}
-        onChange={(e) => onChange(e.target.files?.[0] ?? null)}
-        className="hidden"
-      />
+      {!capture && (
+        <input
+          ref={ref}
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          onChange={(e) => onChange(e.target.files?.[0] ?? null)}
+          className="hidden"
+        />
+      )}
       <button
-        onClick={() => ref.current?.click()}
+        onClick={handleClick}
         className={`w-full flex items-center gap-3 rounded-xl border p-3 text-left transition-colors ${
           file ? "border-primary/40 bg-primary/5" : "border-card-border hover:border-primary/30"
         }`}

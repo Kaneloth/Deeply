@@ -660,6 +660,62 @@ router.delete("/profile/me/photos/:photoId", requireAuth, async (req, res): Prom
   res.sendStatus(204);
 });
 
+/** PUT /api/profile/me/photos/:photoId/set-main — reorders the gallery
+ *  so the chosen photo becomes position 0, and keeps profiles.photo_url
+ *  (used everywhere else in the app — Discover cards, headers) in sync
+ *  with whatever's actually first. Videos can't be set as main, same
+ *  restriction the existing position-0 sync logic already enforces
+ *  elsewhere in this file. */
+router.put("/profile/me/photos/:photoId/set-main", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const photoId = Array.isArray(req.params.photoId) ? req.params.photoId[0] : req.params.photoId;
+
+  const { data: target } = await supabase
+    .from("profile_photos")
+    .select("id, photo_url, media_type, position")
+    .eq("id", photoId)
+    .eq("user_id", userId)
+    .single();
+
+  if (!target) {
+    res.status(404).json({ error: "Photo not found" });
+    return;
+  }
+  if (target.media_type !== "image") {
+    res.status(400).json({ error: "Video clips can't be set as your main photo" });
+    return;
+  }
+  if (target.position === 0) {
+    res.json({ success: true }); // already main — nothing to do
+    return;
+  }
+
+  const { data: all } = await supabase
+    .from("profile_photos")
+    .select("id, position")
+    .eq("user_id", userId)
+    .order("position", { ascending: true });
+
+  if (!all) {
+    res.status(500).json({ error: "Failed to load gallery" });
+    return;
+  }
+
+  // Move the chosen photo to the front, keep everyone else's relative
+  // order unchanged, then re-assign contiguous positions 0..n-1 — same
+  // re-packing approach the DELETE handler above already uses.
+  const reordered = [target, ...all.filter((p) => p.id !== photoId)];
+  for (let i = 0; i < reordered.length; i++) {
+    if (reordered[i].position !== i) {
+      await supabase.from("profile_photos").update({ position: i }).eq("id", reordered[i].id);
+    }
+  }
+
+  await supabase.from("profiles").update({ photo_url: target.photo_url }).eq("id", userId);
+
+  res.json({ success: true });
+});
+
 // ============================================================
 // Blocking & Reporting
 // ============================================================

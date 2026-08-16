@@ -298,13 +298,22 @@ export default function ChatPage() {
   useEffect(() => {
     fetchMatch();
     fetchReceiptsStatus();
-  }, [fetchMatch, fetchReceiptsStatus]);
+    // fetchMatch/fetchReceiptsStatus depend on [matchId, token] internally
+    // — depending on matchId here (not the function references themselves)
+    // avoids re-running this on every auth token refresh, which happens
+    // periodically regardless of anything the user does and was causing
+    // the whole chat to visibly refetch/flash on that same cycle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchId]);
 
   useEffect(() => {
     fetchMessages();
     const interval = setInterval(fetchMessages, 3000);
     return () => clearInterval(interval);
-  }, [fetchMessages]);
+    // Same reasoning as above — matchId is the only thing that should
+    // restart this poll, not a token refresh recreating fetchMessages.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchId]);
 
   useEffect(() => {
     if (scrollRef.current) {

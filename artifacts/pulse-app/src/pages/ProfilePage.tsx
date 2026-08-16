@@ -6,7 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
-import { CheckCircle2, AlertCircle, Rocket, Plus, X, ImageIcon, Camera, Video, Mic, Play, Pause, Crown } from "lucide-react";
+import { CheckCircle2, AlertCircle, Rocket, Plus, X, ImageIcon, Camera, Video, Mic, Play, Pause, Crown, Star } from "lucide-react";
 import { SparkIcon } from "@/components/Icons";
 import { SparksModal } from "@/components/SparksModal";
 import { motion, AnimatePresence } from "framer-motion";
@@ -163,6 +163,7 @@ export default function ProfilePage() {
   const [isLoadingPhotos, setIsLoadingPhotos] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [settingMainId, setSettingMainId] = useState<string | null>(null);
   const [showAddSheet, setShowAddSheet] = useState(false);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const cameraPhotoInputRef = useRef<HTMLInputElement>(null);
@@ -629,6 +630,30 @@ export default function ProfilePage() {
     }
   };
 
+  const handleSetMainPhoto = async (photoId: string) => {
+    setSettingMainId(photoId);
+    try {
+      const res = await fetch(`/api/profile/me/photos/${photoId}/set-main`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to set main photo");
+      }
+      await Promise.all([fetchPhotos(), fetchProfile()]);
+      toast({ title: "Main photo updated" });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to set main photo.",
+        variant: "destructive",
+      });
+    } finally {
+      setSettingMainId(null);
+    }
+  };
+
   const handleDeletePhoto = async (photoId: string) => {
     setDeletingId(photoId);
     try {
@@ -942,6 +967,16 @@ export default function ProfilePage() {
                   <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-full bg-black/60 text-white text-[10px] font-semibold">
                     Clip
                   </span>
+                )}
+                {idx !== 0 && photo.media_type === "image" && (
+                  <button
+                    onClick={() => handleSetMainPhoto(photo.id)}
+                    disabled={settingMainId === photo.id}
+                    className="absolute bottom-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-black/60 text-white text-[10px] font-semibold hover:bg-black/80 transition-colors disabled:opacity-50"
+                  >
+                    <Star size={10} />
+                    {settingMainId === photo.id ? "..." : "Set Main"}
+                  </button>
                 )}
                 <button
                   onClick={() => handleDeletePhoto(photo.id)}
