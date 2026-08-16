@@ -5,7 +5,7 @@ import { useSparks } from "@/contexts/SparksContext";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, Send, Undo2, Eye, CheckCheck, Smile, ImagePlus, X, MoreVertical, UserX, Flag } from "lucide-react";
+import { ChevronLeft, Send, Undo2, Eye, CheckCheck, Smile, ImagePlus, X, MoreVertical, UserX, Flag, Copy, Trash2, Reply } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { EmojiPicker } from "@/components/EmojiPicker";
 import { ReportBlockModal } from "@/components/ReportBlockModal";
@@ -30,6 +30,14 @@ interface Reaction {
   reactedByMe: boolean;
 }
 
+interface ReplyPreview {
+  id: string;
+  content: string;
+  sender_id: string;
+  message_type: string;
+  is_unsent: boolean;
+}
+
 interface Message {
   id: string;
   match_id: string;
@@ -41,6 +49,7 @@ interface Message {
   is_unsent: boolean;
   sent_at: string;
   reactions: Reaction[];
+  reply_to: ReplyPreview | null;
 }
 
 const QUICK_REACT_EMOJIS = ["❤️", "😂", "😮", "😢", "👍", "🔥"];
@@ -67,6 +76,130 @@ export default function ChatPage() {
   const [receiptsUnlocked, setReceiptsUnlocked] = useState(false);
   const [isUnlockingReceipts, setIsUnlockingReceipts] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Long-press message action menu (React / Copy / Delete for me / Unsend)
+  const [selectedMsgId, setSelectedMsgId] = useState<string | null>(null);
+  const [menuOpenUp, setMenuOpenUp] = useState(false);
+  const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longTriggered = useRef(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Swipe-to-reply
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  const [swipingMessageId, setSwipingMessageId] = useState<string | null>(null);
+  const [swipeOffset, setSwipeOffset] = useState(0);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+  const touchStartX = useRef(0);
+  const touchStartY = useRef(0);
+  const isSwipeRef = useRef(false);
+  const SWIPE_TRIGGER = 50;
+  const SWIPE_MAX = 70;
+
+  const handleBubbleTouchStart = (msg: Message, e: React.TouchEvent | React.MouseEvent) => {
+    const point = "touches" in e ? e.touches[0] : e;
+    touchStartX.current = point.clientX;
+    touchStartY.current = point.clientY;
+    isSwipeRef.current = false;
+    startLongPress(msg.id, e);
+  };
+
+  const handleBubbleTouchMove = (msg: Message, e: React.TouchEvent | React.MouseEvent) => {
+    const point = "touches" in e ? e.touches[0] : e;
+    const dx = point.clientX - touchStartX.current;
+    const dy = point.clientY - touchStartY.current;
+
+    // Only commit to a swipe once horizontal movement clearly dominates
+    // vertical — avoids hijacking a normal vertical scroll of the chat.
+    if (!isSwipeRef.current && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      isSwipeRef.current = true;
+      cancelLongPress(); // this is a swipe, not a long-press
+    }
+
+    if (isSwipeRef.current && dx > 0) {
+      setSwipingMessageId(msg.id);
+      setSwipeOffset(Math.min(dx, SWIPE_MAX));
+    }
+  };
+
+  const handleBubbleTouchEnd = (msg: Message) => {
+    cancelLongPress();
+    if (isSwipeRef.current && swipeOffset >= SWIPE_TRIGGER && !msg.is_unsent) {
+      setReplyingTo(msg);
+    }
+    setSwipingMessageId(null);
+    setSwipeOffset(0);
+    isSwipeRef.current = false;
+  };
+
+  const scrollToMessage = (messageId: string) => {
+    const el = document.getElementById(`msg-${messageId}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightedMessageId(messageId);
+    setTimeout(() => setHighlightedMessageId(null), 1500);
+  };
+
+  useEffect(() => {
+    if (!selectedMsgId) return;
+    const handleOutsideClick = (e: MouseEvent | TouchEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setSelectedMsgId(null);
+      }
+    };
+    document.addEventListener("mousedown", handleOutsideClick);
+    document.addEventListener("touchstart", handleOutsideClick);
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+      document.removeEventListener("touchstart", handleOutsideClick);
+    };
+  }, [selectedMsgId]);
+
+  const decideMenuDirection = (target: HTMLElement | null | undefined) => {
+    if (!target) return;
+    const rect = target.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    setMenuOpenUp(spaceBelow < 180);
+  };
+
+  const startLongPress = (messageId: string, e: React.MouseEvent | React.TouchEvent) => {
+    longTriggered.current = false;
+    const target = e.currentTarget as HTMLElement;
+    longPressRef.current = setTimeout(() => {
+      longTriggered.current = true;
+      decideMenuDirection(target);
+      setSelectedMsgId(messageId);
+    }, 400);
+  };
+  const cancelLongPress = () => {
+    if (longPressRef.current) clearTimeout(longPressRef.current);
+  };
+
+  const handleCopy = (msg: Message) => {
+    navigator.clipboard
+      ?.writeText(msg.content)
+      .then(() => toast({ title: "Copied" }))
+      .catch(() => {});
+    setSelectedMsgId(null);
+  };
+
+  const handleDeleteForMe = async (messageId: string) => {
+    setSelectedMsgId(null);
+    // Optimistic — removed from view immediately regardless of network
+    // outcome, since this only ever affects this device's view of the
+    // conversation, never the other person's.
+    setMessages((prev) => prev.filter((m) => m.id !== messageId));
+    try {
+      const res = await fetch(`/api/messages/${messageId}/hide`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      // Non-fatal from the user's perspective — worst case it reappears
+      // on next reload. Not worth an error toast for a "delete for me"
+      // action that already visually succeeded.
+    }
+  };
 
   const isMyMsg = (senderId: string) => match?.matched_user?.id !== senderId;
 
@@ -177,6 +310,8 @@ export default function ChatPage() {
 
     setIsSending(true);
     setInput("");
+    const replyId = replyingTo?.id;
+    setReplyingTo(null);
     try {
       const res = await fetch(`/api/matches/${matchId}/messages`, {
         method: "POST",
@@ -184,7 +319,7 @@ export default function ChatPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content, reply_to_message_id: replyId }),
       });
 
       if (res.status === 402) {
@@ -356,7 +491,7 @@ export default function ChatPage() {
   const canUnsend = (msg: Message) => {
     if (msg.is_unsent) return false;
     if (!isMyMsg(msg.sender_id)) return false;
-    return Date.now() - new Date(msg.sent_at).getTime() <= 5 * 60 * 1000;
+    return Date.now() - new Date(msg.sent_at).getTime() <= 60 * 60 * 1000;
   };
 
   if (matchLoading) {
@@ -481,56 +616,129 @@ export default function ChatPage() {
             const isMedia = msg.message_type === "sticker" || msg.message_type === "gif";
 
             return (
-              <div key={msg.id} className="group">
-                <div className={`flex items-end gap-1.5 ${mine ? "justify-end" : "justify-start"}`}>
-                  {mine && showUnsend && (
-                    <button
-                      onClick={() => handleUnsend(msg.id)}
-                      title="Unsend"
-                      className="w-6 h-6 rounded-full flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-secondary transition-colors shrink-0 mb-1"
+              <div
+                key={msg.id}
+                id={`msg-${msg.id}`}
+                className={`group rounded-xl transition-colors duration-500 ${
+                  highlightedMessageId === msg.id ? "bg-primary/10" : ""
+                }`}
+              >
+                <div className={`flex items-end gap-1.5 relative ${mine ? "justify-end" : "justify-start"}`}>
+                  {selectedMsgId === msg.id && (
+                    <div
+                      ref={menuRef}
+                      className={`absolute z-50 ${menuOpenUp ? "bottom-full mb-1" : "top-full mt-1"} ${
+                        mine ? "right-0" : "left-0"
+                      } bg-card border border-card-border rounded-xl shadow-lg overflow-hidden min-w-[170px]`}
                     >
-                      <Undo2 size={14} />
-                    </button>
+                      {!msg.is_unsent && (
+                        <button
+                          onClick={() => {
+                            setSelectedMsgId(null);
+                            setReactingToMessageId(msg.id);
+                          }}
+                          className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-foreground hover:bg-secondary"
+                        >
+                          <Smile size={16} className="text-muted-foreground" /> React
+                        </button>
+                      )}
+                      {msg.message_type === "text" && !msg.is_unsent && (
+                        <button
+                          onClick={() => handleCopy(msg)}
+                          className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-foreground hover:bg-secondary"
+                        >
+                          <Copy size={16} className="text-muted-foreground" /> Copy
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleDeleteForMe(msg.id)}
+                        className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-foreground hover:bg-secondary"
+                      >
+                        <Trash2 size={16} className="text-muted-foreground" /> Delete
+                      </button>
+                      {mine && showUnsend && (
+                        <button
+                          onClick={() => {
+                            setSelectedMsgId(null);
+                            handleUnsend(msg.id);
+                          }}
+                          className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-destructive hover:bg-secondary"
+                        >
+                          <Undo2 size={16} /> Unsend
+                        </button>
+                      )}
+                    </div>
                   )}
 
-                  {!mine && !msg.is_unsent && (
-                    <button
-                      onClick={() => setReactingToMessageId(reactingToMessageId === msg.id ? null : msg.id)}
-                      className="w-6 h-6 rounded-full flex items-center justify-center text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-secondary transition-opacity shrink-0 mb-1"
+                  {/* Swipe-to-reply indicator — fades in as the bubble is
+                      dragged right, matching WhatsApp/TikTok's pattern. */}
+                  {!msg.is_unsent && (
+                    <div
+                      className="flex items-center justify-center w-7 h-7 rounded-full bg-secondary text-muted-foreground shrink-0 mb-1 transition-opacity"
+                      style={{
+                        opacity: swipingMessageId === msg.id ? Math.min(swipeOffset / SWIPE_TRIGGER, 1) : 0,
+                        order: mine ? 2 : -1,
+                      }}
                     >
-                      <Smile size={14} />
-                    </button>
+                      <Reply size={14} />
+                    </div>
                   )}
 
                   {msg.is_unsent ? (
                     <div className="max-w-[75%] px-4 py-2.5 text-[15px] leading-snug bg-secondary text-foreground rounded-2xl opacity-50 italic line-through">
                       Message unsent
                     </div>
-                  ) : msg.message_type === "sticker" ? (
-                    <div className="text-6xl leading-none">{msg.content}</div>
-                  ) : msg.message_type === "gif" ? (
-                    <div className="max-w-[65%] rounded-2xl overflow-hidden">
-                      <img src={msg.media_url ?? ""} alt="GIF" className="w-full h-auto" />
-                    </div>
                   ) : (
                     <div
-                      className={`max-w-[75%] px-4 py-2.5 text-[15px] leading-snug ${
-                        mine
-                          ? "bg-primary text-white rounded-2xl rounded-tr-sm"
-                          : "bg-secondary text-foreground rounded-2xl rounded-tl-sm"
-                      }`}
+                      onMouseDown={(e) => handleBubbleTouchStart(msg, e)}
+                      onMouseMove={(e) => handleBubbleTouchMove(msg, e)}
+                      onMouseUp={() => handleBubbleTouchEnd(msg)}
+                      onMouseLeave={() => handleBubbleTouchEnd(msg)}
+                      onTouchStart={(e) => handleBubbleTouchStart(msg, e)}
+                      onTouchMove={(e) => handleBubbleTouchMove(msg, e)}
+                      onTouchEnd={() => handleBubbleTouchEnd(msg)}
+                      onContextMenu={(e) => e.preventDefault()}
+                      style={{
+                        transform: swipingMessageId === msg.id ? `translateX(${swipeOffset}px)` : undefined,
+                        transition: swipingMessageId === msg.id ? "none" : "transform 0.2s",
+                      }}
                     >
-                      {msg.content}
+                      {msg.reply_to && (
+                        <button
+                          onClick={() => scrollToMessage(msg.reply_to!.id)}
+                          className={`block max-w-[75%] mb-1 px-3 py-1.5 rounded-xl border-l-2 border-primary bg-secondary/60 text-left ${
+                            mine ? "ml-auto" : ""
+                          }`}
+                        >
+                          <p className="text-xs text-muted-foreground truncate">
+                            {msg.reply_to.is_unsent
+                              ? "Message unsent"
+                              : msg.reply_to.message_type === "gif"
+                                ? "GIF"
+                                : msg.reply_to.message_type === "sticker"
+                                  ? msg.reply_to.content
+                                  : msg.reply_to.content}
+                          </p>
+                        </button>
+                      )}
+                      {msg.message_type === "sticker" ? (
+                        <div className="text-6xl leading-none">{msg.content}</div>
+                      ) : msg.message_type === "gif" ? (
+                        <div className="max-w-[65%] rounded-2xl overflow-hidden">
+                          <img src={msg.media_url ?? ""} alt="GIF" className="w-full h-auto" />
+                        </div>
+                      ) : (
+                        <div
+                          className={`max-w-[75%] px-4 py-2.5 text-[15px] leading-snug select-none ${
+                            mine
+                              ? "bg-primary text-white rounded-2xl rounded-tr-sm"
+                              : "bg-secondary text-foreground rounded-2xl rounded-tl-sm"
+                          }`}
+                        >
+                          {msg.content}
+                        </div>
+                      )}
                     </div>
-                  )}
-
-                  {mine && !msg.is_unsent && (
-                    <button
-                      onClick={() => setReactingToMessageId(reactingToMessageId === msg.id ? null : msg.id)}
-                      className="w-6 h-6 rounded-full flex items-center justify-center text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-secondary transition-opacity shrink-0 mb-1"
-                    >
-                      <Smile size={14} />
-                    </button>
                   )}
                 </div>
 
@@ -587,6 +795,24 @@ export default function ChatPage() {
           bottom nav, so this only needs a modest bottom padding, not its
           own large offset on top of that. */}
       <div className="flex-none bg-background border-t border-border px-4 py-3">
+        {replyingTo && (
+          <div className="flex items-center justify-between gap-2 mb-2 pl-3 pr-2 py-1.5 rounded-xl bg-secondary/60 border-l-2 border-primary">
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-primary">
+                Replying to {isMyMsg(replyingTo.sender_id) ? "yourself" : match.matched_user?.name}
+              </p>
+              <p className="text-xs text-muted-foreground truncate">
+                {replyingTo.message_type === "gif" ? "GIF" : replyingTo.content}
+              </p>
+            </div>
+            <button
+              onClick={() => setReplyingTo(null)}
+              className="w-6 h-6 rounded-full flex items-center justify-center text-muted-foreground hover:bg-secondary shrink-0"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
         <form onSubmit={handleSend} className="flex gap-2 items-end">
           <button
             type="button"

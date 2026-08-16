@@ -38,6 +38,36 @@ async function attachReactions<T extends { id: string }>(
   return messages.map((m) => ({ ...m, reactions: byMessage.get(m.id) ?? [] }));
 }
 
+/** Attaches a `reply_to` preview to each message that has a
+ *  reply_to_message_id set — enough info for a quoted-reply UI (id,
+ *  content, sender, type, whether it's since been unsent) without the
+ *  frontend needing a second round-trip. null if the message isn't a
+ *  reply, or if the original couldn't be found for any reason. */
+async function attachReplyContext<T extends { id: string; reply_to_message_id: string | null }>(
+  messages: T[],
+): Promise<
+  (T & {
+    reply_to: { id: string; content: string; sender_id: string; message_type: string; is_unsent: boolean } | null;
+  })[]
+> {
+  const replyIds = [...new Set(messages.map((m) => m.reply_to_message_id).filter((id): id is string => !!id))];
+  if (replyIds.length === 0) {
+    return messages.map((m) => ({ ...m, reply_to: null }));
+  }
+
+  const { data: originals } = await supabase
+    .from("messages")
+    .select("id, content, sender_id, message_type, is_unsent")
+    .in("id", replyIds);
+
+  const byId = new Map((originals ?? []).map((o) => [o.id, o]));
+
+  return messages.map((m) => ({
+    ...m,
+    reply_to: m.reply_to_message_id ? (byId.get(m.reply_to_message_id) ?? null) : null,
+  }));
+}
+
 /** GET /api/matches/:matchId/messages */
 router.get("/matches/:matchId/messages", requireAuth, async (req, res): Promise<void> => {
   const matchId = Array.isArray(req.params.matchId)
@@ -64,6 +94,12 @@ router.get("/matches/:matchId/messages", requireAuth, async (req, res): Promise<
     .eq("is_unsent", false)
     .order("sent_at", { ascending: true });
 
+  const { data: hidden } = await supabase
+    .from("hidden_messages")
+    .select("message_id")
+    .eq("user_id", userId);
+  const hiddenIds = new Set((hidden ?? []).map((h) => h.message_id));
+
   const { data: unlock } = await supabase
     .from("read_receipt_unlocks")
     .select("match_id")
@@ -77,11 +113,12 @@ router.get("/matches/:matchId/messages", requireAuth, async (req, res): Promise<
   // unlock read receipts for this match. Messages from the other person
   // always show their real is_read value (that's about my own reading
   // activity, not something to gate).
-  const visibleMessages = (messages ?? []).map((m) =>
-    m.sender_id === userId && !hasUnlockedReceipts ? { ...m, is_read: false } : m,
-  );
+  const visibleMessages = (messages ?? [])
+    .filter((m) => !hiddenIds.has(m.id))
+    .map((m) => (m.sender_id === userId && !hasUnlockedReceipts ? { ...m, is_read: false } : m));
 
   const withReactions = await attachReactions(visibleMessages, userId);
+  const withReplyContext = await attachReplyContext(withReactions);
 
   await supabase
     .from("messages")
@@ -90,7 +127,7 @@ router.get("/matches/:matchId/messages", requireAuth, async (req, res): Promise<
     .neq("sender_id", userId)
     .eq("is_read", false);
 
-  res.json(withReactions);
+  res.json(withReplyContext);
 });
 
 /** GET /api/matches/:matchId/read-receipts/status */
@@ -163,10 +200,11 @@ router.post("/matches/:matchId/messages", requireAuth, async (req, res): Promise
     : req.params.matchId;
   const userId = req.user!.id;
 
-  const { content, message_type, media_url } = req.body as {
+  const { content, message_type, media_url, reply_to_message_id } = req.body as {
     content?: string;
     message_type?: "text" | "sticker" | "gif";
     media_url?: string;
+    reply_to_message_id?: string;
   };
 
   const type = message_type ?? "text";
@@ -198,6 +236,20 @@ router.post("/matches/:matchId/messages", requireAuth, async (req, res): Promise
     return;
   }
 
+  // Reject replying to a message from a different conversation entirely
+  // — never trust a client-supplied ID without confirming it actually
+  // belongs to this same match.
+  let validatedReplyToId: string | null = null;
+  if (reply_to_message_id) {
+    const { data: original } = await supabase
+      .from("messages")
+      .select("id")
+      .eq("id", reply_to_message_id)
+      .eq("match_id", matchId)
+      .maybeSingle();
+    if (original) validatedReplyToId = original.id;
+  }
+
   const { cost_send_message } = await getEconomyConfig();
   const spend = await spendSparks(userId, cost_send_message, "Message sent");
   if (!spend.success) {
@@ -213,6 +265,7 @@ router.post("/matches/:matchId/messages", requireAuth, async (req, res): Promise
       content: content?.trim() ?? "",
       message_type: type,
       media_url: media_url ?? null,
+      reply_to_message_id: validatedReplyToId,
     })
     .select("*")
     .single();
@@ -227,7 +280,9 @@ router.post("/matches/:matchId/messages", requireAuth, async (req, res): Promise
     .update({ message_count: match.message_count + 1 })
     .eq("id", matchId);
 
-  res.status(201).json({ ...message, reactions: [], sparks_balance: spend.balance });
+  const [{ reply_to }] = await attachReplyContext([message]);
+
+  res.status(201).json({ ...message, reactions: [], reply_to, sparks_balance: spend.balance });
 });
 
 /** POST /api/messages/:messageId/react — toggle an emoji reaction. Free
@@ -319,8 +374,8 @@ router.post("/messages/:messageId/unsend", requireAuth, async (req, res): Promis
 
   const sentAt = new Date(message.sent_at).getTime();
   const now = Date.now();
-  if (now - sentAt > 5 * 60 * 1000) {
-    res.status(410).json({ error: "Unsend window expired (5 minutes)" });
+  if (now - sentAt > 60 * 60 * 1000) {
+    res.status(410).json({ error: "Unsend window expired (1 hour)" });
     return;
   }
 
@@ -344,6 +399,46 @@ router.post("/messages/:messageId/unsend", requireAuth, async (req, res): Promis
   }
 
   res.json({ ...updated, sparks_balance: spend.balance });
+});
+
+/** POST /api/messages/:messageId/hide — "Delete for me." Free, no time
+ *  limit, affects only the caller's own view — the message is untouched
+ *  for the other person. Idempotent: hiding an already-hidden message is
+ *  a harmless no-op (upsert), not an error. */
+router.post("/messages/:messageId/hide", requireAuth, async (req, res): Promise<void> => {
+  const messageId = Array.isArray(req.params.messageId)
+    ? req.params.messageId[0]
+    : req.params.messageId;
+  const userId = req.user!.id;
+
+  const { data: message } = await supabase
+    .from("messages")
+    .select("id, match_id")
+    .eq("id", messageId)
+    .single();
+
+  if (!message) {
+    res.status(404).json({ error: "Message not found" });
+    return;
+  }
+
+  const { data: match } = await supabase
+    .from("matches")
+    .select("id")
+    .eq("id", message.match_id)
+    .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
+    .maybeSingle();
+
+  if (!match) {
+    res.status(404).json({ error: "Message not found" });
+    return;
+  }
+
+  await supabase
+    .from("hidden_messages")
+    .upsert({ user_id: userId, message_id: messageId }, { onConflict: "user_id,message_id" });
+
+  res.sendStatus(204);
 });
 
 export default router;
