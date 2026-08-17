@@ -1,7 +1,13 @@
 import { useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { GoogleSignIn } from "@capawesome/capacitor-google-sign-in";
-import { useAuth } from "@/contexts/AuthContext";
+import { BiometricAuth, AndroidBiometryStrength } from "@aparajita/capacitor-biometric-auth";
+import {
+  useAuth,
+  getSignInMethod,
+  disableBiometricSignIn,
+  loadBiometricRefreshToken,
+} from "@/contexts/AuthContext";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -12,9 +18,89 @@ import { Button } from "@/components/ui/button";
 import { useLocation } from "wouter";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Fingerprint } from "lucide-react";
 import { BlockedAccountScreen, type BlockInfo } from "@/components/BlockedAccountScreen";
 import { supabaseClient } from "@/lib/supabaseClient";
+
+// Runs the OS-level (or WebAuthn) fingerprint prompt, then exchanges the
+// biometric-gated refresh token for a fresh session via the same
+// /api/auth/refresh endpoint AuthContext's own doRefresh() uses — so a
+// biometric login rotates the token exactly like a normal silent refresh
+// does, and applySession() picks up and re-stores the new gated copy
+// automatically since SIGNIN_METHOD_KEY is already "biometric" at that
+// point.
+//
+// Throws one of: "no-credential" | "unsupported" | "cancelled" |
+// "fingerprint-failed" | "session-expired" — the caller maps these to
+// user-facing behavior.
+async function triggerBiometricLogin(): Promise<{
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+}> {
+  const refreshToken = loadBiometricRefreshToken();
+  if (!refreshToken) throw new Error("no-credential");
+
+  if (Capacitor.isNativePlatform()) {
+    const check = await BiometricAuth.checkBiometry();
+    if (!check.strongBiometryIsAvailable) {
+      throw new Error(check.strongCode === "biometryNotEnrolled" ? "no-credential" : "unsupported");
+    }
+    try {
+      await BiometricAuth.authenticate({
+        reason: "Sign in to Deeply",
+        androidTitle: "Deeply",
+        androidSubtitle: "Sign in with your fingerprint",
+        androidBiometryStrength: AndroidBiometryStrength.strong,
+      });
+    } catch (err) {
+      const code = (err as { code?: string } | undefined)?.code;
+      if (code === "userCancel" || code === "systemCancel" || code === "appCancel") {
+        throw new Error("cancelled");
+      }
+      throw new Error("fingerprint-failed");
+    }
+  } else {
+    // Web — WebAuthn verification against the credential saved at
+    // registration time in SettingsPage.
+    if (!window.PublicKeyCredential) throw new Error("unsupported");
+    const storedId = localStorage.getItem("deeply_biometric_credential_id");
+    if (!storedId) throw new Error("no-credential");
+    const challenge = new Uint8Array(32);
+    crypto.getRandomValues(challenge);
+    const rawId = Uint8Array.from(atob(storedId), (c) => c.charCodeAt(0));
+    try {
+      const assertion = await navigator.credentials.get({
+        publicKey: {
+          challenge,
+          allowCredentials: [{ id: rawId, type: "public-key" }],
+          userVerification: "required",
+          timeout: 60000,
+        },
+      });
+      if (!assertion) throw new Error("fingerprint-failed");
+    } catch (err) {
+      if ((err as { name?: string } | undefined)?.name === "NotAllowedError") {
+        throw new Error("cancelled");
+      }
+      throw new Error("fingerprint-failed");
+    }
+  }
+
+  // Fingerprint confirmed — now actually redeem the gated refresh token.
+  const res = await fetch("/api/auth/refresh", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  });
+  const body = await res.json().catch(() => ({}));
+  // A rejected refresh here almost always means the refresh token was
+  // already rotated out from under the gated copy (e.g. it was used
+  // elsewhere, or is simply too old) — the fingerprint itself succeeded,
+  // it's the stored token that's dead.
+  if (!res.ok) throw new Error("session-expired");
+  return { access_token: body.access_token, refresh_token: body.refresh_token, expires_in: body.expires_in };
+}
 
 /** Google's official multi-color "G" mark — used per Google's own brand
  *  guidelines for "Sign in with Google" buttons. */
@@ -97,6 +183,61 @@ export default function AuthPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [blockInfo, setBlockInfo] = useState<BlockInfo | null>(null);
+
+  // "idle" / "biometric-loading" / "biometric-error" show the fingerprint
+  // screen instead of the normal form. Starts there only if biometric
+  // sign-in was actually registered on this device (checked once, on
+  // mount) — if the user then chooses "Use password instead", this
+  // permanently becomes "password" for the rest of this page's lifetime,
+  // same as Deeply's other one-shot mount checks elsewhere in this file.
+  const [loginStage, setLoginStage] = useState<"idle" | "biometric-loading" | "biometric-error" | "password">(
+    () => (getSignInMethod() === "biometric" ? "idle" : "password")
+  );
+
+  const handleBiometricLogin = async () => {
+    setLoginStage("biometric-loading");
+    try {
+      const session = await triggerBiometricLogin();
+      login(session.access_token, session.refresh_token, session.expires_in);
+      // Same onboarding check the Google native flow does below — login()
+      // alone would let PublicRoute's isAuthenticated redirect send
+      // everyone straight to /discover, including anyone who still needs
+      // onboarding.
+      try {
+        const res = await fetch("/api/profile/me", {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        const profile = res.ok ? await res.json() : null;
+        setLocation(profile?.onboarding_completed ? "/discover" : "/onboarding");
+      } catch {
+        setLocation("/discover");
+      }
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : "fingerprint-failed";
+      if (reason === "cancelled") {
+        setLoginStage("idle");
+      } else if (reason === "no-credential" || reason === "unsupported") {
+        disableBiometricSignIn();
+        setLoginStage("password");
+        toast({
+          title: "Biometric unavailable",
+          description:
+            "No fingerprint is enrolled on this device, or it was removed. Sign in with your password, then re-enable biometric sign-in in Settings if you'd like.",
+          variant: "destructive",
+        });
+      } else if (reason === "session-expired") {
+        disableBiometricSignIn();
+        setLoginStage("password");
+        toast({
+          title: "Session expired",
+          description: "Your biometric session expired. Sign in with your password once — you can re-enable biometric sign-in in Settings afterward.",
+          variant: "destructive",
+        });
+      } else {
+        setLoginStage("biometric-error");
+      }
+    }
+  };
 
   const loginForm = useForm<z.infer<typeof loginSchema>>({
     resolver: zodResolver(loginSchema),
@@ -340,6 +481,45 @@ export default function AuthPage() {
 
   if (blockInfo) {
     return <BlockedAccountScreen blockInfo={blockInfo} onBack={() => setBlockInfo(null)} />;
+  }
+
+  if (loginStage === "idle" || loginStage === "biometric-loading" || loginStage === "biometric-error") {
+    return (
+      <div className="min-h-[100dvh] overflow-y-auto flex flex-col px-6 w-full relative">
+        <div className="absolute top-[-10%] left-[-20%] w-[150%] h-[50%] bg-primary/20 blur-[120px] rounded-full pointer-events-none" />
+        <div className="z-10 w-full max-w-sm mx-auto my-auto py-10 text-center">
+          <img src="/deeply-logo.png" alt="Deeply" className="h-16 w-auto mx-auto" />
+          <p className="text-muted-foreground text-sm mt-4 mb-10">
+            Deep connections begin with a spark.
+          </p>
+
+          <button
+            type="button"
+            onClick={handleBiometricLogin}
+            disabled={loginStage === "biometric-loading"}
+            className="w-24 h-24 rounded-full bg-card border border-card-border flex items-center justify-center mx-auto mb-6 hover:bg-card/70 transition-colors disabled:opacity-60"
+          >
+            <Fingerprint size={40} className={loginStage === "biometric-error" ? "text-destructive" : "text-primary"} />
+          </button>
+
+          <p className="text-sm font-medium mb-8">
+            {loginStage === "biometric-loading"
+              ? "Verifying…"
+              : loginStage === "biometric-error"
+                ? "Not recognised — tap to try again"
+                : "Tap to sign in with Biometric"}
+          </p>
+
+          <button
+            type="button"
+            onClick={() => setLoginStage("password")}
+            className="text-muted-foreground text-sm hover:text-primary transition-colors font-medium"
+          >
+            Use password instead
+          </button>
+        </div>
+      </div>
+    );
   }
 
   if (showForgotPassword) {
@@ -629,13 +809,22 @@ export default function AuthPage() {
           )}
         </AnimatePresence>
 
-        <div className="mt-6 text-center">
+        <div className="mt-6 text-center space-y-2">
           <button
             onClick={() => setIsLogin(!isLogin)}
-            className="text-muted-foreground text-sm hover:text-primary transition-colors font-medium"
+            className="text-muted-foreground text-sm hover:text-primary transition-colors font-medium block w-full"
           >
             {isLogin ? "Don't have an account? Sign up" : "Already have an account? Log in"}
           </button>
+          {isLogin && getSignInMethod() === "biometric" && (
+            <button
+              type="button"
+              onClick={() => setLoginStage("idle")}
+              className="text-muted-foreground text-sm hover:text-primary transition-colors font-medium inline-flex items-center gap-1.5"
+            >
+              <Fingerprint size={14} /> Use biometric instead
+            </button>
+          )}
         </div>
       </div>
     </div>

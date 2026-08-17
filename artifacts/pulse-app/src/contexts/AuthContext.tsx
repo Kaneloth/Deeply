@@ -11,6 +11,15 @@ const ACCESS_TOKEN_KEY = "deeply_access_token";
 const REFRESH_TOKEN_KEY = "deeply_refresh_token";
 const EXPIRES_AT_KEY = "deeply_expires_at";
 
+// Separate from REFRESH_TOKEN_KEY on purpose: this copy is gated behind a
+// successful biometric prompt on the login screen, so logout() clearing the
+// normal tokens must NOT touch it. It's kept in lockstep with every token
+// rotation (see applySession) so biometric sign-in keeps working after the
+// very first refresh cycle, instead of dying the moment the initially
+// registered refresh token gets rotated out from under it.
+const BIOMETRIC_REFRESH_TOKEN_KEY = "deeply_biometric_refresh_token";
+const SIGNIN_METHOD_KEY = "deeply_signin_method";
+
 // Refresh this many ms before actual expiry, so we never hand out a token
 // that's about to die mid-request.
 const REFRESH_BUFFER_MS = 60_000;
@@ -88,6 +97,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
     localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
     localStorage.setItem(EXPIRES_AT_KEY, String(expiresAt));
+    // If biometric sign-in is enabled, roll the gated copy forward too —
+    // otherwise it'd still hold the token from whenever it was registered,
+    // which will eventually be a stale/already-rotated-out refresh token.
+    if (localStorage.getItem(SIGNIN_METHOD_KEY) === "biometric") {
+      localStorage.setItem(BIOMETRIC_REFRESH_TOKEN_KEY, refreshToken);
+    }
     setAuthTokenGetter(() => accessToken);
     setToken(accessToken);
     scheduleRefresh(expiresAt);
@@ -266,4 +281,44 @@ export function useAuth() {
     throw new Error("useAuth must be used within an AuthProvider");
   }
   return context;
+}
+
+// --- Biometric sign-in helpers -------------------------------------------
+// Plain module-level functions (not part of AuthContextType) so both
+// SettingsPage (to register/unregister) and AuthPage (to sign in) can read
+// and write this without needing to be inside the provider tree in any
+// special way beyond the usual localStorage access.
+
+export type SignInMethod = "password" | "biometric";
+
+export function getSignInMethod(): SignInMethod {
+  return localStorage.getItem(SIGNIN_METHOD_KEY) === "biometric" ? "biometric" : "password";
+}
+
+export function getCurrentRefreshToken(): string | null {
+  return localStorage.getItem(REFRESH_TOKEN_KEY);
+}
+
+// Call after confirming biometric enrollment succeeded, to turn the
+// feature on and snapshot the current refresh token as the gated copy.
+export function enableBiometricSignIn(refreshToken: string) {
+  localStorage.setItem(SIGNIN_METHOD_KEY, "biometric");
+  localStorage.setItem(BIOMETRIC_REFRESH_TOKEN_KEY, refreshToken);
+}
+
+// Turns biometric sign-in off and wipes the gated copy. Does not touch the
+// normal session (ACCESS_TOKEN_KEY / REFRESH_TOKEN_KEY) — the user stays
+// logged in on this device, they just won't be offered fingerprint at their
+// next login.
+export function disableBiometricSignIn() {
+  localStorage.removeItem(SIGNIN_METHOD_KEY);
+  localStorage.removeItem(BIOMETRIC_REFRESH_TOKEN_KEY);
+}
+
+// For AuthPage: the refresh token to use once the OS-level biometric
+// prompt has succeeded. Null means biometric was never registered, or was
+// switched off.
+export function loadBiometricRefreshToken(): string | null {
+  if (getSignInMethod() !== "biometric") return null;
+  return localStorage.getItem(BIOMETRIC_REFRESH_TOKEN_KEY);
 }

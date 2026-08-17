@@ -1,7 +1,15 @@
 import { useState, useEffect } from "react";
 import { Capacitor } from "@capacitor/core";
 import { Browser } from "@capacitor/browser";
-import { useAuth } from "@/contexts/AuthContext";
+import { BiometricAuth, AndroidBiometryStrength } from "@aparajita/capacitor-biometric-auth";
+import {
+  useAuth,
+  getSignInMethod,
+  getCurrentRefreshToken,
+  enableBiometricSignIn,
+  disableBiometricSignIn,
+  type SignInMethod,
+} from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useTextSize, type TextSize } from "@/contexts/TextSizeContext";
 import { Button } from "@/components/ui/button";
@@ -14,7 +22,67 @@ import {
   LogOut, Moon, Sun, Type, Lock, HelpCircle, LifeBuoy, Trash2,
   ChevronRight, AlertTriangle, Eye, EyeOff, Mail, EyeOff as IncognitoIcon,
   ShieldOff, X as XIcon, ScanEye, Send, FileText, ShieldCheck,
+  Fingerprint, Loader2, Info,
 } from "lucide-react";
+
+// Registers biometric sign-in on this device. Native: OS-level fingerprint
+// via Capacitor. Web: WebAuthn platform authenticator (Touch ID, Windows
+// Hello, Android Chrome's fingerprint prompt), for browsers that support
+// it. Throws with a user-facing message on failure/unavailability.
+async function registerBiometric(email: string | null) {
+  if (Capacitor.isNativePlatform()) {
+    // strongBiometryIsAvailable specifically means fingerprint-tier
+    // (Class 3) biometry — most devices classify face unlock as "weak"
+    // (Class 2), so checking this instead of isAvailable keeps this
+    // fingerprint-only, matching what we actually prompt for below.
+    const check = await BiometricAuth.checkBiometry();
+    if (!check.strongBiometryIsAvailable) {
+      throw new Error(
+        check.strongCode === "biometryNotEnrolled"
+          ? "No fingerprint enrolled on this device. Add one in your device settings first, then try again."
+          : "Fingerprint authentication is not available on this device."
+      );
+    }
+    // Confirm it actually works before turning the setting on, so we
+    // never flip signInMethod to "biometric" without having proven it
+    // succeeds.
+    await BiometricAuth.authenticate({
+      reason: "Confirm it's you to enable biometric sign-in",
+      androidTitle: "Deeply",
+      androidSubtitle: "Set up biometric sign-in",
+      androidBiometryStrength: AndroidBiometryStrength.strong,
+    });
+    return;
+  }
+
+  // Web — independent capability from the native path above, for
+  // browsers with a platform authenticator.
+  if (!window.PublicKeyCredential) {
+    throw new Error("Fingerprint authentication is not supported on this device or browser.");
+  }
+  const challenge = new Uint8Array(32);
+  crypto.getRandomValues(challenge);
+  const credential = (await navigator.credentials.create({
+    publicKey: {
+      challenge,
+      rp: { name: "Deeply", id: window.location.hostname },
+      user: {
+        id: new TextEncoder().encode(email ?? "deeply-user"),
+        name: email ?? "user",
+        displayName: email ?? "User",
+      },
+      pubKeyCredParams: [
+        { alg: -7, type: "public-key" },
+        { alg: -257, type: "public-key" },
+      ],
+      authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required" },
+      timeout: 60000,
+    },
+  })) as PublicKeyCredential | null;
+  if (!credential) throw new Error("Fingerprint enrollment failed.");
+  const raw = credential.rawId;
+  localStorage.setItem("deeply_biometric_credential_id", btoa(String.fromCharCode(...new Uint8Array(raw))));
+}
 
 // Opens external legal pages properly on native (a real, dismissible
 // in-app browser sheet via Capacitor) instead of a plain <a href>, which
@@ -71,6 +139,9 @@ export default function SettingsPage() {
 
   const [email, setEmail] = useState<string | null>(null);
   const [adminAccess, setAdminAccess] = useState<{ isAdmin: boolean; isSuperAdmin: boolean; scopes: string[] } | null>(null);
+
+  const [signInMethod, setSignInMethodState] = useState<SignInMethod>("password");
+  const [biometricLoading, setBiometricLoading] = useState(false);
 
   const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
@@ -218,6 +289,41 @@ export default function SettingsPage() {
       });
     } finally {
       setIsTogglingProfileViews(false);
+    }
+  };
+
+  useEffect(() => {
+    setSignInMethodState(getSignInMethod());
+  }, []);
+
+  const toggleSignInMethod = async () => {
+    const switchingTo: SignInMethod = signInMethod === "password" ? "biometric" : "password";
+
+    if (switchingTo === "biometric") {
+      setBiometricLoading(true);
+      try {
+        await registerBiometric(email);
+        const refreshToken = getCurrentRefreshToken();
+        if (!refreshToken) throw new Error("Missing session — please log in again and retry.");
+        enableBiometricSignIn(refreshToken);
+        setSignInMethodState("biometric");
+        toast({
+          title: "Biometric sign-in enabled",
+          description: "You can now sign in with your fingerprint.",
+        });
+      } catch (err) {
+        toast({
+          title: "Error",
+          description: err instanceof Error ? err.message : "Biometric setup failed.",
+          variant: "destructive",
+        });
+      } finally {
+        setBiometricLoading(false);
+      }
+    } else {
+      disableBiometricSignIn();
+      setSignInMethodState("password");
+      toast({ title: "Sign-in method changed to Password" });
     }
   };
 
@@ -371,6 +477,50 @@ export default function SettingsPage() {
               </div>
             </div>
           )}
+
+          <div className="bg-card border border-card-border rounded-2xl p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                {signInMethod === "biometric" ? (
+                  <Fingerprint size={18} className="text-primary" />
+                ) : (
+                  <Lock size={18} className="text-muted-foreground" />
+                )}
+                <div className="text-left">
+                  <p className="text-sm font-medium">Sign-in method</p>
+                  <p className="text-xs text-muted-foreground">
+                    Currently: {signInMethod === "biometric" ? "Fingerprint / Biometric" : "Password"}
+                  </p>
+                </div>
+              </div>
+              <Button
+                onClick={toggleSignInMethod}
+                disabled={biometricLoading}
+                variant="outline"
+                className="h-9 rounded-xl text-xs px-3 gap-1.5"
+              >
+                {biometricLoading && <Loader2 size={12} className="animate-spin" />}
+                Switch to {signInMethod === "password" ? "Biometric" : "Password"}
+              </Button>
+            </div>
+            {signInMethod === "biometric" ? (
+              <>
+                <p className="text-xs text-muted-foreground mt-3 pl-8">
+                  Your fingerprint is registered on this device. The Sign In button on the login screen will prompt your fingerprint directly.
+                </p>
+                <div className="mt-2 pl-8 flex items-start gap-1.5">
+                  <Info size={13} className="text-muted-foreground shrink-0 mt-0.5" />
+                  <p className="text-[11px] text-muted-foreground">
+                    Using a new device? Switch to Password and then back to Biometric to register your fingerprint there too.
+                  </p>
+                </div>
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground mt-3 pl-8">
+                Switch to Biometric to use your device fingerprint sensor at login. You'll be prompted to scan your finger once to register.
+              </p>
+            )}
+          </div>
 
           <div className="bg-card border border-card-border rounded-2xl p-4">
             <button

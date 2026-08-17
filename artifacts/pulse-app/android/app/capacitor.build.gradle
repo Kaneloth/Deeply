@@ -9,11 +9,13 @@ android {
 
 apply from: "../capacitor-cordova-android-plugins/cordova.variables.gradle"
 dependencies {
+    implementation project(':aparajita-capacitor-biometric-auth')
     implementation project(':capacitor-app')
-    implementation project(':capgo-native-purchases')
-    implementation project(':sentry-capacitor')
+    implementation project(':capacitor-browser')
     implementation project(':capacitor-camera')
     implementation project(':capawesome-capacitor-google-sign-in')
+    implementation project(':capgo-native-purchases')
+    implementation project(':sentry-capacitor')
 
 }
 
