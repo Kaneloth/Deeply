@@ -12,7 +12,7 @@ include ':sentry-capacitor'
 project(':sentry-capacitor').projectDir = new File('../../../node_modules/.pnpm/@sentry+capacitor@1.5.0_@capacitor+core@8.5.0_@sentry+react@8.55.0_react@19.1.0_/node_modules/@sentry/capacitor/android')
 
 include ':capacitor-camera'
-project(':capacitor-camera').projectDir = new File('../../../node_modules/.pnpm/@capacitor+camera@7.0.5_@capacitor+core@8.5.0/node_modules/@capacitor/camera/android')
+project(':capacitor-camera').projectDir = new File('../../../node_modules/.pnpm/@capacitor+camera@8.2.2_@capacitor+core@8.5.0/node_modules/@capacitor/camera/android')
 
 include ':capawesome-capacitor-google-sign-in'
 project(':capawesome-capacitor-google-sign-in').projectDir = new File('../../../node_modules/.pnpm/@capawesome+capacitor-google-sign-in@0.1.2_@capacitor+core@8.5.0/node_modules/@capawesome/capacitor-google-sign-in/android')

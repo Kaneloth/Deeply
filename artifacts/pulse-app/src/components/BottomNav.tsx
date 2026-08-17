@@ -2,6 +2,7 @@ import { ReactNode, useState, useEffect, useCallback } from "react";
 import { Link, useLocation } from "wouter";
 import { Compass, Search, Mail, Heart, HeartHandshake, SlidersHorizontal } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useInvites } from "@/contexts/InvitesContext";
 
 const INDICATOR_POLL_INTERVAL_MS = 45_000;
 
@@ -21,7 +22,7 @@ export function BottomNav() {
   const [location] = useLocation();
   const { token } = useAuth();
   const [hasMatchIndicator, setHasMatchIndicator] = useState(false);
-  const [invitesCount, setInvitesCount] = useState(0);
+  const { invitesCount } = useInvites();
 
   const fetchIndicatorStatus = useCallback(async () => {
     try {
@@ -35,48 +36,16 @@ export function BottomNav() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  // Fetched independently here, not borrowed from DiscoverPage/
-  // DiscoverControlsContext — that context only holds data while
-  // DiscoverPage is actually mounted, so relying on it here would make
-  // this badge vanish the moment you navigate to any other tab. This
-  // bar is visible everywhere, so its data needs to be too. Same
-  // self-contained poll-plus-route-change-refetch pattern as the match
-  // indicator right below it.
-  //
-  // Only new_count feeds the badge — NOT revealed.length. revealed is
-  // the list of inviters already paid-for and permanently visible on
-  // the Invites page; counting them here too would mean the badge never
-  // goes down even after you've seen and dealt with every one of them.
-  // A nav badge should mean "new/unseen", matching exactly how
-  // InvitesPage.tsx itself already treats these as two separate things
-  // (a "new_count" banner vs. the always-visible revealed cards).
-  const fetchInvitesCount = useCallback(async () => {
-    try {
-      const res = await fetch("/api/discover/invites", { headers: { Authorization: `Bearer ${token}` } });
-      if (!res.ok) return;
-      const body = await res.json();
-      setInvitesCount(body.new_count ?? 0);
-    } catch {
-      // Silent — non-critical background fetch.
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
-
   // Poll periodically, plus refetch on route change — e.g. after
   // visiting Matches (which clears the "new" state server-side), the dot
   // should disappear as soon as you navigate away, not wait a full
-  // polling interval. Same reasoning applies to invites: after visiting
-  // /invites and revealing new ones, the count should update right away.
+  // polling interval.
   useEffect(() => {
     fetchIndicatorStatus();
-    fetchInvitesCount();
-    const interval = setInterval(() => {
-      fetchIndicatorStatus();
-      fetchInvitesCount();
-    }, INDICATOR_POLL_INTERVAL_MS);
+    const interval = setInterval(fetchIndicatorStatus, INDICATOR_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetchIndicatorStatus, fetchInvitesCount, location]);
+  }, [fetchIndicatorStatus, location]);
 
   return (
     <nav className="fixed bottom-0 w-full max-w-[430px] bg-background/80 backdrop-blur-xl border-t border-border z-50 px-4 py-4 flex items-center justify-between">

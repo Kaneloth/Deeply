@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSparks } from "@/contexts/SparksContext";
+import { useInvites } from "@/contexts/InvitesContext";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -103,6 +104,7 @@ function InviteDetailOverlay({
 export default function InvitesPage() {
   const { token } = useAuth();
   const { refresh: refreshSparksBadge } = useSparks();
+  const { refresh: refreshInvitesBadge } = useInvites();
   const { toast } = useToast();
 
   const [revealed, setRevealed] = useState<Invite[]>([]);
@@ -197,6 +199,7 @@ export default function InvitesPage() {
       if (!res.ok) throw new Error(body.error ?? "Failed to reveal invites");
       setRevealed(body.invites ?? []);
       setNewCount(0);
+      refreshInvitesBadge();
       if (body.balance !== null) {
         refreshSparksBadge();
       }
@@ -227,6 +230,7 @@ export default function InvitesPage() {
 
       setRevealed((prev) => prev.filter((i) => i.id !== invite.id));
       setSelectedInvite((prev) => (prev?.id === invite.id ? null : prev));
+      refreshInvitesBadge();
 
       if (body.matched) {
         setMatchCelebration({ name: invite.name, matchId: body.matchId, photoUrl: invite.photo_url });
