@@ -1817,7 +1817,7 @@ router.get("/profile-views/who-viewed-me", requireAuth, async (req, res): Promis
   const viewerIds = revealedViews.map((v) => v.viewer_id);
   const { data: profiles } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, city, photo_url, personality_tags, is_verified, photo_verified")
+    .select("id, name, age, birthday, city, photo_url, personality_tags, is_verified, photo_verified, is_founder")
     .in("id", viewerIds);
 
   const profileMap = new Map((profiles ?? []).map((p) => [p.id, p]));
@@ -1917,7 +1917,7 @@ router.post("/profile-views/reveal", requireAuth, async (req, res): Promise<void
 
   const { data: profiles } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, city, photo_url, personality_tags, is_verified, photo_verified")
+    .select("id, name, age, birthday, city, photo_url, personality_tags, is_verified, photo_verified, is_founder")
     .in("id", distinctViewerIds);
 
   const { data: freshViews } = await supabase

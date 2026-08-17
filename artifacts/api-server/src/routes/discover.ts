@@ -71,7 +71,7 @@ async function buildDiscoverQueue(userId: string) {
   const { data: candidates, error } = await supabase
     .from("profiles")
     .select(
-      "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, boosted_until, " +
+      "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, boosted_until, " +
         "gender, looking_for_gender, relationship_type, dating_intentions, num_kids, family_plans, smoking_status, vaping_status, drinking_status, " +
         "nightlife_frequency, has_tattoos, pets, activity_level, height_cm, latitude, longitude",
     )
@@ -412,7 +412,7 @@ router.post("/discover/undo", requireAuth, async (req, res): Promise<void> => {
 
   const { data: restoredProfile } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, num_kids, family_plans, smoking_status, drinking_status")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, num_kids, family_plans, smoking_status, drinking_status")
     .eq("id", lastSwipe.target_id)
     .single();
 
@@ -455,7 +455,7 @@ router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => 
 
   const { data: revealedProfiles } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, num_kids, family_plans, smoking_status, drinking_status, latitude, longitude")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, num_kids, family_plans, smoking_status, drinking_status, latitude, longitude")
     .in("id", revealedPendingIds);
 
   const superLikerIds = new Set(
@@ -512,7 +512,7 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
 
   const { data: inviters } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, num_kids, family_plans, smoking_status, drinking_status, latitude, longitude")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, num_kids, family_plans, smoking_status, drinking_status, latitude, longitude")
     .in("id", pendingInviterIds);
 
   const superLikerIds = new Set(
@@ -579,7 +579,7 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
   let query = supabase
     .from("profiles")
     .select(
-      "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, " +
+      "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, " +
         "gender, looking_for_gender, num_kids, family_plans, smoking_status, vaping_status, drinking_status, nightlife_frequency, has_tattoos, pets, activity_level, height_cm, " +
         "latitude, longitude",
     )
@@ -791,7 +791,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
   const excludedIds = await getExcludedCandidateIds(userId);
   const excludeClause = `(${excludedIds.join(",")})`;
   const SELECT_FIELDS =
-    "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, " +
+    "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, " +
     "gender, looking_for_gender, relationship_type, dating_intentions, " +
     "num_kids, family_plans, smoking_status, vaping_status, drinking_status, nightlife_frequency, has_tattoos, pets, activity_level, height_cm, " +
     "latitude, longitude";
@@ -1051,7 +1051,7 @@ router.get("/discover/invites/sent", requireAuth, async (req, res): Promise<void
 
   const { data: sentProfiles } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, num_kids, family_plans, smoking_status, drinking_status, latitude, longitude")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, num_kids, family_plans, smoking_status, drinking_status, latitude, longitude")
     .in("id", pendingSentIds);
 
   const superSentIds = new Set(
