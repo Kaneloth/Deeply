@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Capacitor } from "@capacitor/core";
-import { Camera as CapacitorCamera, CameraResultType, CameraSource } from "@capacitor/camera";
+import { Camera as CapacitorCamera } from "@capacitor/camera";
 import { NativePurchases, PURCHASE_TYPE } from "@capgo/native-purchases";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -16,11 +16,7 @@ const ID_VERIFICATION_GOOGLE_PRODUCT_ID = "id_verification_fee";
  *  cancels or camera access is denied. */
 async function capturePhoto(): Promise<File | null> {
   try {
-    const photo = await CapacitorCamera.getPhoto({
-      resultType: CameraResultType.Uri,
-      source: CameraSource.Camera,
-      quality: 85,
-    });
+    const photo = await CapacitorCamera.takePhoto({ quality: 85 });
     if (!photo.webPath) return null;
     const response = await fetch(photo.webPath);
     const blob = await response.blob();

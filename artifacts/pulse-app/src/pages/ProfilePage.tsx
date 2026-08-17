@@ -6,6 +6,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { Capacitor } from "@capacitor/core";
+import { Camera as CapacitorCamera } from "@capacitor/camera";
 import { CheckCircle2, AlertCircle, Rocket, Plus, X, ImageIcon, Camera, Video, Mic, Play, Pause, Crown, Star } from "lucide-react";
 import { SparkIcon } from "@/components/Icons";
 import { SparksModal } from "@/components/SparksModal";
@@ -489,9 +491,7 @@ export default function ProfilePage() {
     });
   };
 
-  const handleFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = e.target.files ? Array.from(e.target.files) : [];
-    e.target.value = ""; // allow re-selecting the same file(s) later
+  const uploadFiles = async (selectedFiles: File[]) => {
     if (selectedFiles.length === 0) return;
 
     setShowAddSheet(false);
@@ -630,6 +630,48 @@ export default function ProfilePage() {
     }
   };
 
+  const handleFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = e.target.files ? Array.from(e.target.files) : [];
+    e.target.value = ""; // allow re-selecting the same file(s) later
+    await uploadFiles(selectedFiles);
+  };
+
+  // Native-only — calls the device's camera directly instead of relying
+  // on the HTML file input's capture="user" hint, which Android's
+  // WebView doesn't reliably honor (that's exactly what was opening the
+  // gallery instead of the camera). Reuses the same uploadFiles pipeline
+  // as the file-input path, just skipping straight to a real File.
+  const handleNativeTakePhoto = async () => {
+    setShowAddSheet(false);
+    try {
+      const result = await CapacitorCamera.takePhoto({ quality: 90 });
+      if (!result.webPath) return;
+      const response = await fetch(result.webPath);
+      const blob = await response.blob();
+      const file = new File([blob], `photo-${Date.now()}.jpg`, { type: blob.type || "image/jpeg" });
+      await uploadFiles([file]);
+    } catch {
+      // User cancelled, or camera access was denied — nothing to do.
+    }
+  };
+
+  // Native-only — recordVideo() is explicitly not available on Web, so
+  // the web path keeps using the existing file input unchanged.
+  const handleNativeRecordVideo = async () => {
+    setShowAddSheet(false);
+    try {
+      const result = await CapacitorCamera.recordVideo({ saveToGallery: false, isPersistent: false });
+      const sourcePath = result.webPath ?? result.uri;
+      if (!sourcePath) return;
+      const response = await fetch(sourcePath);
+      const blob = await response.blob();
+      const file = new File([blob], `clip-${Date.now()}.mp4`, { type: blob.type || "video/mp4" });
+      await uploadFiles([file]);
+    } catch {
+      // User cancelled, or camera access was denied — nothing to do.
+    }
+  };
+
   const handleSetMainPhoto = async (photoId: string) => {
     setSettingMainId(photoId);
     try {
@@ -656,6 +698,11 @@ export default function ProfilePage() {
 
   const handleDeletePhoto = async (photoId: string) => {
     setDeletingId(photoId);
+    const previousPhotos = photos;
+    // Optimistic — remove immediately so the tap feels instant, rather
+    // than waiting on a full fetchPhotos() round-trip before anything
+    // visually changes. Rolled back below if the delete actually fails.
+    setPhotos((prev) => prev.filter((p) => p.id !== photoId));
     try {
       const res = await fetch(`/api/profile/me/photos/${photoId}`, {
         method: "DELETE",
@@ -665,8 +712,12 @@ export default function ProfilePage() {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "Failed to delete photo");
       }
-      await fetchPhotos();
+      // Background refresh for eventual consistency (position re-packing,
+      // profiles.photo_url sync happen server-side) — not awaited, so it
+      // never delays the already-instant visual removal above.
+      fetchPhotos();
     } catch (err) {
+      setPhotos(previousPhotos); // roll back — it wasn't actually deleted
       toast({
         title: "Error",
         description: err instanceof Error ? err.message : "Failed to delete photo.",
@@ -1061,14 +1112,14 @@ export default function ProfilePage() {
               <h3 className="font-['Syne'] font-bold text-lg mb-4">Add a Photo or Clip</h3>
               <div className="space-y-3">
                 <button
-                  onClick={() => cameraPhotoInputRef.current?.click()}
+                  onClick={() => (Capacitor.isNativePlatform() ? handleNativeTakePhoto() : cameraPhotoInputRef.current?.click())}
                   className="w-full h-14 rounded-xl bg-gradient-accent text-white font-semibold flex items-center justify-center gap-2"
                 >
                   <Camera size={18} />
                   Take Photo
                 </button>
                 <button
-                  onClick={() => cameraVideoInputRef.current?.click()}
+                  onClick={() => (Capacitor.isNativePlatform() ? handleNativeRecordVideo() : cameraVideoInputRef.current?.click())}
                   disabled={photos.some((p) => p.media_type === "video")}
                   className="w-full h-14 rounded-xl bg-gradient-accent text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
