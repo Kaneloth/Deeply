@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { Capacitor } from "@capacitor/core";
+import { Browser } from "@capacitor/browser";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useTextSize, type TextSize } from "@/contexts/TextSizeContext";
@@ -11,8 +13,21 @@ import { Shield } from "lucide-react";
 import {
   LogOut, Moon, Sun, Type, Lock, HelpCircle, LifeBuoy, Trash2,
   ChevronRight, AlertTriangle, Eye, EyeOff, Mail, EyeOff as IncognitoIcon,
-  ShieldOff, X as XIcon, ScanEye, Send,
+  ShieldOff, X as XIcon, ScanEye, Send, FileText, ShieldCheck,
 } from "lucide-react";
+
+// Opens external legal pages properly on native (a real, dismissible
+// in-app browser sheet via Capacitor) instead of a plain <a href>, which
+// can inconsistently hijack the app's own WebView instead of opening a
+// separate browser — trapping the user outside the app's navigation
+// with no clean way back in.
+async function openExternalLink(url: string) {
+  if (Capacitor.isNativePlatform()) {
+    await Browser.open({ url });
+  } else {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
 
 const TEXT_SIZE_OPTIONS: { label: string; value: TextSize }[] = [
   { label: "Normal", value: "normal" },
@@ -668,11 +683,32 @@ export default function SettingsPage() {
           </Link>
         )}
 
-        {/* About */}
-        <div className="bg-card border border-card-border rounded-2xl p-5">
-          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">About</h3>
-          <p className="text-sm text-foreground">Deeply</p>
-          <p className="text-xs text-muted-foreground mt-1">Deep connections begin with a spark.</p>
+        {/* Legal */}
+        <div className="space-y-3">
+          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider pl-1">Legal</h3>
+
+          <div className="bg-card border border-card-border rounded-2xl overflow-hidden">
+            <button
+              onClick={() => openExternalLink("https://deeplydating.co.za/privacy")}
+              className="w-full flex items-center justify-between p-4 border-b border-border"
+            >
+              <div className="flex items-center gap-3">
+                <ShieldCheck size={18} className="text-muted-foreground" />
+                <p className="text-sm font-medium">Privacy Policy</p>
+              </div>
+              <ChevronRight size={16} className="text-muted-foreground" />
+            </button>
+            <button
+              onClick={() => openExternalLink("https://deeplydating.co.za/terms")}
+              className="w-full flex items-center justify-between p-4"
+            >
+              <div className="flex items-center gap-3">
+                <FileText size={18} className="text-muted-foreground" />
+                <p className="text-sm font-medium">Terms of Service</p>
+              </div>
+              <ChevronRight size={16} className="text-muted-foreground" />
+            </button>
+          </div>
         </div>
 
         <Button
