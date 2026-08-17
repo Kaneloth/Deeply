@@ -4,6 +4,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { Route, Switch, Router as WouterRouter, Redirect } from 'wouter';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { SparksProvider } from '@/contexts/SparksContext';
+import { InvitesProvider } from '@/contexts/InvitesContext';
 import { AppShell } from '@/components/AppShell';
 import NotFound from '@/pages/not-found';
 import AuthPage from '@/pages/AuthPage';
@@ -86,7 +87,9 @@ function App() {
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
           <AuthProvider>
             <SparksProvider>
-              <Router />
+              <InvitesProvider>
+                <Router />
+              </InvitesProvider>
             </SparksProvider>
           </AuthProvider>
         </WouterRouter>
