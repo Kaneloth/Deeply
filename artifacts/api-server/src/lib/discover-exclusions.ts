@@ -144,12 +144,28 @@ export async function getPendingInviterIds(userId: string): Promise<PendingInvit
 
   const pending: PendingInviter[] = [];
   for (const [inviterId, invite] of latestInvitePerInviter) {
-    if (matchedIds.has(inviterId)) continue;
-    if (blockedIds.has(inviterId)) continue;
+    if (matchedIds.has(inviterId)) {
+      console.error(`INVITES DEBUG: ${inviterId} excluded — already matched`);
+      continue;
+    }
+    if (blockedIds.has(inviterId)) {
+      console.error(`INVITES DEBUG: ${inviterId} excluded — blocked`);
+      continue;
+    }
     const decidedAt = myLatestDecisionAt.get(inviterId);
-    if (decidedAt !== undefined && decidedAt >= invite.createdAt) continue; // already acted on this one
+    if (decidedAt !== undefined && decidedAt >= invite.createdAt) {
+      console.error(
+        `INVITES DEBUG: ${inviterId} excluded — decided at ${new Date(decidedAt).toISOString()}, invite was at ${new Date(invite.createdAt).toISOString()}`,
+      );
+      continue;
+    }
+    console.error(
+      `INVITES DEBUG: ${inviterId} INCLUDED as pending — invite at ${new Date(invite.createdAt).toISOString()}, my decision at ${decidedAt ? new Date(decidedAt).toISOString() : "never"}, matched: ${matchedIds.has(inviterId)}`,
+    );
     pending.push({ id: inviterId, direction: invite.direction });
   }
+
+  console.error(`INVITES DEBUG: userId=${userId} final pending count=${pending.length}, ids=${pending.map((p) => p.id).join(",")}`);
 
   return pending;
 }
