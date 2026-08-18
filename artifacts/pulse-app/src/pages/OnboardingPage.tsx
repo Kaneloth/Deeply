@@ -221,12 +221,30 @@ export default function OnboardingPage() {
     }
   };
 
+  // The filename extension must match the blob's real format, not
+  // assume web's audio/webm — native recordings (capacitor-voice-recorder)
+  // come back as audio/aac or similar, and a mismatched extension is
+  // exactly what produces an "unsupported format" rejection server-side.
+  const audioExtensionFromMimeType = (mimeType: string): string => {
+    const map: Record<string, string> = {
+      "audio/webm": "webm",
+      "audio/mp4": "m4a",
+      "audio/aac": "aac",
+      "audio/mpeg": "mp3",
+      "audio/wav": "wav",
+      "audio/x-wav": "wav",
+      "audio/3gpp": "3gp",
+    };
+    return map[mimeType] ?? "webm";
+  };
+
   const saveAudioPrompt = async (blob: Blob) => {
     if (!selectedPromptQuestion) return;
     setIsSavingAudio(true);
     try {
       const formData = new FormData();
-      formData.append("audio", blob, "prompt.webm");
+      const extension = audioExtensionFromMimeType(blob.type);
+      formData.append("audio", blob, `prompt.${extension}`);
       const uploadRes = await fetch("/api/prompts/audio-upload", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
