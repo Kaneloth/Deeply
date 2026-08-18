@@ -14,6 +14,12 @@ project(':capacitor-browser').projectDir = new File('../../../node_modules/.pnpm
 include ':capacitor-camera'
 project(':capacitor-camera').projectDir = new File('../../../node_modules/.pnpm/@capacitor+camera@8.2.2_@capacitor+core@8.5.0/node_modules/@capacitor/camera/android')
 
+include ':capacitor-filesystem'
+project(':capacitor-filesystem').projectDir = new File('../../../node_modules/.pnpm/@capacitor+filesystem@8.1.2_@capacitor+core@8.5.0/node_modules/@capacitor/filesystem/android')
+
+include ':capacitor-geolocation'
+project(':capacitor-geolocation').projectDir = new File('../../../node_modules/.pnpm/@capacitor+geolocation@8.2.2_@capacitor+core@8.5.0/node_modules/@capacitor/geolocation/android')
+
 include ':capawesome-capacitor-google-sign-in'
 project(':capawesome-capacitor-google-sign-in').projectDir = new File('../../../node_modules/.pnpm/@capawesome+capacitor-google-sign-in@0.1.2_@capacitor+core@8.5.0/node_modules/@capawesome/capacitor-google-sign-in/android')
 
@@ -22,3 +28,6 @@ project(':capgo-native-purchases').projectDir = new File('../../../node_modules/
 
 include ':sentry-capacitor'
 project(':sentry-capacitor').projectDir = new File('../../../node_modules/.pnpm/@sentry+capacitor@1.5.0_@capacitor+core@8.5.0_@sentry+react@8.55.0_react@19.1.0_/node_modules/@sentry/capacitor/android')
+
+include ':capacitor-voice-recorder'
+project(':capacitor-voice-recorder').projectDir = new File('../../../node_modules/.pnpm/capacitor-voice-recorder@7.0.6_@capacitor+core@8.5.0_@capacitor+filesystem@8.1.2_@capacitor+core@8.5.0_/node_modules/capacitor-voice-recorder/android')

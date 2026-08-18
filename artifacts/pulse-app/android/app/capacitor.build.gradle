@@ -13,9 +13,12 @@ dependencies {
     implementation project(':capacitor-app')
     implementation project(':capacitor-browser')
     implementation project(':capacitor-camera')
+    implementation project(':capacitor-filesystem')
+    implementation project(':capacitor-geolocation')
     implementation project(':capawesome-capacitor-google-sign-in')
     implementation project(':capgo-native-purchases')
     implementation project(':sentry-capacitor')
+    implementation project(':capacitor-voice-recorder')
 
 }
 
