@@ -6,6 +6,95 @@ const router: IRouter = Router();
 
 const SUPPORT_INBOX = "support@deeplydating.co.za";
 const MAX_MESSAGE_LENGTH = 4000;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const escapeHtml = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/** POST /api/support/message-public — same durable-write-then-best-effort-
+ *  email shape as the authenticated route below, for the one case that
+ *  can't use it: BlockedAccountScreen. A banned/suspended user has no
+ *  valid session by the time they see that screen — either the login
+ *  attempt itself was rejected before ever issuing a token, or an
+ *  existing session was just force-logged-out — so there's no Bearer
+ *  token to hang requireAuth off of. Email is taken directly from the
+ *  request body instead of a JWT claim; everything else mirrors the
+ *  authenticated route exactly. user_id is intentionally left null —
+ *  there's no verified identity to attach here, just a claimed email
+ *  address, same as any other public contact form. */
+router.post("/support/message-public", async (req, res): Promise<void> => {
+  const { email, message } = req.body as { email?: string; message?: string };
+
+  if (!email || !EMAIL_RE.test(email.trim())) {
+    res.status(400).json({ error: "A valid email address is required" });
+    return;
+  }
+  if (!message || !message.trim()) {
+    res.status(400).json({ error: "message is required" });
+    return;
+  }
+  if (message.length > MAX_MESSAGE_LENGTH) {
+    res.status(400).json({ error: `Message must be ${MAX_MESSAGE_LENGTH} characters or fewer` });
+    return;
+  }
+
+  const senderEmail = email.trim();
+  const trimmedMessage = message.trim();
+
+  const { data: saved, error: insertError } = await supabase
+    .from("support_messages")
+    .insert({ user_id: null, email: senderEmail, message: trimmedMessage })
+    .select("id")
+    .single();
+
+  if (insertError || !saved) {
+    console.error("Failed to save public support message:", insertError);
+    res.status(500).json({ error: "Failed to send your message. Please try again." });
+    return;
+  }
+
+  const apiKey = process.env.BREVO_API_KEY;
+  if (!apiKey) {
+    console.error("BREVO_API_KEY is not set — support message saved but no email notification sent");
+    res.sendStatus(204);
+    return;
+  }
+
+  try {
+    const brevoRes = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "api-key": apiKey,
+      },
+      body: JSON.stringify({
+        sender: { name: "Deeply Support Form", email: SUPPORT_INBOX },
+        to: [{ email: SUPPORT_INBOX }],
+        replyTo: { email: senderEmail },
+        subject: `Deeply Support Request (blocked account) — ${senderEmail}`,
+        htmlContent: `
+          <p><strong>From:</strong> ${escapeHtml(senderEmail)}</p>
+          <p><strong>Sent from:</strong> Blocked/suspended account screen (no active session)</p>
+          <hr />
+          <p>${escapeHtml(trimmedMessage).replace(/\n/g, "<br />")}</p>
+        `,
+        textContent: `From: ${senderEmail}\nSent from: Blocked/suspended account screen (no active session)\n\n${trimmedMessage}`,
+      }),
+    });
+
+    if (brevoRes.ok) {
+      await supabase.from("support_messages").update({ email_sent: true }).eq("id", saved.id);
+    } else {
+      const errBody = await brevoRes.text().catch(() => "");
+      console.error(`Brevo send failed (message ${saved.id} still saved): ${brevoRes.status} ${errBody}`);
+    }
+  } catch (err) {
+    console.error(`Brevo request threw (message ${saved.id} still saved):`, err);
+  }
+
+  res.sendStatus(204);
+});
 
 /** POST /api/support/message — the message is ALWAYS written to
  *  support_messages first; that DB write is what determines success or
@@ -60,9 +149,6 @@ router.post("/support/message", requireAuth, async (req, res): Promise<void> => 
     res.sendStatus(204);
     return;
   }
-
-  const escapeHtml = (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
   try {
     const brevoRes = await fetch("https://api.brevo.com/v3/smtp/email", {

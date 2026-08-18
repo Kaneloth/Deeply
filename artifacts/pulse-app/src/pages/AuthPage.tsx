@@ -260,7 +260,7 @@ export default function AuthPage() {
       const body = await res.json();
 
       if (res.status === 403 && (body.code === "BANNED" || body.code === "SUSPENDED")) {
-        setBlockInfo({ code: body.code, reason: body.reason, suspendedUntil: body.suspendedUntil });
+        setBlockInfo({ code: body.code, reason: body.reason, suspendedUntil: body.suspendedUntil, email: data.email });
         return;
       }
 
