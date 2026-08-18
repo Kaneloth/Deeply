@@ -28,6 +28,13 @@ export function BlockedAccountScreen({ blockInfo, onBack }: { blockInfo: BlockIn
   const [message, setMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [sent, setSent] = useState(false);
+  // This screen renders at a very high z-index (fixed inset-0 z-[500]),
+  // deliberately, so it sits above literally everything else — but that
+  // also means a toast rendered at the app's normal, lower z-index could
+  // fire successfully yet be completely invisible behind this overlay.
+  // Error feedback can't depend on that, so it's also shown inline here,
+  // guaranteed visible regardless of toast stacking.
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // No token by the time this screen renders — AuthContext's 403
   // interceptor calls logout() as soon as blockInfo is set, so there's
@@ -36,6 +43,7 @@ export function BlockedAccountScreen({ blockInfo, onBack }: { blockInfo: BlockIn
   const handleSend = async () => {
     if (!email.trim() || !message.trim() || isSending) return;
     setIsSending(true);
+    setErrorMessage(null);
     try {
       const res = await fetch("/api/support/blocked-message", {
         method: "POST",
@@ -49,11 +57,9 @@ export function BlockedAccountScreen({ blockInfo, onBack }: { blockInfo: BlockIn
       setSent(true);
       toast({ title: "Message sent", description: "Our team will get back to you by email." });
     } catch (err) {
-      toast({
-        title: "Error",
-        description: err instanceof Error ? err.message : "Failed to send message. Please try again.",
-        variant: "destructive",
-      });
+      const description = err instanceof Error ? err.message : "Failed to send message. Please try again.";
+      setErrorMessage(description);
+      toast({ title: "Error", description, variant: "destructive" });
     } finally {
       setIsSending(false);
     }
@@ -123,6 +129,9 @@ export function BlockedAccountScreen({ blockInfo, onBack }: { blockInfo: BlockIn
               <Send size={16} />
               {isSending ? "Sending..." : "Send Message"}
             </button>
+            {errorMessage && (
+              <p className="text-xs text-destructive text-center">{errorMessage}</p>
+            )}
           </div>
         ) : (
           <button
