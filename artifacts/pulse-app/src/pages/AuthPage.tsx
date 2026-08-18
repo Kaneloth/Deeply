@@ -485,7 +485,7 @@ export default function AuthPage() {
 
   if (loginStage === "idle" || loginStage === "biometric-loading" || loginStage === "biometric-error") {
     return (
-      <div className="min-h-[100dvh] overflow-y-auto flex flex-col px-6 w-full relative">
+      <div className="min-h-[100dvh] overflow-y-auto overflow-x-hidden flex flex-col px-6 w-full relative">
         <div className="absolute top-[-10%] left-[-20%] w-[150%] h-[50%] bg-primary/20 blur-[120px] rounded-full pointer-events-none" />
         <div className="z-10 w-full max-w-sm mx-auto my-auto py-10 text-center">
           <img src="/deeply-logo.png" alt="Deeply" className="h-16 w-auto mx-auto" />
@@ -532,7 +532,7 @@ export default function AuthPage() {
       // pushes content off the TOP of the screen just as much as it
       // clips the bottom — exactly what was happening on the signup
       // view below before this fix).
-      <div className="min-h-[100dvh] overflow-y-auto flex flex-col px-6 w-full relative">
+      <div className="min-h-[100dvh] overflow-y-auto overflow-x-hidden flex flex-col px-6 w-full relative">
         <div className="absolute top-[-10%] left-[-20%] w-[150%] h-[50%] bg-primary/20 blur-[120px] rounded-full pointer-events-none" />
         <div className="z-10 w-full max-w-sm mx-auto my-auto py-10 text-center">
           <img src="/deeply-logo.png" alt="Deeply" className="h-14 w-auto mx-auto" />
@@ -585,7 +585,7 @@ export default function AuthPage() {
 
   if (pendingEmail) {
     return (
-      <div className="min-h-[100dvh] overflow-y-auto flex flex-col px-6 w-full relative">
+      <div className="min-h-[100dvh] overflow-y-auto overflow-x-hidden flex flex-col px-6 w-full relative">
         <div className="absolute top-[-10%] left-[-20%] w-[150%] h-[50%] bg-primary/20 blur-[120px] rounded-full pointer-events-none" />
         <div className="z-10 w-full max-w-sm mx-auto my-auto py-10 text-center">
           <img src="/deeply-logo.png" alt="Deeply" className="h-14 w-auto mx-auto" />
@@ -626,7 +626,7 @@ export default function AuthPage() {
   }
 
   return (
-    <div className="min-h-[100dvh] overflow-y-auto flex flex-col px-6 w-full relative">
+    <div className="min-h-[100dvh] overflow-y-auto overflow-x-hidden flex flex-col px-6 w-full relative">
       {/* Background Glow */}
       <div className="absolute top-[-10%] left-[-20%] w-[150%] h-[50%] bg-primary/20 blur-[120px] rounded-full pointer-events-none" />
 
