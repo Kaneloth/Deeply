@@ -1,4 +1,5 @@
 import { type Request, type Response, type NextFunction } from "express";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 import { supabase } from "../lib/supabase";
 import { spendSparks } from "../lib/sparks-helper";
 import { getEconomyConfig } from "../lib/economy-config";
@@ -12,6 +13,31 @@ declare global {
     }
   }
 }
+
+// Public signing keys — nothing sensitive here, this is meant to be
+// fetched by anyone. createRemoteJWKSet caches the fetched keys in
+// memory for the lifetime of this warm function instance, so a cold
+// start pays for one real HTTP fetch and every request after that on
+// the same instance verifies entirely locally (signature + expiry check,
+// no network call at all). This replaces supabase.auth.getUser(token),
+// which was making a real network round trip to Supabase's Auth API on
+// EVERY single request to every authenticated route in the app — the
+// most likely cause of the flat ~3s floor showing up identically across
+// every page, regardless of how well any individual route was optimized.
+const JWKS = createRemoteJWKSet(new URL(`${process.env.SUPABASE_URL}/auth/v1/.well-known/jwks.json`));
+
+async function verifyTokenLocally(token: string): Promise<{ id: string; email?: string } | null> {
+  try {
+    const { payload } = await jwtVerify(token, JWKS, {
+      issuer: `${process.env.SUPABASE_URL}/auth/v1`,
+    });
+    if (!payload.sub) return null;
+    return { id: payload.sub, email: typeof payload.email === "string" ? payload.email : undefined };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Middleware that validates the Supabase JWT from the Authorization header
  * and attaches the user to req.user. Returns 401 if the token is missing
@@ -29,13 +55,22 @@ export async function requireAuth(
     return;
   }
   const token = authHeader.slice(7);
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser(token);
-  if (error || !user) {
-    res.status(401).json({ error: "Invalid or expired token" });
-    return;
+
+  // Fast path first — local verification against the public signing
+  // keys, no network call after the first cold-start fetch. Falls back
+  // to the original network-verified call only if that fails, which
+  // covers two cases: a genuinely invalid/expired token (correctly
+  // rejected either way), or a straggler token still signed with the
+  // legacy shared secret from before this project's JWT migration
+  // (correctly accepted via the slower path, never wrongly rejected).
+  let user = await verifyTokenLocally(token);
+  if (!user) {
+    const { data, error } = await supabase.auth.getUser(token);
+    if (error || !data.user) {
+      res.status(401).json({ error: "Invalid or expired token" });
+      return;
+    }
+    user = { id: data.user.id, email: data.user.email };
   }
 
   const { data: profile } = await supabase
