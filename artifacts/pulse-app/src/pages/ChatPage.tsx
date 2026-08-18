@@ -283,8 +283,19 @@ export default function ChatPage() {
     }
   }, [matchId, token, toast]);
 
+  // Counts sends currently in flight (optimistic bubble shown, POST not
+  // yet resolved). While non-zero, fetchMessages skips entirely — a full
+  // server-list replace landing in that narrow window would wipe out the
+  // just-sent bubble until the NEXT poll tick finally includes the
+  // now-saved message, which is exactly the "message disappears for a
+  // few seconds after sending" bug this prevents. A ref (not state) so
+  // the check always sees the current value even inside the setInterval
+  // closure, without needing fetchMessages to be recreated on every
+  // change.
+  const pendingSendCountRef = useRef(0);
+
   const fetchMessages = useCallback(async () => {
-    if (!matchId) return;
+    if (!matchId || pendingSendCountRef.current > 0) return;
     try {
       const res = await fetch(`/api/matches/${matchId}/messages`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -364,6 +375,7 @@ export default function ChatPage() {
         : null,
     };
     setMessages((prev) => [...prev, optimisticMessage]);
+    pendingSendCountRef.current += 1;
 
     try {
       const res = await fetch(`/api/matches/${matchId}/messages`, {
@@ -404,6 +416,7 @@ export default function ChatPage() {
         variant: "destructive",
       });
     } finally {
+      pendingSendCountRef.current -= 1;
       setIsSending(false);
     }
   };
@@ -428,6 +441,7 @@ export default function ChatPage() {
       reply_to: null,
     };
     setMessages((prev) => [...prev, optimisticMessage]);
+    pendingSendCountRef.current += 1;
 
     try {
       const res = await fetch(`/api/matches/${matchId}/messages`, {
@@ -460,6 +474,7 @@ export default function ChatPage() {
         variant: "destructive",
       });
     } finally {
+      pendingSendCountRef.current -= 1;
       setIsSending(false);
     }
   };

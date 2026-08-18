@@ -344,7 +344,14 @@ const audioUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB, ~30s of compressed audio
   fileFilter: (_req, file, cb) => {
-    const allowed = ["audio/webm", "audio/mp4", "audio/mpeg", "audio/ogg", "audio/wav"];
+    // audio/aac (and, on some Android versions, audio/3gpp) added for
+    // capacitor-voice-recorder's native recordings — the web recorder
+    // produces audio/webm, but the native path records via Android's own
+    // MediaRecorder, which doesn't produce webm at all. Without these,
+    // every native voice-prompt upload was rejected right here with
+    // "Unsupported audio format", regardless of what filename/extension
+    // the client sent.
+    const allowed = ["audio/webm", "audio/mp4", "audio/mpeg", "audio/ogg", "audio/wav", "audio/aac", "audio/3gpp"];
     if (!allowed.includes(file.mimetype)) {
       cb(new Error("Unsupported audio format"));
       return;
@@ -359,6 +366,8 @@ const AUDIO_EXT_BY_MIME: Record<string, string> = {
   "audio/mpeg": "mp3",
   "audio/ogg": "ogg",
   "audio/wav": "wav",
+  "audio/aac": "aac",
+  "audio/3gpp": "3gp",
 };
 
 /** POST /api/prompts/audio-upload — uploads a recorded audio clip to
@@ -1817,7 +1826,7 @@ router.get("/profile-views/who-viewed-me", requireAuth, async (req, res): Promis
   const viewerIds = revealedViews.map((v) => v.viewer_id);
   const { data: profiles } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, city, photo_url, personality_tags, is_verified, photo_verified")
+    .select("id, name, age, birthday, city, photo_url, personality_tags, is_verified, photo_verified, is_founder")
     .in("id", viewerIds);
 
   const profileMap = new Map((profiles ?? []).map((p) => [p.id, p]));
@@ -1917,7 +1926,7 @@ router.post("/profile-views/reveal", requireAuth, async (req, res): Promise<void
 
   const { data: profiles } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, city, photo_url, personality_tags, is_verified, photo_verified")
+    .select("id, name, age, birthday, city, photo_url, personality_tags, is_verified, photo_verified, is_founder")
     .in("id", distinctViewerIds);
 
   const { data: freshViews } = await supabase
