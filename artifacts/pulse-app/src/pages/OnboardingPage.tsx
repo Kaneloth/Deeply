@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLocation } from "wouter";
 import { Input } from "@/components/ui/input";
@@ -100,6 +100,12 @@ export default function OnboardingPage() {
   const [founderReveal, setFounderReveal] = useState<{ rank: number } | null>(null);
 
   const [name, setName] = useState("");
+  // Whether the name has already been captured before onboarding (at
+  // signup for email/password accounts, or from Google's own profile
+  // data for Google sign-in) — while this is unresolved we don't yet
+  // know whether to show the Name field on step 1, so we hold off
+  // rendering it rather than flashing it and immediately hiding it.
+  const [nameAlreadyCaptured, setNameAlreadyCaptured] = useState<boolean | null>(null);
   const [gender, setGender] = useState("");
   const [birthday, setBirthday] = useState("");
   const [lookingForGender, setLookingForGender] = useState("");
@@ -140,6 +146,39 @@ export default function OnboardingPage() {
   const savedAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const [notifySparks, setNotifySparks] = useState(true);
+
+  // Pull whatever name was already captured before onboarding — either
+  // typed at signup (email/password) or pulled from Google's profile
+  // data (Google sign-in) — so step 1 never re-asks for it. Runs once on
+  // mount; token doesn't change mid-onboarding in any way relevant here.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/profile/me", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error();
+        const body = await res.json();
+        if (cancelled) return;
+        if (body.name && typeof body.name === "string" && body.name.trim()) {
+          setName(body.name);
+          setNameAlreadyCaptured(true);
+        } else {
+          setNameAlreadyCaptured(false);
+        }
+      } catch {
+        // Couldn't confirm either way — fall back to asking, same as
+        // today's behavior, rather than silently leaving name blank
+        // with no way to fill it in.
+        if (!cancelled) setNameAlreadyCaptured(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggleIntention = (v: string) => {
     setIntentions((prev) => (prev.includes(v) ? prev.filter((i) => i !== v) : prev.length < 3 ? [...prev, v] : prev));
@@ -371,10 +410,15 @@ export default function OnboardingPage() {
           >
             <h2 className="text-2xl font-['Syne'] font-bold mb-6">Tell us about yourself.</h2>
             <div className="space-y-6">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Name</label>
-                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" className="bg-card border-card-border h-12 rounded-xl" />
-              </div>
+              {/* Only shown if we couldn't confirm a name was already
+                  captured before onboarding (signup, or Google profile
+                  data) — most users never see this field at all. */}
+              {nameAlreadyCaptured === false && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Name</label>
+                  <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" className="bg-card border-card-border h-12 rounded-xl" />
+                </div>
+              )}
               <div className="space-y-2">
                 <label className="text-sm font-medium">I am a</label>
                 <RadioList value={gender} onChange={setGender} options={GENDER_OPTIONS} />

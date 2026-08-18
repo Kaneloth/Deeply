@@ -11,6 +11,7 @@ import { X, Heart, MessageCircle, Star, RotateCcw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useSparks } from "@/contexts/SparksContext";
 import { useDiscoverControls } from "@/contexts/DiscoverControlsContext";
+import { captureUserLocation } from "@/lib/captureLocation";
 
 interface Candidate extends ProfileCardData {
   photo_url: string | null;
@@ -174,24 +175,7 @@ export default function DiscoverPage() {
   }, []);
 
   useEffect(() => {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        fetch("/api/profile/me", {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-          }),
-        }).catch(() => {});
-      },
-      () => {},
-      { maximumAge: 10 * 60 * 1000, timeout: 10000 },
-    );
+    captureUserLocation(token);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
