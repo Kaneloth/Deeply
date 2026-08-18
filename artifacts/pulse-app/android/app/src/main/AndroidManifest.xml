@@ -49,4 +49,11 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Voice prompt recording (AudioRecorderControl / capacitor-voice-recorder) -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Distance-on-profile-cards (captureLocation.ts / @capacitor/geolocation) -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 </manifest>
