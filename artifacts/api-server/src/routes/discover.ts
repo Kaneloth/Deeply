@@ -214,19 +214,18 @@ router.get("/discover/reshuffle-status", requireAuth, async (req, res): Promise<
 router.post("/discover/reshuffle", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
-  // The frontend passes whoever's currently sitting unswiped in its
-  // on-screen queue. getExcludedCandidateIds only excludes people the
-  // viewer has actually swiped on/matched with/blocked — someone still
-  // undecided in the queue isn't any of those, so without this the
-  // reshuffle draws from the exact same pool every time. With a small
-  // candidate pool, the weighted draw (which favors higher-scoring
-  // candidates) then keeps landing the same top few people in the first
-  // 1-3 stack positions, and it can take several reshuffles before pure
-  // chance finally bumps them out — which is exactly the "doesn't
-  // rearrange until ~3 attempts" behavior this fixes. This exclusion is
-  // scoped to this one draw only — it's never written to the DB, so a
-  // skipped person can still appear in a normal queue fetch or a later
-  // reshuffle once they're no longer the one currently on screen.
+  // The frontend passes the current TOP card's id (not the whole held
+  // queue — excluding everyone currently loaded would zero out a small
+  // candidate pool entirely, see DiscoverPage.tsx). getExcludedCandidateIds
+  // only excludes people the viewer has actually swiped on/matched
+  // with/blocked — someone still undecided in the queue isn't any of
+  // those, so without this the reshuffle draws from the exact same pool
+  // every time and, with a small pool, the weighted draw (which favors
+  // higher-scoring candidates) can keep landing the same person on top
+  // for several reshuffles before pure chance finally picks someone else.
+  // This exclusion is scoped to this one draw only — it's never written
+  // to the DB, so the excluded person can still appear in a normal queue
+  // fetch or a later reshuffle once they're no longer the current top card.
   //
   // IDs come straight from the client, and feed into a raw
   // .not("id", "in", `(${...})`) filter string below — validate they're

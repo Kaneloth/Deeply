@@ -101,12 +101,17 @@ export default function DiscoverPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        // Tell the backend who's already on screen, so it can exclude
-        // them for this one draw — otherwise reshuffle pulls from the
-        // exact same pool every time and, with a small candidate pool,
-        // can end up re-showing the same top card several times before
-        // the weighted random draw happens to pick someone else.
-        body: JSON.stringify({ currentQueueIds: candidates.map((c) => c.id) }),
+        // Only exclude the current TOP card, not the whole held queue.
+        // Excluding everyone currently in `candidates` (which can hold up
+        // to 20 people) is fine with a large pool, but with a small one —
+        // e.g. exactly 2 eligible people — it excludes the entire pool at
+        // once, leaving nothing to draw and producing an empty "You're
+        // all caught up" result instead of a genuine reshuffle. Excluding
+        // just the top card is enough to guarantee this reshuffle won't
+        // immediately re-show the same person in the same spot, while
+        // still degrading gracefully (alternating correctly) down to
+        // pools as small as 2.
+        body: JSON.stringify({ currentQueueIds: candidates[0] ? [candidates[0].id] : [] }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to reshuffle");
