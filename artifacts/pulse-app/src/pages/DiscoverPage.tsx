@@ -97,7 +97,16 @@ export default function DiscoverPage() {
     try {
       const res = await fetch("/api/discover/reshuffle", {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        // Tell the backend who's already on screen, so it can exclude
+        // them for this one draw — otherwise reshuffle pulls from the
+        // exact same pool every time and, with a small candidate pool,
+        // can end up re-showing the same top card several times before
+        // the weighted random draw happens to pick someone else.
+        body: JSON.stringify({ currentQueueIds: candidates.map((c) => c.id) }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to reshuffle");
