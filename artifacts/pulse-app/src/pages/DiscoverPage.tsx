@@ -74,6 +74,14 @@ export default function DiscoverPage() {
   const [matchCelebration, setMatchCelebration] = useState<{ name: string; matchId: string; photoUrl?: string } | null>(null);
   const [isSwiping, setIsSwiping] = useState(false);
   const [isUndoing, setIsUndoing] = useState(false);
+  // In-memory only, deliberately never persisted (no localStorage, no
+  // server-side session concept) — this is what makes undo only possible
+  // "in the same process": navigating away unmounts DiscoverPage and
+  // this state is gone; closing the app ends the JS runtime entirely and
+  // it's gone. Reopening/remounting always starts from null, with no way
+  // to reconstruct what was last swiped. Overwritten on every new swipe,
+  // so only ever the immediately preceding one is ever undoable.
+  const [lastSwiped, setLastSwiped] = useState<{ targetId: string; direction: SwipeDirection } | null>(null);
   const [exiting, setExiting] = useState<{ id: string; direction: SwipeDirection } | null>(null);
   const [composeFor, setComposeFor] = useState<Candidate | null>(null);
   const [messageText, setMessageText] = useState("");
@@ -243,6 +251,10 @@ export default function DiscoverPage() {
 
     try {
       const body = await apiCall;
+      // Only recorded as undoable once the swipe is actually confirmed
+      // saved server-side — if the API call below fails, there's nothing
+      // real to undo yet, so lastSwiped stays whatever it was before.
+      setLastSwiped({ targetId: target.id, direction });
       if (direction === "super_like" || body.sparksCharged) {
         refreshSparksBadge();
       }
@@ -265,12 +277,16 @@ export default function DiscoverPage() {
   };
 
   const handleUndo = async () => {
-    if (isUndoing) return;
+    if (isUndoing || !lastSwiped) return;
     setIsUndoing(true);
     try {
       const res = await fetch("/api/discover/undo", {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ targetId: lastSwiped.targetId }),
       });
 
       if (res.status === 402) {
@@ -289,6 +305,10 @@ export default function DiscoverPage() {
       if (body.restoredProfile) {
         setCandidates((prev) => [body.restoredProfile, ...prev]);
       }
+      // Only the single immediately-preceding swipe is ever undoable —
+      // once used, there's nothing left to undo until another swipe
+      // happens.
+      setLastSwiped(null);
       refreshSparksBadge();
     } catch (err) {
       toast({
@@ -391,7 +411,7 @@ export default function DiscoverPage() {
         <div className="flex items-center justify-center gap-2.5 mt-2">
           <button
             onClick={handleUndo}
-            disabled={isUndoing || isSwiping}
+            disabled={isUndoing || isSwiping || !lastSwiped}
             className="w-9 h-9 rounded-full bg-card border border-card-border flex items-center justify-center text-amber-500 hover:border-amber-500 transition-colors shadow-lg active:scale-95 disabled:opacity-50"
           >
             <RotateCcw size={15} />

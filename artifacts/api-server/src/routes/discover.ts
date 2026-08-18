@@ -15,6 +15,22 @@ const router: IRouter = Router();
 
 const RESHUFFLE_FREE_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** Runs attachPhotoGalleries and attachAudioPrompts concurrently instead
+ *  of sequentially. Despite the code visually chaining them (photos ->
+ *  audio), attachAudioPrompts only ever reads `.id` from each item — it
+ *  never actually depends on attachPhotoGalleries' output — so there's
+ *  no reason to wait for one to finish before starting the other. Used
+ *  everywhere a candidate/profile list needs both attached before going
+ *  out in a response, which is most of this file's routes. */
+async function attachPhotosAndAudio<T extends { id: string; photo_url: string | null }>(items: T[]) {
+  const [withPhotos, withAudio] = await Promise.all([
+    attachPhotoGalleries(items),
+    attachAudioPrompts(items),
+  ]);
+  const audioById = new Map(withAudio.map((i) => [i.id, i.audio_prompts]));
+  return withPhotos.map((item) => ({ ...item, audio_prompts: audioById.get(item.id) ?? [] }));
+}
+
 /** Shared by /discover/queue and /discover/reshuffle — builds a fresh,
  *  randomized batch of candidates, boosted profiles prioritized.
  *  Distance is computed from stored lat/lng (captured from the device's
@@ -48,17 +64,21 @@ async function attachDistances<T extends { id: string; latitude?: number | null;
 }
 
 async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []) {
-  const excludedIds = [...(await getExcludedCandidateIds(userId)), ...extraExcludeIds];
-
-  const { data: viewer } = await supabase
-    .from("profiles")
-    .select(
-      "latitude, longitude, distance_km, gender, looking_for_gender, relationship_type, dating_intentions, personality_tags, dealbreakers, " +
-        "pref_age_min, pref_age_max, " +
-        "pref_num_kids, pref_family_plans, pref_smoking_status, pref_vaping_status, pref_drinking_status, pref_nightlife_frequency, pref_has_tattoos, pref_pets, pref_activity_level",
-    )
-    .eq("id", userId)
-    .single();
+  // These two don't depend on each other's results — run concurrently
+  // rather than one after another.
+  const [excludedFromHistory, { data: viewer }] = await Promise.all([
+    getExcludedCandidateIds(userId),
+    supabase
+      .from("profiles")
+      .select(
+        "latitude, longitude, distance_km, gender, looking_for_gender, relationship_type, dating_intentions, personality_tags, dealbreakers, " +
+          "pref_age_min, pref_age_max, " +
+          "pref_num_kids, pref_family_plans, pref_smoking_status, pref_vaping_status, pref_drinking_status, pref_nightlife_frequency, pref_has_tattoos, pref_pets, pref_activity_level",
+      )
+      .eq("id", userId)
+      .single(),
+  ]);
+  const excludedIds = [...excludedFromHistory, ...extraExcludeIds];
 
   if (!viewer) {
     return { candidates: [], error: null };
@@ -167,10 +187,9 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
       profileFields,
   );
 
-  const withPhotos = await attachPhotoGalleries(strippedCandidates);
-  const withAudio = await attachAudioPrompts(withPhotos);
+  const withPhotosAndAudio = await attachPhotosAndAudio(strippedCandidates);
 
-  return { candidates: withComputedAges(withAudio), error: null };
+  return { candidates: withComputedAges(withPhotosAndAudio), error: null };
 }
 
 /** GET /api/discover/queue — return a batch of candidate profiles the user
@@ -397,6 +416,19 @@ router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
  *  Blocked if that swipe already resulted in a match. */
 router.post("/discover/undo", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
+  const { targetId } = req.body as { targetId?: string };
+
+  // The frontend only ever sends this once it has just swiped someone in
+  // the current page session (in-memory state, never persisted — see
+  // DiscoverPage.tsx). No targetId means undo wasn't triggered through
+  // that normal flow at all — reject rather than falling back to "just
+  // undo whatever my most recent swipe happens to be", which is exactly
+  // the old behavior that let someone undo a swipe from a previous visit,
+  // a different device, or days later.
+  if (!targetId) {
+    res.status(400).json({ error: "No swipe to undo" });
+    return;
+  }
 
   const { data: lastSwipe } = await supabase
     .from("swipes")
@@ -406,7 +438,13 @@ router.post("/discover/undo", requireAuth, async (req, res): Promise<void> => {
     .limit(1)
     .maybeSingle();
 
-  if (!lastSwipe) {
+  // Must be BOTH the most recent swipe AND match what the client believes
+  // it just swiped — the second check catches a stale/mismatched client
+  // (e.g. another tab or device swiped since, or simply a page that's
+  // been sitting open long enough for something else to have happened),
+  // so this can never restore anyone other than the one swipe that was
+  // truly just made in this exact session.
+  if (!lastSwipe || lastSwipe.target_id !== targetId) {
     res.status(400).json({ error: "No swipe to undo" });
     return;
   }
@@ -486,9 +524,9 @@ router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => 
   );
   const enriched = (revealedProfiles ?? []).map((p) => ({ ...p, super_liked: superLikerIds.has(p.id) }));
   const withDistance = await attachDistances(userId, enriched);
-  const enrichedWithPhotos = await attachPhotoGalleries(withDistance);
+  const withPhotosAndAudio = await attachPhotosAndAudio(withDistance);
 
-  res.json({ revealed: withComputedAges(await attachAudioPrompts(enrichedWithPhotos)), new_count: newCount });
+  res.json({ revealed: withComputedAges(withPhotosAndAudio), new_count: newCount });
 });
 
 /** POST /api/discover/invites/reveal — PAID (30 Sparks), but ONLY if
@@ -544,9 +582,9 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
 
   const enriched = (inviters ?? []).map((l) => ({ ...l, super_liked: superLikerIds.has(l.id) }));
   const withDistance = await attachDistances(userId, enriched);
-  const enrichedWithPhotos = await attachPhotoGalleries(withDistance);
+  const withPhotosAndAudio = await attachPhotosAndAudio(withDistance);
 
-  res.json({ invites: withComputedAges(await attachAudioPrompts(enrichedWithPhotos)), balance });
+  res.json({ invites: withComputedAges(withPhotosAndAudio), balance });
 });
 
 /** GET /api/discover/search — filter/search the same unswiped candidate
@@ -658,9 +696,9 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
     invite_pending: pendingInvitedSet.has(rest.id),
   }));
 
-  const withPhotos = await attachPhotoGalleries(stripped);
+  const withPhotosAndAudio = await attachPhotosAndAudio(stripped);
 
-  res.json({ results: withComputedAges(await attachAudioPrompts(withPhotos)) });
+  res.json({ results: withComputedAges(withPhotosAndAudio) });
 });
 
 /** GET /api/discover/categories — lightweight preview data for stat cards
@@ -953,9 +991,9 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
   }
 
   const withDistance = await attachDistances(userId, results);
-  const withPhotos = await attachPhotoGalleries(withDistance);
+  const withPhotosAndAudio = await attachPhotosAndAudio(withDistance);
 
-  res.json({ results: withComputedAges(await attachAudioPrompts(withPhotos)) });
+  res.json({ results: withComputedAges(withPhotosAndAudio) });
 });
 
 /** POST /api/discover/message-request — send an opening message to
@@ -1082,9 +1120,9 @@ router.get("/discover/invites/sent", requireAuth, async (req, res): Promise<void
   );
   const enriched = (sentProfiles ?? []).map((p) => ({ ...p, super_liked: superSentIds.has(p.id) }));
   const withDistance = await attachDistances(userId, enriched);
-  const enrichedWithPhotos = await attachPhotoGalleries(withDistance);
+  const withPhotosAndAudio = await attachPhotosAndAudio(withDistance);
 
-  res.json({ sent: withComputedAges(await attachAudioPrompts(enrichedWithPhotos)) });
+  res.json({ sent: withComputedAges(withPhotosAndAudio) });
 });
 
 /** DELETE /api/discover/invites/sent/:targetId — withdraw an invite you

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useParams, Link, useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
+import { getUserIdFromToken } from "@/lib/tokenUtils";
 import { useSparks } from "@/contexts/SparksContext";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
@@ -61,6 +62,7 @@ export default function ChatPage() {
   const params = useParams();
   const matchId = params.matchId || "";
   const { token } = useAuth();
+  const userId = getUserIdFromToken(token);
   const { refresh: refreshSparksBadge } = useSparks();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
@@ -329,7 +331,40 @@ export default function ChatPage() {
     setIsSending(true);
     setInput("");
     const replyId = replyingTo?.id;
+    const replyPreview = replyingTo;
     setReplyingTo(null);
+
+    // Appears instantly, before the network round trip even starts —
+    // this is what sending a message should feel like. Previously this
+    // waited on the POST, then threw its own response away and did a
+    // second full round trip (fetchMessages) just to see the message it
+    // already had the data for. Reconciled with the real, server-saved
+    // message below once the request actually resolves; rolled back
+    // entirely if it fails.
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const optimisticMessage: Message = {
+      id: tempId,
+      match_id: matchId,
+      sender_id: userId ?? tempId,
+      content,
+      message_type: "text",
+      media_url: null,
+      is_read: false,
+      is_unsent: false,
+      sent_at: new Date().toISOString(),
+      reactions: [],
+      reply_to: replyPreview
+        ? {
+            id: replyPreview.id,
+            content: replyPreview.content,
+            sender_id: replyPreview.sender_id,
+            message_type: replyPreview.message_type,
+            is_unsent: replyPreview.is_unsent,
+          }
+        : null,
+    };
+    setMessages((prev) => [...prev, optimisticMessage]);
+
     try {
       const res = await fetch(`/api/matches/${matchId}/messages`, {
         method: "POST",
@@ -341,7 +376,9 @@ export default function ChatPage() {
       });
 
       if (res.status === 402) {
+        setMessages((prev) => prev.filter((m) => m.id !== tempId));
         setInput(content);
+        setReplyingTo(replyPreview);
         toast({
           title: "You're out of Sparks",
           description: "Recharge now or wait for your next monthly grant to keep messaging.",
@@ -352,9 +389,15 @@ export default function ChatPage() {
 
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to send message");
-      await fetchMessages();
+      // The POST response already IS the fully-formed saved message
+      // (id, sent_at, reactions, reply_to — everything the list endpoint
+      // would return for it) — swap the optimistic bubble for it
+      // directly rather than re-fetching the whole conversation.
+      setMessages((prev) => prev.map((m) => (m.id === tempId ? (body as Message) : m)));
     } catch (err) {
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
       setInput(content); // restore what they typed so they don't lose it
+      setReplyingTo(replyPreview);
       toast({
         title: "Error",
         description: err instanceof Error ? err.message : "Failed to send message.",
@@ -369,6 +412,23 @@ export default function ChatPage() {
     if (!matchId || isSending) return;
     setIsSending(true);
     setShowMediaPicker(false);
+
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const optimisticMessage: Message = {
+      id: tempId,
+      match_id: matchId,
+      sender_id: userId ?? tempId,
+      content,
+      message_type: messageType,
+      media_url: mediaUrl ?? null,
+      is_read: false,
+      is_unsent: false,
+      sent_at: new Date().toISOString(),
+      reactions: [],
+      reply_to: null,
+    };
+    setMessages((prev) => [...prev, optimisticMessage]);
+
     try {
       const res = await fetch(`/api/matches/${matchId}/messages`, {
         method: "POST",
@@ -380,6 +440,7 @@ export default function ChatPage() {
       });
 
       if (res.status === 402) {
+        setMessages((prev) => prev.filter((m) => m.id !== tempId));
         toast({
           title: "You're out of Sparks",
           description: "Recharge now or wait for your next monthly grant to keep messaging.",
@@ -390,8 +451,9 @@ export default function ChatPage() {
 
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to send");
-      await fetchMessages();
+      setMessages((prev) => prev.map((m) => (m.id === tempId ? (body as Message) : m)));
     } catch (err) {
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
       toast({
         title: "Error",
         description: err instanceof Error ? err.message : "Failed to send.",

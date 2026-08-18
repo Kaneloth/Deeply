@@ -9,23 +9,22 @@ import { getBlockedUserIds } from "./blocks-helper";
  *  message-request) can create a match without necessarily recording a
  *  reciprocal swipe row for both users. */
 export async function getExcludedCandidateIds(userId: string): Promise<string[]> {
-  const { data: alreadySwiped } = await supabase
-    .from("swipes")
-    .select("target_id")
-    .eq("swiper_id", userId);
-
-  const { data: existingMatches } = await supabase
-    .from("matches")
-    .select("user1_id, user2_id")
-    .or(`user1_id.eq.${userId},user2_id.eq.${userId}`);
+  // These 4 queries are fully independent of each other's results, but
+  // were previously awaited one after another — on every single
+  // Discover/Search/Categories/Invites request. Running them concurrently
+  // cuts this part's latency to roughly the slowest single query instead
+  // of the sum of all four, which matters here specifically because this
+  // function is called on nearly every page in the app.
+  const [{ data: alreadySwiped }, { data: existingMatches }, blockedIds, { data: adminRows }] = await Promise.all([
+    supabase.from("swipes").select("target_id").eq("swiper_id", userId),
+    supabase.from("matches").select("user1_id, user2_id").or(`user1_id.eq.${userId},user2_id.eq.${userId}`),
+    getBlockedUserIds(userId),
+    supabase.from("profiles").select("id").eq("is_admin", true),
+  ]);
 
   const matchedPartnerIds = (existingMatches ?? []).map((m) =>
     m.user1_id === userId ? m.user2_id : m.user1_id,
   );
-
-  const blockedIds = await getBlockedUserIds(userId);
-
-  const { data: adminRows } = await supabase.from("profiles").select("id").eq("is_admin", true);
   const adminIds = (adminRows ?? []).map((a) => a.id);
 
   return [
@@ -51,27 +50,24 @@ export async function getExcludedCandidateIds(userId: string): Promise<string[]>
 export async function getCandidateExclusionSets(
   userId: string,
 ): Promise<{ hardExcluded: string[]; pendingInvitedIds: string[] }> {
-  const { data: allSwipes } = await supabase
-    .from("swipes")
-    .select("target_id, direction")
-    .eq("swiper_id", userId);
+  // Same fix as getExcludedCandidateIds above — these 4 queries don't
+  // depend on each other, so run them concurrently rather than one after
+  // another.
+  const [{ data: allSwipes }, { data: existingMatches }, blockedIds, { data: adminRows }] = await Promise.all([
+    supabase.from("swipes").select("target_id, direction").eq("swiper_id", userId),
+    supabase.from("matches").select("user1_id, user2_id").or(`user1_id.eq.${userId},user2_id.eq.${userId}`),
+    getBlockedUserIds(userId),
+    supabase.from("profiles").select("id").eq("is_admin", true),
+  ]);
 
   const pendingInvitedIds = (allSwipes ?? [])
     .filter((s) => s.direction === "like" || s.direction === "super_like")
     .map((s) => s.target_id);
   const passedIds = (allSwipes ?? []).filter((s) => s.direction === "pass").map((s) => s.target_id);
 
-  const { data: existingMatches } = await supabase
-    .from("matches")
-    .select("user1_id, user2_id")
-    .or(`user1_id.eq.${userId},user2_id.eq.${userId}`);
   const matchedPartnerIds = (existingMatches ?? []).map((m) =>
     m.user1_id === userId ? m.user2_id : m.user1_id,
   );
-
-  const blockedIds = await getBlockedUserIds(userId);
-
-  const { data: adminRows } = await supabase.from("profiles").select("id").eq("is_admin", true);
   const adminIds = (adminRows ?? []).map((a) => a.id);
 
   return {

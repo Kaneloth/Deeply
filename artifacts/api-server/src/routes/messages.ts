@@ -87,26 +87,25 @@ router.get("/matches/:matchId/messages", requireAuth, async (req, res): Promise<
     return;
   }
 
-  const { data: messages } = await supabase
-    .from("messages")
-    .select("*")
-    .eq("match_id", matchId)
-    .eq("is_unsent", false)
-    .order("sent_at", { ascending: true });
+  // These three don't depend on each other's results — run concurrently
+  // instead of one after another.
+  const [{ data: messages }, { data: hidden }, { data: unlock }] = await Promise.all([
+    supabase
+      .from("messages")
+      .select("*")
+      .eq("match_id", matchId)
+      .eq("is_unsent", false)
+      .order("sent_at", { ascending: true }),
+    supabase.from("hidden_messages").select("message_id").eq("user_id", userId),
+    supabase
+      .from("read_receipt_unlocks")
+      .select("match_id")
+      .eq("match_id", matchId)
+      .eq("user_id", userId)
+      .maybeSingle(),
+  ]);
 
-  const { data: hidden } = await supabase
-    .from("hidden_messages")
-    .select("message_id")
-    .eq("user_id", userId);
   const hiddenIds = new Set((hidden ?? []).map((h) => h.message_id));
-
-  const { data: unlock } = await supabase
-    .from("read_receipt_unlocks")
-    .select("match_id")
-    .eq("match_id", matchId)
-    .eq("user_id", userId)
-    .maybeSingle();
-
   const hasUnlockedReceipts = !!unlock;
 
   // Hide the true read status of MY OWN sent messages unless I've paid to
@@ -117,17 +116,30 @@ router.get("/matches/:matchId/messages", requireAuth, async (req, res): Promise<
     .filter((m) => !hiddenIds.has(m.id))
     .map((m) => (m.sender_id === userId && !hasUnlockedReceipts ? { ...m, is_read: false } : m));
 
-  const withReactions = await attachReactions(visibleMessages, userId);
-  const withReplyContext = await attachReplyContext(withReactions);
+  // Reactions and reply-context are also independent of each other —
+  // reply-context only reads `.id` / `.reply_to_message_id`, it never
+  // needs the reaction data, despite the previous code chaining them.
+  const [withReactions, withReplyContext] = await Promise.all([
+    attachReactions(visibleMessages, userId),
+    attachReplyContext(visibleMessages),
+  ]);
+  const replyById = new Map(withReplyContext.map((m) => [m.id, m.reply_to]));
+  const combined = withReactions.map((m) => ({ ...m, reply_to: replyById.get(m.id) ?? null }));
 
-  await supabase
+  // Best-effort, non-blocking — marking incoming messages as read is
+  // bookkeeping the viewer doesn't need confirmed before seeing their own
+  // chat render. Previously this was awaited before responding, adding a
+  // full extra round-trip to every single chat-open, on top of the six
+  // sequential round trips already ahead of it in this handler.
+  supabase
     .from("messages")
     .update({ is_read: true })
     .eq("match_id", matchId)
     .neq("sender_id", userId)
-    .eq("is_read", false);
+    .eq("is_read", false)
+    .then(() => {});
 
-  res.json(withReplyContext);
+  res.json(combined);
 });
 
 /** GET /api/matches/:matchId/read-receipts/status */
@@ -231,23 +243,26 @@ router.post("/matches/:matchId/messages", requireAuth, async (req, res): Promise
   }
 
   const otherUserId = match.user1_id === userId ? match.user2_id : match.user1_id;
-  if (await isBlockedEitherWay(userId, otherUserId)) {
+
+  // These two don't depend on each other's results — run concurrently.
+  // Reply validation deliberately never trusts a client-supplied ID
+  // without confirming it actually belongs to this same match.
+  const [isBlocked, validatedReplyToId] = await Promise.all([
+    isBlockedEitherWay(userId, otherUserId),
+    reply_to_message_id
+      ? supabase
+          .from("messages")
+          .select("id")
+          .eq("id", reply_to_message_id)
+          .eq("match_id", matchId)
+          .maybeSingle()
+          .then(({ data }) => data?.id ?? null)
+      : Promise.resolve(null),
+  ]);
+
+  if (isBlocked) {
     res.status(403).json({ error: "You can't message this person" });
     return;
-  }
-
-  // Reject replying to a message from a different conversation entirely
-  // — never trust a client-supplied ID without confirming it actually
-  // belongs to this same match.
-  let validatedReplyToId: string | null = null;
-  if (reply_to_message_id) {
-    const { data: original } = await supabase
-      .from("messages")
-      .select("id")
-      .eq("id", reply_to_message_id)
-      .eq("match_id", matchId)
-      .maybeSingle();
-    if (original) validatedReplyToId = original.id;
   }
 
   const { cost_send_message } = await getEconomyConfig();
@@ -275,10 +290,17 @@ router.post("/matches/:matchId/messages", requireAuth, async (req, res): Promise
     return;
   }
 
-  await supabase
+  // Best-effort, non-blocking — the sender doesn't need this confirmed
+  // before seeing their own message appear, and message_count is only
+  // read elsewhere (the Matches list preview), never by this same
+  // response. Previously this was awaited before responding, adding a
+  // full extra round-trip to the one action most in need of feeling
+  // instant: sending a message.
+  supabase
     .from("matches")
     .update({ message_count: match.message_count + 1 })
-    .eq("id", matchId);
+    .eq("id", matchId)
+    .then(() => {});
 
   const [{ reply_to }] = await attachReplyContext([message]);
 

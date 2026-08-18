@@ -34,6 +34,37 @@ async function formatMatch(m: Record<string, any>, viewerId: string) {
   };
 }
 
+/** Same output shape as formatMatch, but for a whole list at once. The
+ *  list endpoint used to call formatMatch once per match via
+ *  Promise.all — that parallelizes the round trips instead of doing them
+ *  one at a time, but for N matches it's still 2N separate outbound
+ *  requests to Supabase (attachPhotoGalleries + attachAudioPrompts,
+ *  each called individually per match) instead of 2 total. Both of those
+ *  helpers already accept a whole array and batch internally in a single
+ *  query — the fix is simply calling them ONCE across every matched user
+ *  at once, the way they were designed to be used, instead of once per
+ *  match. */
+async function formatMatchesBatch(rawMatches: Record<string, any>[], viewerId: string) {
+  const matchedUsers = rawMatches
+    .map((m) => (m.user1_id === viewerId ? m.user2 : m.user1))
+    .filter((u): u is Record<string, any> => !!u);
+
+  const withPhotos = await attachPhotoGalleries(matchedUsers);
+  const withAudio = await attachAudioPrompts(withPhotos);
+  const hydratedById = new Map(withAudio.map((u) => [u.id, u]));
+
+  return rawMatches.map((m) => {
+    const matchedUser = m.user1_id === viewerId ? m.user2 : m.user1;
+    const hydrated = matchedUser ? hydratedById.get(matchedUser.id) : undefined;
+    return {
+      id: m.id,
+      matched_user: hydrated ? withComputedAge(hydrated) : null,
+      message_count: m.message_count,
+      created_at: m.created_at,
+    };
+  });
+}
+
 /** GET /api/matches — list all matches (chat is always open, no expiry).
  *  Also computes which matches are "new" (created since this viewer last
  *  loaded this page), then immediately updates their last-viewed
@@ -76,9 +107,7 @@ router.get("/matches", requireAuth, async (req, res): Promise<void> => {
     unreadMatchIds = new Set((unreadRows ?? []).map((r) => r.match_id));
   }
 
-  const formatted = await Promise.all(
-    matches.map((m) => formatMatch(m as Record<string, any>, userId)),
-  );
+  const formatted = await formatMatchesBatch(matches as Record<string, any>[], userId);
 
   const result = formatted.map((m) => ({
     ...m,
