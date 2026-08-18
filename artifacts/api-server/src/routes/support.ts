@@ -135,11 +135,30 @@ router.post("/support/blocked-message", async (req, res): Promise<void> => {
 
   const trimmedMessage = message.trim();
 
-  const { data: saved, error: insertError } = await supabase
-    .from("support_messages")
-    .insert({ email, message: trimmedMessage })
-    .select("id")
-    .single();
+  // One automatic retry before giving up — this form is specifically for
+  // people already locked out of their account, so a transient blip
+  // shouldn't surface as a hard failure if a second attempt would have
+  // succeeded. Genuinely persistent failures (bad schema, real RLS
+  // misconfig, etc.) still fail after the retry, same as before.
+  let saved: { id: string } | null = null;
+  let insertError: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = await supabase
+      .from("support_messages")
+      .insert({ email, message: trimmedMessage })
+      .select("id")
+      .single();
+    if (result.data) {
+      saved = result.data;
+      insertError = null;
+      break;
+    }
+    insertError = result.error;
+    if (attempt === 0) {
+      console.error("Blocked-account support message insert failed, retrying once:", result.error);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
 
   if (insertError || !saved) {
     console.error("Failed to save blocked-account support message:", insertError);
