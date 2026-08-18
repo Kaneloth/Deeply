@@ -58,12 +58,20 @@ export async function checkAndApplyMonthlyGrant(userId: string): Promise<SparksP
     return profile as SparksProfile;
   }
 
-  await supabase.from("sparks_transactions").insert({
-    user_id: userId,
-    amount: grantAmount,
-    reason: "Monthly free Sparks grant",
-    balance_after: updated.free_sparks_balance + updated.paid_sparks_balance,
-  });
+  // Fire-and-forget — this is an audit-log row, not the balance itself
+  // (already durably applied by the awaited .update() above). Blocking
+  // the response on it added a full extra round trip to every single
+  // Sparks-reading/spending action across the app, since this function
+  // runs at the start of all of them.
+  supabase
+    .from("sparks_transactions")
+    .insert({
+      user_id: userId,
+      amount: grantAmount,
+      reason: "Monthly free Sparks grant",
+      balance_after: updated.free_sparks_balance + updated.paid_sparks_balance,
+    })
+    .then(() => {});
 
   // Fire-and-forget — a notification failure shouldn't block the grant
   // itself from applying.
@@ -97,12 +105,18 @@ export async function addPaidSparks(
 
   const newTotal = profile.free_sparks_balance + newPaidBalance;
 
-  await supabase.from("sparks_transactions").insert({
-    user_id: userId,
-    amount,
-    reason,
-    balance_after: newTotal,
-  });
+  // Fire-and-forget — same reasoning as checkAndApplyMonthlyGrant: this
+  // is the audit-log row, not the balance itself, which is already
+  // durably applied by the awaited .update() above.
+  supabase
+    .from("sparks_transactions")
+    .insert({
+      user_id: userId,
+      amount,
+      reason,
+      balance_after: newTotal,
+    })
+    .then(() => {});
 
   return newTotal;
 }
@@ -138,12 +152,21 @@ export async function spendSparks(
 
   const newTotal = newFree + newPaid;
 
-  await supabase.from("sparks_transactions").insert({
-    user_id: userId,
-    amount: -amount,
-    reason,
-    balance_after: newTotal,
-  });
+  // Fire-and-forget — same reasoning as above. This is the single
+  // highest-impact change here: spendSparks runs at the start of nearly
+  // every paid action in the app (super likes, reshuffle, undo, unsend,
+  // read-receipt unlocks, message-before-match), so removing one
+  // blocking round trip from it removes that same round trip from all
+  // of them at once.
+  supabase
+    .from("sparks_transactions")
+    .insert({
+      user_id: userId,
+      amount: -amount,
+      reason,
+      balance_after: newTotal,
+    })
+    .then(() => {});
 
   // Only fire on the actual crossing (was above threshold, now at/below
   // it) — not on every subsequent spend while already low, which would
