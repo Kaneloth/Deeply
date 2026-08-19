@@ -64,13 +64,32 @@ import { ScanWaveLoader } from "@/components/ScanWaveLoader";
 let hasShownDiscoverScanWave = false;
 const MIN_SCAN_WAVE_MS = 2000;
 
+// In-memory only — deliberately not persisted to localStorage, so this
+// only survives within the same app session/process (a real app restart
+// or web page reload both start fresh, same as hasShownDiscoverScanWave
+// above). Lets a REVISIT to Discover show the last-seen queue instantly
+// instead of a blank skeleton, while a fresh fetch quietly runs
+// underneath and replaces it once ready. A lightweight stopgap for
+// "every navigation feels like a cold load," short of a full migration
+// to react-query's built-in stale-while-revalidate (this app already
+// depends on @tanstack/react-query, just doesn't use it for data
+// fetching yet).
+//
+// Known limitation: the cached queue can briefly include someone the
+// user already swiped on since it was cached (e.g. swiped on Search,
+// then revisited Discover) — self-corrects within a second or two once
+// the background refresh lands, and any swipe still records correctly
+// server-side regardless, but it's a real (small, transient) tradeoff
+// of this shortcut worth knowing about.
+let cachedCandidates: Candidate[] | null = null;
+
 export default function DiscoverPage() {
   const { token } = useAuth();
   const userId = getUserIdFromToken(token);
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const { setControls } = useDiscoverControls();
-  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [candidates, setCandidates] = useState<Candidate[]>(cachedCandidates ?? []);
   // Always current, regardless of which closure of handleReshuffle
   // happens to be registered in DiscoverControlsContext at call time.
   // The registration effect below only re-runs when reshuffleStatus or
@@ -84,7 +103,7 @@ export default function DiscoverPage() {
   useEffect(() => {
     candidatesRef.current = candidates;
   }, [candidates]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(cachedCandidates === null);
   const [showScanWave, setShowScanWave] = useState(false);
   const [matchCelebration, setMatchCelebration] = useState<{ name: string; matchId: string; photoUrl?: string } | null>(null);
   const [isSwiping, setIsSwiping] = useState(false);
@@ -139,7 +158,9 @@ export default function DiscoverPage() {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to reshuffle");
-      setCandidates(body.candidates ?? []);
+      const reshuffled = body.candidates ?? [];
+      cachedCandidates = reshuffled;
+      setCandidates(reshuffled);
 
       // Previously this only informed the user AFTER they'd already been
       // charged for a paid reshuffle — meaning the first (free) reshuffle
@@ -174,11 +195,18 @@ export default function DiscoverPage() {
 
   const fetchQueue = useCallback(async () => {
     const isFirstLoadOfSession = !hasShownDiscoverScanWave;
+    const hadCachedContent = cachedCandidates !== null;
     if (isFirstLoadOfSession) {
       hasShownDiscoverScanWave = true;
       setShowScanWave(true);
+      setIsLoading(true);
+    } else if (!hadCachedContent) {
+      setIsLoading(true);
     }
-    setIsLoading(true);
+    // else: cached content is already visible from initial state above —
+    // leave isLoading as-is (false) and refresh silently underneath
+    // rather than replacing it with a skeleton the user has already
+    // gotten past.
     const startedAt = Date.now();
     try {
       const res = await fetch("/api/discover/queue", {
@@ -193,7 +221,9 @@ export default function DiscoverPage() {
         if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
       }
 
-      setCandidates(body.candidates ?? []);
+      const freshCandidates = body.candidates ?? [];
+      cachedCandidates = freshCandidates;
+      setCandidates(freshCandidates);
     } catch (err) {
       toast({
         title: "Error",
@@ -263,7 +293,11 @@ export default function DiscoverPage() {
     });
 
     await new Promise((resolve) => setTimeout(resolve, 300));
-    setCandidates((prev) => prev.filter((c) => c.id !== target.id));
+    setCandidates((prev) => {
+      const next = prev.filter((c) => c.id !== target.id);
+      cachedCandidates = next;
+      return next;
+    });
     setExiting(null);
 
     try {
@@ -320,7 +354,11 @@ export default function DiscoverPage() {
       if (!res.ok) throw new Error(body.error ?? "Failed to undo");
 
       if (body.restoredProfile) {
-        setCandidates((prev) => [body.restoredProfile, ...prev]);
+        setCandidates((prev) => {
+          const next = [body.restoredProfile, ...prev];
+          cachedCandidates = next;
+          return next;
+        });
       }
       // Only the single immediately-preceding swipe is ever undoable —
       // once used, there's nothing left to undo until another swipe
@@ -363,7 +401,11 @@ export default function DiscoverPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to send message");
 
-      setCandidates((prev) => prev.filter((c) => c.id !== composeFor.id));
+      setCandidates((prev) => {
+        const next = prev.filter((c) => c.id !== composeFor.id);
+        cachedCandidates = next;
+        return next;
+      });
       setComposeFor(null);
       setMessageText("");
       setLocation(`/matches/${body.matchId}/chat`);
@@ -383,18 +425,12 @@ export default function DiscoverPage() {
       return (
         <>
           <ScanWaveLoader />
-          <div style={{ position: "fixed", top: 0, left: 0, right: 0, background: "red", color: "white", padding: 10, zIndex: 999999, fontSize: 16, fontWeight: "bold" }}>
-            TEST MARKER — scan wave state
-          </div>
           <DebugOverlay />
         </>
       );
     }
     return (
       <div className="p-4 pt-10 space-y-6">
-        <div style={{ position: "fixed", top: 0, left: 0, right: 0, background: "red", color: "white", padding: 10, zIndex: 999999, fontSize: 16, fontWeight: "bold" }}>
-          TEST MARKER — skeleton state
-        </div>
         <Skeleton className="h-8 w-32 mx-2" />
         <Skeleton className="h-[500px] w-full rounded-3xl" />
         <DebugOverlay />
@@ -406,9 +442,6 @@ export default function DiscoverPage() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden px-2 pb-1 pt-2">
-      <div style={{ position: "fixed", top: 0, left: 0, right: 0, background: "red", color: "white", padding: 10, zIndex: 999999, fontSize: 16, fontWeight: "bold" }}>
-        TEST MARKER — loaded state
-      </div>
       <div className="flex-1 relative min-h-0">
         {visibleCards.length === 0 ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-6">
