@@ -6,6 +6,7 @@ import { setAuthTokenGetter } from "@workspace/api-client-react";
 import { useLocation } from "wouter";
 import type { BlockInfo } from "@/components/BlockedAccountScreen";
 import { setUser as setSentryUser } from "@/lib/sentry";
+import { debugLog } from "@/lib/debugLog";
 
 const ACCESS_TOKEN_KEY = "deeply_access_token";
 const REFRESH_TOKEN_KEY = "deeply_refresh_token";
@@ -187,7 +188,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const original = originalFetchRef.current;
 
     window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      // Temporary diagnostic instrumentation — logs every request's URL
+      // and duration to the on-screen DebugOverlay, so native-only
+      // slowness can be tracked down on a device without remote
+      // debugging access. Safe to remove once resolved.
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? "GET";
+      const reqStart = performance.now();
       const response = await original(input, init);
+      const durationMs = Math.round(performance.now() - reqStart);
+      debugLog(`${method} ${url} -> ${response.status}`, { durationMs });
 
       // Detect a ban/suspension taking effect mid-session — requireAuth
       // returns this on EVERY request once an account is blocked, so this
