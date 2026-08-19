@@ -42,6 +42,20 @@ const SwipeCard = memo(
     exitDirection: SwipeDirection | null;
     stackIndex: number;
   }) {
+    // Diagnostic only — fires exactly once per real DOM mount/unmount
+    // (empty dep array), not per re-render, so this gives direct
+    // evidence of whether cards are genuinely being torn down and
+    // rebuilt repeatedly (the literal mechanism behind visible
+    // blinking) as opposed to just re-rendering in place. Safe to
+    // remove once the blinking investigation is resolved.
+    useEffect(() => {
+      debugLog(`SwipeCard MOUNT: ${candidate.name} (${candidate.id}) stackIndex=${stackIndex}`);
+      return () => {
+        debugLog(`SwipeCard UNMOUNT: ${candidate.name} (${candidate.id})`);
+      };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     return (
       <motion.div
         className="absolute inset-0"
