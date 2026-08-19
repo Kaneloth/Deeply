@@ -12,6 +12,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useSparks } from "@/contexts/SparksContext";
 import { useDiscoverControls } from "@/contexts/DiscoverControlsContext";
 import { captureUserLocation } from "@/lib/captureLocation";
+import { DebugOverlay } from "@/components/DebugOverlay";
+import { debugLog } from "@/lib/debugLog";
 
 interface Candidate extends ProfileCardData {
   photo_url: string | null;
@@ -205,13 +207,14 @@ export default function DiscoverPage() {
   }, [token, toast]);
 
   useEffect(() => {
+    debugLog("DiscoverPage: mounted");
     fetchQueue();
     fetchReshuffleStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    captureUserLocation(token);
+    captureUserLocation(token, "Discover");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -377,12 +380,24 @@ export default function DiscoverPage() {
 
   if (isLoading) {
     if (showScanWave) {
-      return <ScanWaveLoader />;
+      return (
+        <>
+          <ScanWaveLoader />
+          <div style={{ position: "fixed", top: 0, left: 0, right: 0, background: "red", color: "white", padding: 10, zIndex: 999999, fontSize: 16, fontWeight: "bold" }}>
+            TEST MARKER — scan wave state
+          </div>
+          <DebugOverlay />
+        </>
+      );
     }
     return (
       <div className="p-4 pt-10 space-y-6">
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, background: "red", color: "white", padding: 10, zIndex: 999999, fontSize: 16, fontWeight: "bold" }}>
+          TEST MARKER — skeleton state
+        </div>
         <Skeleton className="h-8 w-32 mx-2" />
         <Skeleton className="h-[500px] w-full rounded-3xl" />
+        <DebugOverlay />
       </div>
     );
   }
@@ -391,6 +406,9 @@ export default function DiscoverPage() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden px-2 pb-1 pt-2">
+      <div style={{ position: "fixed", top: 0, left: 0, right: 0, background: "red", color: "white", padding: 10, zIndex: 999999, fontSize: 16, fontWeight: "bold" }}>
+        TEST MARKER — loaded state
+      </div>
       <div className="flex-1 relative min-h-0">
         {visibleCards.length === 0 ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-6">
@@ -532,6 +550,8 @@ export default function DiscoverPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <DebugOverlay />
     </div>
   );
 }
