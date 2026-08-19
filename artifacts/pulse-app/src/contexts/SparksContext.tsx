@@ -98,9 +98,39 @@ export function SparksProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    // Self-rescheduling with random jitter, rather than a fixed
+    // setInterval — this app has 2-3 independent background polls
+    // mounted essentially everywhere (unread-count, match indicator,
+    // this one), each on its own fixed timer. With no jitter, they tend
+    // to drift into phase with each other over time and fire in the
+    // same instant, which on a marginal connection means several
+    // requests queuing and competing at once instead of spreading out.
+    // 60s base (up from 30s) since this is a low-priority safety net —
+    // the balance already gets refreshed immediately after any actual
+    // spend via an explicit refresh() call elsewhere; this periodic
+    // check only exists to catch a monthly-grant boundary being crossed
+    // while the app sits idle.
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout>;
+    const BASE_MS = 60_000;
+    const JITTER_MS = 20_000;
+
+    const scheduleNext = () => {
+      const jitter = (Math.random() - 0.5) * JITTER_MS;
+      timeoutId = setTimeout(async () => {
+        if (cancelled) return;
+        await refresh();
+        if (!cancelled) scheduleNext();
+      }, BASE_MS + jitter);
+    };
+
     refresh();
-    const interval = setInterval(refresh, 30_000);
-    return () => clearInterval(interval);
+    scheduleNext();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated]);
 

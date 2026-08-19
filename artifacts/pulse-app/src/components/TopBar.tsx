@@ -36,12 +36,30 @@ export function TopBar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  // Poll periodically while the app is open, plus refetch whenever the
-  // route changes (e.g. coming back from the notifications page itself).
+  // Poll periodically (with jitter — see SparksContext.tsx for why)
+  // while the app is open, plus refetch whenever the route changes (e.g.
+  // coming back from the notifications page itself).
   useEffect(() => {
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout>;
+    const JITTER_MS = 15_000;
+
+    const scheduleNext = () => {
+      const jitter = (Math.random() - 0.5) * JITTER_MS;
+      timeoutId = setTimeout(async () => {
+        if (cancelled) return;
+        await fetchUnreadCount();
+        if (!cancelled) scheduleNext();
+      }, UNREAD_POLL_INTERVAL_MS + jitter);
+    };
+
     fetchUnreadCount();
-    const interval = setInterval(fetchUnreadCount, UNREAD_POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
+    scheduleNext();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchUnreadCount, location]);
 

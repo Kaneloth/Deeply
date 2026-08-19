@@ -36,14 +36,31 @@ export function BottomNav() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  // Poll periodically, plus refetch on route change — e.g. after
-  // visiting Matches (which clears the "new" state server-side), the dot
-  // should disappear as soon as you navigate away, not wait a full
-  // polling interval.
+  // Poll periodically (with jitter — see SparksContext.tsx for why),
+  // plus refetch on route change — e.g. after visiting Matches (which
+  // clears the "new" state server-side), the dot should disappear as
+  // soon as you navigate away, not wait a full polling interval.
   useEffect(() => {
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout>;
+    const JITTER_MS = 15_000;
+
+    const scheduleNext = () => {
+      const jitter = (Math.random() - 0.5) * JITTER_MS;
+      timeoutId = setTimeout(async () => {
+        if (cancelled) return;
+        await fetchIndicatorStatus();
+        if (!cancelled) scheduleNext();
+      }, INDICATOR_POLL_INTERVAL_MS + jitter);
+    };
+
     fetchIndicatorStatus();
-    const interval = setInterval(fetchIndicatorStatus, INDICATOR_POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
+    scheduleNext();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchIndicatorStatus, location]);
 
