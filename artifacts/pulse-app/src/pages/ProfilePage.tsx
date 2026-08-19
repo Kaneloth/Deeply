@@ -46,6 +46,13 @@ interface GalleryPhoto {
   position: number;
 }
 
+interface AudioPrompt {
+  id: string;
+  prompt_question: string;
+  audio_url: string;
+  duration_seconds: number | null;
+}
+
 const MAX_FREE_PHOTOS = 8;
 const MAX_GALLERY_ITEMS = 20;
 const EXTRA_PHOTO_COST = 10;
@@ -87,23 +94,34 @@ const MIN_BIRTHDATE = new Date(_today.getFullYear() - 100, _today.getMonth(), _t
   .toISOString()
   .split("T")[0];
 
+// In-memory only, same pattern as DiscoverPage.tsx's cachedCandidates.
+// Four separate caches since profile, photos, prompts, and boost status
+// are all independently fetched. cachedProfile alone is enough to seed
+// every individual form field too — the existing population effect
+// keyed on `profile` re-runs on mount whenever it starts non-null.
+let cachedProfileData: any = null;
+let cachedPhotos: GalleryPhoto[] | null = null;
+let cachedPrompts: AudioPrompt[] | null = null;
+let cachedBoostStatus: BoostStatus | null = null;
+
 export default function ProfilePage() {
   const { token } = useAuth();
   const { balance, refresh: refreshSparksBadge } = useSparks();
   const [showSparksModal, setShowSparksModal] = useState(false);
   const { toast } = useToast();
-  const [profile, setProfile] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [profile, setProfile] = useState<any>(cachedProfileData);
+  const [isLoading, setIsLoading] = useState(cachedProfileData === null);
   const [isSaving, setIsSaving] = useState(false);
 
   const fetchProfile = useCallback(async () => {
-    setIsLoading(true);
+    if (cachedProfileData === null) setIsLoading(true);
     try {
       const res = await fetch("/api/profile/me", {
         headers: { Authorization: `Bearer ${token}` },
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to load profile");
+      cachedProfileData = body;
       setProfile(body);
     } catch (err) {
       toast({
@@ -158,11 +176,11 @@ export default function ProfilePage() {
     setInterests((prev) => (prev.includes(v) ? prev.filter((i) => i !== v) : prev.length < 10 ? [...prev, v] : prev));
   };
 
-  const [boostStatus, setBoostStatus] = useState<BoostStatus | null>(null);
+  const [boostStatus, setBoostStatus] = useState<BoostStatus | null>(cachedBoostStatus);
   const [isBoosting, setIsBoosting] = useState(false);
 
-  const [photos, setPhotos] = useState<GalleryPhoto[]>([]);
-  const [isLoadingPhotos, setIsLoadingPhotos] = useState(true);
+  const [photos, setPhotos] = useState<GalleryPhoto[]>(cachedPhotos ?? []);
+  const [isLoadingPhotos, setIsLoadingPhotos] = useState(cachedPhotos === null);
   const [isUploading, setIsUploading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [settingMainId, setSettingMainId] = useState<string | null>(null);
@@ -172,14 +190,16 @@ export default function ProfilePage() {
   const cameraVideoInputRef = useRef<HTMLInputElement>(null);
 
   const fetchPhotos = useCallback(async () => {
-    setIsLoadingPhotos(true);
+    if (cachedPhotos === null) setIsLoadingPhotos(true);
     try {
       const res = await fetch("/api/profile/me/photos", {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) return;
       const body = await res.json();
-      setPhotos(body ?? []);
+      const fresh = body ?? [];
+      cachedPhotos = fresh;
+      setPhotos(fresh);
     } catch {
       // Silent — non-critical.
     } finally {
@@ -193,17 +213,10 @@ export default function ProfilePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  interface AudioPrompt {
-    id: string;
-    prompt_question: string;
-    audio_url: string;
-    duration_seconds: number | null;
-  }
-
   const MAX_AUDIO_PROMPTS = 2;
 
-  const [prompts, setPrompts] = useState<AudioPrompt[]>([]);
-  const [isLoadingPrompts, setIsLoadingPrompts] = useState(true);
+  const [prompts, setPrompts] = useState<AudioPrompt[]>(cachedPrompts ?? []);
+  const [isLoadingPrompts, setIsLoadingPrompts] = useState(cachedPrompts === null);
   const [showAddPromptSheet, setShowAddPromptSheet] = useState(false);
   const [selectedNewPromptQuestion, setSelectedNewPromptQuestion] = useState<string | null>(null);
   const [customPromptDraft, setCustomPromptDraft] = useState("");
@@ -213,14 +226,16 @@ export default function ProfilePage() {
   const promptAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const fetchPrompts = useCallback(async () => {
-    setIsLoadingPrompts(true);
+    if (cachedPrompts === null) setIsLoadingPrompts(true);
     try {
       const res = await fetch("/api/prompts", {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) return;
       const body = await res.json();
-      setPrompts(body ?? []);
+      const fresh = body ?? [];
+      cachedPrompts = fresh;
+      setPrompts(fresh);
     } catch {
       // Silent — non-critical.
     } finally {
@@ -318,7 +333,11 @@ export default function ProfilePage() {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "Failed to delete prompt");
       }
-      setPrompts((prev) => prev.filter((p) => p.id !== promptId));
+      setPrompts((prev) => {
+        const next = prev.filter((p) => p.id !== promptId);
+        cachedPrompts = next;
+        return next;
+      });
     } catch (err) {
       toast({
         title: "Error",
@@ -615,7 +634,11 @@ export default function ProfilePage() {
         if (!res.ok) throw new Error(body.error ?? "Upload failed");
 
         localPhotos = [...localPhotos, body];
-        setPhotos((prev) => [...prev, body]);
+        setPhotos((prev) => {
+          const next = [...prev, body];
+          cachedPhotos = next;
+          return next;
+        });
         successCount++;
 
         if (body.sparks_charged > 0) {
@@ -720,7 +743,11 @@ export default function ProfilePage() {
     // Optimistic — remove immediately so the tap feels instant, rather
     // than waiting on a full fetchPhotos() round-trip before anything
     // visually changes. Rolled back below if the delete actually fails.
-    setPhotos((prev) => prev.filter((p) => p.id !== photoId));
+    setPhotos((prev) => {
+      const next = prev.filter((p) => p.id !== photoId);
+      cachedPhotos = next;
+      return next;
+    });
     try {
       const res = await fetch(`/api/profile/me/photos/${photoId}`, {
         method: "DELETE",
@@ -735,6 +762,7 @@ export default function ProfilePage() {
       // never delays the already-instant visual removal above.
       fetchPhotos();
     } catch (err) {
+      cachedPhotos = previousPhotos;
       setPhotos(previousPhotos); // roll back — it wasn't actually deleted
       toast({
         title: "Error",
@@ -753,6 +781,7 @@ export default function ProfilePage() {
       });
       if (!res.ok) return;
       const body = await res.json();
+      cachedBoostStatus = body;
       setBoostStatus(body);
     } catch {
       // Silent — non-critical.
@@ -895,6 +924,7 @@ export default function ProfilePage() {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to save profile");
+      cachedProfileData = body;
       setProfile(body);
       toast({ title: "Profile updated", description: "Your changes have been saved." });
     } catch (err) {

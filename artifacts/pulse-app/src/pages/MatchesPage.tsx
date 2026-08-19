@@ -24,11 +24,16 @@ interface Match {
   is_new?: boolean;
 }
 
+// In-memory only, same pattern as DiscoverPage.tsx's cachedCandidates —
+// lets a revisit to Matches show the last-seen list instantly instead of
+// a skeleton, while a fresh fetch quietly runs underneath.
+let cachedMatches: Match[] | null = null;
+
 export default function MatchesPage() {
   const { token } = useAuth();
   const { toast } = useToast();
-  const [matches, setMatches] = useState<Match[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [matches, setMatches] = useState<Match[]>(cachedMatches ?? []);
+  const [isLoading, setIsLoading] = useState(cachedMatches === null);
   const [showNewMatches, setShowNewMatches] = useState(true);
 
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
@@ -60,7 +65,11 @@ export default function MatchesPage() {
         body: JSON.stringify({ blockedUserId: userId }),
       });
       if (!res.ok) throw new Error("Failed to block");
-      setMatches((prev) => prev.filter((m) => m.matched_user?.id !== userId));
+      setMatches((prev) => {
+        const next = prev.filter((m) => m.matched_user?.id !== userId);
+        cachedMatches = next;
+        return next;
+      });
       setSelectedMatchId(null);
       toast({ title: "User blocked" });
     } catch {
@@ -71,14 +80,16 @@ export default function MatchesPage() {
   };
 
   const fetchMatches = useCallback(async () => {
-    setIsLoading(true);
+    if (cachedMatches === null) setIsLoading(true);
     try {
       const res = await fetch("/api/matches", {
         headers: { Authorization: `Bearer ${token}` },
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to load matches");
-      setMatches(body ?? []);
+      const fresh = body ?? [];
+      cachedMatches = fresh;
+      setMatches(fresh);
     } catch (err) {
       toast({
         title: "Error",
@@ -292,7 +303,11 @@ export default function MatchesPage() {
           matchId={reportTarget.matchId}
           onClose={() => setReportTarget(null)}
           onSuccess={() => {
-            setMatches((prev) => prev.filter((m) => m.matched_user?.id !== reportTarget.id));
+            setMatches((prev) => {
+              const next = prev.filter((m) => m.matched_user?.id !== reportTarget.id);
+              cachedMatches = next;
+              return next;
+            });
             setReportTarget(null);
           }}
         />

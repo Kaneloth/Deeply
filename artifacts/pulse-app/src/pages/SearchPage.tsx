@@ -15,6 +15,8 @@ import { MatchCelebration } from "@/components/MatchCelebration";
 import { Search as SearchIcon, Heart, X, MessageCircle, SlidersHorizontal, Sparkles, ShieldCheck, Mic, MapPin, TrendingUp, ChevronLeft, Star } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { captureUserLocation } from "@/lib/captureLocation";
+import { DebugOverlay } from "@/components/DebugOverlay";
+import { debugLog } from "@/lib/debugLog";
 
 const PERSONALITY_TAGS = [
   "Sarcastic", "Curious", "Night Owl", "Coffee Snob",
@@ -119,6 +121,9 @@ function ProfileDetailOverlay({
   );
 }
 
+// In-memory only, same pattern as DiscoverPage.tsx's cachedCandidates.
+let cachedCategories: Category[] | null = null;
+
 export default function SearchPage() {
   const { token } = useAuth();
   const userId = getUserIdFromToken(token);
@@ -142,19 +147,21 @@ export default function SearchPage() {
   const [messageText, setMessageText] = useState("");
   const [isSendingMessage, setIsSendingMessage] = useState(false);
 
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [categoriesLoading, setCategoriesLoading] = useState(true);
+  const [categories, setCategories] = useState<Category[]>(cachedCategories ?? []);
+  const [categoriesLoading, setCategoriesLoading] = useState(cachedCategories === null);
   const [activeCategory, setActiveCategory] = useState<Category | null>(null);
 
   const fetchCategories = useCallback(async () => {
-    setCategoriesLoading(true);
+    if (cachedCategories === null) setCategoriesLoading(true);
     try {
       const res = await fetch("/api/discover/categories", {
         headers: { Authorization: `Bearer ${token}` },
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to load categories");
-      setCategories(body.categories ?? []);
+      const fresh = body.categories ?? [];
+      cachedCategories = fresh;
+      setCategories(fresh);
     } catch {
       // Silent — categories are a nice-to-have, not core functionality.
     } finally {
@@ -181,7 +188,8 @@ export default function SearchPage() {
   // well have location data. Mount-once, silent, non-blocking — same
   // pattern as DiscoverPage.
   useEffect(() => {
-    captureUserLocation(token);
+    debugLog("SearchPage: mounted");
+    captureUserLocation(token, "Search");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -672,6 +680,8 @@ export default function SearchPage() {
           onMessage={() => setLocation(`/matches/${matchCelebration.matchId}/chat`)}
         />
       )}
+
+      <DebugOverlay />
     </div>
   );
 }

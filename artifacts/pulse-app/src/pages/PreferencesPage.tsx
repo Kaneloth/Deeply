@@ -38,22 +38,31 @@ const FAMILY_PLANS_PREFERENCE_OPTIONS = withNoPreference(FAMILY_PLANS_OPTIONS);
 const SMOKING_PREFERENCE_OPTIONS = withNoPreference(SMOKING_OPTIONS);
 const DRINKING_PREFERENCE_OPTIONS = withNoPreference(DRINKING_OPTIONS);
 
+// In-memory only, same pattern as DiscoverPage.tsx's cachedCandidates.
+// Caching just the raw profile is enough here — the existing population
+// effect below (which fills in all the individual field states from
+// `profile`) already re-runs on mount whenever `profile` starts non-null,
+// so every field gets seeded correctly for free with no extra per-field
+// caching needed.
+let cachedProfile: any = null;
+
 export default function PreferencesPage() {
   const { token } = useAuth();
   const { toast } = useToast();
-  const [profile, setProfile] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [profile, setProfile] = useState<any>(cachedProfile);
+  const [isLoading, setIsLoading] = useState(cachedProfile === null);
   const [isSaving, setIsSaving] = useState(false);
   const [dealbreakersEnabled, setDealbreakersEnabled] = useState(false);
 
   const fetchProfile = useCallback(async () => {
-    setIsLoading(true);
+    if (cachedProfile === null) setIsLoading(true);
     try {
       const res = await fetch("/api/profile/me", {
         headers: { Authorization: `Bearer ${token}` },
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to load preferences");
+      cachedProfile = body;
       setProfile(body);
     } catch (err) {
       toast({
@@ -183,6 +192,7 @@ export default function PreferencesPage() {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to save preferences");
+      cachedProfile = body;
       setProfile(body);
       toast({ title: "Preferences updated", description: "Your changes have been saved." });
     } catch (err) {

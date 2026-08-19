@@ -101,34 +101,44 @@ function InviteDetailOverlay({
   );
 }
 
+// In-memory only, same pattern as DiscoverPage.tsx's cachedCandidates.
+// Two separate caches since Received and Sent are independently loaded.
+let cachedRevealed: Invite[] | null = null;
+let cachedNewCount = 0;
+let cachedSent: Invite[] | null = null;
+
 export default function InvitesPage() {
   const { token } = useAuth();
   const { refresh: refreshSparksBadge } = useSparks();
   const { refresh: refreshInvitesBadge } = useInvites();
   const { toast } = useToast();
 
-  const [revealed, setRevealed] = useState<Invite[]>([]);
-  const [newCount, setNewCount] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
+  const [revealed, setRevealed] = useState<Invite[]>(cachedRevealed ?? []);
+  const [newCount, setNewCount] = useState(cachedNewCount);
+  const [isLoading, setIsLoading] = useState(cachedRevealed === null);
   const [isRevealing, setIsRevealing] = useState(false);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [matchCelebration, setMatchCelebration] = useState<{ name: string; matchId: string; photoUrl?: string | null } | null>(null);
   const [, setLocation] = useLocation();
   const [selectedInvite, setSelectedInvite] = useState<Invite | null>(null);
   const [mode, setMode] = useState<"received" | "sent">("received");
-  const [sent, setSent] = useState<Invite[] | null>(null);
+  const [sent, setSent] = useState<Invite[] | null>(cachedSent);
   const [sentLoading, setSentLoading] = useState(false);
 
   const fetchInvites = useCallback(async () => {
-    setIsLoading(true);
+    if (cachedRevealed === null) setIsLoading(true);
     try {
       const res = await fetch("/api/discover/invites", {
         headers: { Authorization: `Bearer ${token}` },
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to load invites");
-      setRevealed(body.revealed ?? []);
-      setNewCount(body.new_count ?? 0);
+      const freshRevealed = body.revealed ?? [];
+      const freshNewCount = body.new_count ?? 0;
+      cachedRevealed = freshRevealed;
+      cachedNewCount = freshNewCount;
+      setRevealed(freshRevealed);
+      setNewCount(freshNewCount);
     } catch (err) {
       toast({
         title: "Error",
@@ -159,7 +169,9 @@ export default function InvitesPage() {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to load sent invites");
-      setSent(body.sent ?? []);
+      const freshSent = body.sent ?? [];
+      cachedSent = freshSent;
+      setSent(freshSent);
     } catch (err) {
       toast({
         title: "Error",
@@ -197,7 +209,10 @@ export default function InvitesPage() {
 
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to reveal invites");
-      setRevealed(body.invites ?? []);
+      const freshRevealed = body.invites ?? [];
+      cachedRevealed = freshRevealed;
+      cachedNewCount = 0;
+      setRevealed(freshRevealed);
       setNewCount(0);
       refreshInvitesBadge();
       if (body.balance !== null) {
@@ -228,7 +243,11 @@ export default function InvitesPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to record decision");
 
-      setRevealed((prev) => prev.filter((i) => i.id !== invite.id));
+      setRevealed((prev) => {
+        const next = prev.filter((i) => i.id !== invite.id);
+        cachedRevealed = next;
+        return next;
+      });
       setSelectedInvite((prev) => (prev?.id === invite.id ? null : prev));
       refreshInvitesBadge();
 
@@ -268,7 +287,11 @@ export default function InvitesPage() {
         throw new Error(body.error ?? "Failed to withdraw invite");
       }
 
-      setSent((prev) => (prev ? prev.filter((i) => i.id !== invite.id) : prev));
+      setSent((prev) => {
+        const next = prev ? prev.filter((i) => i.id !== invite.id) : prev;
+        cachedSent = next;
+        return next;
+      });
       setSelectedInvite((prev) => (prev?.id === invite.id ? null : prev));
       toast({ title: "Invite withdrawn" });
       refreshSparksBadge();

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, memo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getUserIdFromToken } from "@/lib/tokenUtils";
 import { useLocation } from "wouter";
@@ -28,35 +28,56 @@ const EXIT_VARIANTS: Record<SwipeDirection, { x?: number; y?: number; opacity: n
   super_like: { y: -400, opacity: 0, scale: 1.05 },
 };
 
-function SwipeCard({
-  candidate,
-  isTop,
-  isExiting,
-  exitDirection,
-  stackIndex,
-}: {
-  candidate: Candidate;
-  isTop: boolean;
-  isExiting: boolean;
-  exitDirection: SwipeDirection | null;
-  stackIndex: number;
-}) {
-  return (
-    <motion.div
-      className="absolute inset-0"
-      style={{ zIndex: 10 - stackIndex }}
-      initial={{ scale: 0.95, opacity: 0 }}
-      animate={
-        isExiting && exitDirection
-          ? EXIT_VARIANTS[exitDirection]
-          : { scale: 1, opacity: 1, x: 0, y: 0, rotate: 0 }
-      }
-      transition={{ duration: 0.3, ease: "easeOut" }}
-    >
-      <ProfileCard profile={candidate} active={isTop} enablePullReveal={isTop} />
-    </motion.div>
-  );
-}
+const SwipeCard = memo(
+  function SwipeCard({
+    candidate,
+    isTop,
+    isExiting,
+    exitDirection,
+    stackIndex,
+  }: {
+    candidate: Candidate;
+    isTop: boolean;
+    isExiting: boolean;
+    exitDirection: SwipeDirection | null;
+    stackIndex: number;
+  }) {
+    return (
+      <motion.div
+        className="absolute inset-0"
+        style={{ zIndex: 10 - stackIndex }}
+        initial={{ scale: 0.95, opacity: 0 }}
+        animate={
+          isExiting && exitDirection
+            ? EXIT_VARIANTS[exitDirection]
+            : { scale: 1, opacity: 1, x: 0, y: 0, rotate: 0 }
+        }
+        transition={{ duration: 0.3, ease: "easeOut" }}
+      >
+        <ProfileCard profile={candidate} active={isTop} enablePullReveal={isTop} />
+      </motion.div>
+    );
+  },
+  // Custom comparator — candidate is a brand-new object reference on
+  // every fetch (JSON.parse always allocates fresh objects), even when
+  // the underlying data hasn't actually changed at all. This app also
+  // has several independent background polls (Sparks, notifications,
+  // match indicator) that can trigger re-renders elsewhere in the tree.
+  // Without this, any of those unrelated re-renders — or a background
+  // stale-while-revalidate refresh landing identical data — could cause
+  // this card to re-render and, if anything inside ProfileCard resets
+  // state based on object identity rather than candidate.id, visually
+  // "blink" for no real reason. Comparing by id (and the handful of
+  // props that actually affect rendering) instead of reference stops
+  // that cascade at this boundary regardless of what's happening deeper
+  // inside ProfileCard.
+  (prev, next) =>
+    prev.candidate.id === next.candidate.id &&
+    prev.isTop === next.isTop &&
+    prev.isExiting === next.isExiting &&
+    prev.exitDirection === next.exitDirection &&
+    prev.stackIndex === next.stackIndex,
+);
 
 import { MatchCelebration } from "@/components/MatchCelebration";
 import { ScanWaveLoader } from "@/components/ScanWaveLoader";
