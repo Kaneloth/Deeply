@@ -12,8 +12,6 @@ import { useToast } from "@/hooks/use-toast";
 import { useSparks } from "@/contexts/SparksContext";
 import { useDiscoverControls } from "@/contexts/DiscoverControlsContext";
 import { captureUserLocation } from "@/lib/captureLocation";
-import { DebugOverlay } from "@/components/DebugOverlay";
-import { debugLog } from "@/lib/debugLog";
 
 interface Candidate extends ProfileCardData {
   photo_url: string | null;
@@ -42,20 +40,6 @@ const SwipeCard = memo(
     exitDirection: SwipeDirection | null;
     stackIndex: number;
   }) {
-    // Diagnostic only — fires exactly once per real DOM mount/unmount
-    // (empty dep array), not per re-render, so this gives direct
-    // evidence of whether cards are genuinely being torn down and
-    // rebuilt repeatedly (the literal mechanism behind visible
-    // blinking) as opposed to just re-rendering in place. Safe to
-    // remove once the blinking investigation is resolved.
-    useEffect(() => {
-      debugLog(`SwipeCard MOUNT: ${candidate.name} (${candidate.id}) stackIndex=${stackIndex}`);
-      return () => {
-        debugLog(`SwipeCard UNMOUNT: ${candidate.name} (${candidate.id})`);
-      };
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
     return (
       <motion.div
         className="absolute inset-0"
@@ -66,7 +50,15 @@ const SwipeCard = memo(
             ? EXIT_VARIANTS[exitDirection]
             : { scale: 1, opacity: 1, x: 0, y: 0, rotate: 0 }
         }
-        transition={{ duration: 0.3, ease: "easeOut" }}
+        // Small per-card stagger on the initial mount only (never on
+        // exit, so swipes still feel instant) — 3 stacked cards fading
+        // in at the exact same instant, right when the page is also
+        // busy handling several concurrent fetches, is exactly the kind
+        // of simultaneous main-thread work that can make a JS-driven
+        // animation stutter instead of animating smoothly. Spreading
+        // them by a few dozen ms each reduces peak work at any single
+        // frame without being visually noticeable as a delay.
+        transition={{ duration: 0.3, ease: "easeOut", delay: isExiting ? 0 : stackIndex * 0.04 }}
       >
         <ProfileCard profile={candidate} active={isTop} enablePullReveal={isTop} />
       </motion.div>
@@ -272,14 +264,13 @@ export default function DiscoverPage() {
   }, [token, toast]);
 
   useEffect(() => {
-    debugLog("DiscoverPage: mounted");
     fetchQueue();
     fetchReshuffleStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    captureUserLocation(token, "Discover");
+    captureUserLocation(token);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -457,18 +448,12 @@ export default function DiscoverPage() {
 
   if (isLoading) {
     if (showScanWave) {
-      return (
-        <>
-          <ScanWaveLoader />
-          <DebugOverlay />
-        </>
-      );
+      return <ScanWaveLoader />;
     }
     return (
       <div className="p-4 pt-10 space-y-6">
         <Skeleton className="h-8 w-32 mx-2" />
         <Skeleton className="h-[500px] w-full rounded-3xl" />
-        <DebugOverlay />
       </div>
     );
   }
@@ -618,8 +603,6 @@ export default function DiscoverPage() {
           </motion.div>
         )}
       </AnimatePresence>
-
-      <DebugOverlay />
     </div>
   );
 }

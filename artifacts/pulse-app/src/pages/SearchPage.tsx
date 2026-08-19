@@ -15,8 +15,6 @@ import { MatchCelebration } from "@/components/MatchCelebration";
 import { Search as SearchIcon, Heart, X, MessageCircle, SlidersHorizontal, Sparkles, ShieldCheck, Mic, MapPin, TrendingUp, ChevronLeft, Star } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { captureUserLocation } from "@/lib/captureLocation";
-import { DebugOverlay } from "@/components/DebugOverlay";
-import { debugLog } from "@/lib/debugLog";
 
 const PERSONALITY_TAGS = [
   "Sarcastic", "Curious", "Night Owl", "Coffee Snob",
@@ -188,8 +186,7 @@ export default function SearchPage() {
   // well have location data. Mount-once, silent, non-blocking — same
   // pattern as DiscoverPage.
   useEffect(() => {
-    debugLog("SearchPage: mounted");
-    captureUserLocation(token, "Search");
+    captureUserLocation(token);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -680,8 +677,6 @@ export default function SearchPage() {
           onMessage={() => setLocation(`/matches/${matchCelebration.matchId}/chat`)}
         />
       )}
-
-      <DebugOverlay />
     </div>
   );
 }
