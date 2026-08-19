@@ -60,6 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
+    debugLog("AuthContext: logout() called — setToken(null)", { level: "warn" });
     clearRefreshTimer();
     localStorage.removeItem(ACCESS_TOKEN_KEY);
     localStorage.removeItem(REFRESH_TOKEN_KEY);
@@ -94,6 +95,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const applySession = (accessToken: string, refreshToken: string, expiresIn: number) => {
+    debugLog(`AuthContext: applySession — new token set, expires in ${expiresIn}s (token changed: ${accessToken !== token})`);
     const expiresAt = Date.now() + expiresIn * 1000;
     localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
     localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
@@ -112,7 +114,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Returns the fresh access token on success, or null if refresh failed
   // (in which case logout() has already been triggered).
   const doRefresh = async (): Promise<string | null> => {
-    if (refreshPromiseRef.current) return refreshPromiseRef.current;
+    if (refreshPromiseRef.current) {
+      debugLog("AuthContext: doRefresh() called while one already in flight — deduped");
+      return refreshPromiseRef.current;
+    }
+    debugLog("AuthContext: doRefresh() starting a new refresh attempt");
 
     const promise = (async (): Promise<string | null> => {
       const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);

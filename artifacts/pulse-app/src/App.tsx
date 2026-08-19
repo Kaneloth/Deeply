@@ -46,33 +46,72 @@ function PublicRoute({ component: Component, ...rest }: any) {
   
   return <Component {...rest} />;
 }
+
+// Stable, module-level wrapper components — one per route — instead of
+// inline arrow functions in the JSX below. This matters far more than
+// it looks: Router is nested inside AuthProvider/SparksProvider/
+// InvitesProvider, none of which are memoized, so by default ANY state
+// change in ANY of them (a token refresh, a Sparks balance poll, an
+// invites-count poll — all of which happen every 30-60s) re-renders
+// every descendant, including Router. An inline `component={() => (...)}`
+// is a BRAND NEW function reference on every one of those re-renders,
+// and React treats a changed component reference as a different
+// component type — meaning the currently-active page was being fully
+// unmounted and remounted (not just re-rendered) on essentially every
+// background poll, app-wide. That's what was actually behind the
+// Discover card "blinking" (its whole parent page was being torn down
+// and rebuilt), and very likely a major contributor to the excessive
+// duplicate API call volume seen throughout this session — every
+// remount re-ran every one of that page's mount-time fetches from
+// scratch. Defining these once, outside the render function, gives them
+// a referentially stable identity forever, so ordinary re-renders no
+// longer cause a remount.
+const PublicAuthRoute = () => <PublicRoute component={AuthPage} />;
+const ProtectedOnboardingRoute = () => <ProtectedRoute component={OnboardingPage} />;
+const ProtectedDiscoverRoute = () => <ProtectedRoute component={DiscoverPage} />;
+const ProtectedSearchRoute = () => <ProtectedRoute component={SearchPage} />;
+const ProtectedInvitesRoute = () => <ProtectedRoute component={InvitesPage} />;
+const ProtectedMatchesRoute = () => <ProtectedRoute component={MatchesPage} />;
+const ProtectedMatchDetailRoute = () => <ProtectedRoute component={MatchDetailPage} />;
+const ProtectedChatRoute = () => <ProtectedRoute component={ChatPage} />;
+const ProtectedProfileRoute = () => <ProtectedRoute component={ProfilePage} />;
+const ProtectedPreferencesRoute = () => <ProtectedRoute component={PreferencesPage} />;
+const ProtectedNotificationsRoute = () => <ProtectedRoute component={NotificationsPage} />;
+const ProtectedWhoViewedMeRoute = () => <ProtectedRoute component={WhoViewedMePage} />;
+const ProtectedPayfastReturnRoute = () => <ProtectedRoute component={PayfastReturnPage} />;
+const ProtectedPayfastCancelRoute = () => <ProtectedRoute component={PayfastCancelPage} />;
+const ProtectedVerificationPayfastReturnRoute = () => <ProtectedRoute component={VerificationPayfastReturnPage} />;
+const ProtectedVerificationPayfastCancelRoute = () => <ProtectedRoute component={VerificationPayfastCancelPage} />;
+const ProtectedSettingsRoute = () => <ProtectedRoute component={SettingsPage} />;
+const ProtectedAdminRoute = () => <ProtectedRoute component={AdminPage} />;
+
 function Router() {
   return (
     <AppShell>
       <Switch>
         {/* Public Routes */}
-        <Route path="/" component={() => <PublicRoute component={AuthPage} />} />
+        <Route path="/" component={PublicAuthRoute} />
         <Route path="/reset-password" component={ResetPasswordPage} />
         <Route path="/auth/callback" component={AuthCallbackPage} />
         
         {/* Protected Routes */}
-        <Route path="/onboarding" component={() => <ProtectedRoute component={OnboardingPage} />} />
-        <Route path="/discover" component={() => <ProtectedRoute component={DiscoverPage} />} />
-        <Route path="/search" component={() => <ProtectedRoute component={SearchPage} />} />
-        <Route path="/invites" component={() => <ProtectedRoute component={InvitesPage} />} />
-        <Route path="/matches" component={() => <ProtectedRoute component={MatchesPage} />} />
-        <Route path="/matches/:matchId" component={() => <ProtectedRoute component={MatchDetailPage} />} />
-        <Route path="/matches/:matchId/chat" component={() => <ProtectedRoute component={ChatPage} />} />
-        <Route path="/profile" component={() => <ProtectedRoute component={ProfilePage} />} />
-        <Route path="/preferences" component={() => <ProtectedRoute component={PreferencesPage} />} />
-        <Route path="/notifications" component={() => <ProtectedRoute component={NotificationsPage} />} />
-        <Route path="/who-viewed-me" component={() => <ProtectedRoute component={WhoViewedMePage} />} />
-        <Route path="/sparks/payfast/return" component={() => <ProtectedRoute component={PayfastReturnPage} />} />
-        <Route path="/sparks/payfast/cancel" component={() => <ProtectedRoute component={PayfastCancelPage} />} />
-        <Route path="/verification/payfast/return" component={() => <ProtectedRoute component={VerificationPayfastReturnPage} />} />
-        <Route path="/verification/payfast/cancel" component={() => <ProtectedRoute component={VerificationPayfastCancelPage} />} />
-        <Route path="/settings" component={() => <ProtectedRoute component={SettingsPage} />} />
-        <Route path="/admin" component={() => <ProtectedRoute component={AdminPage} />} />
+        <Route path="/onboarding" component={ProtectedOnboardingRoute} />
+        <Route path="/discover" component={ProtectedDiscoverRoute} />
+        <Route path="/search" component={ProtectedSearchRoute} />
+        <Route path="/invites" component={ProtectedInvitesRoute} />
+        <Route path="/matches" component={ProtectedMatchesRoute} />
+        <Route path="/matches/:matchId" component={ProtectedMatchDetailRoute} />
+        <Route path="/matches/:matchId/chat" component={ProtectedChatRoute} />
+        <Route path="/profile" component={ProtectedProfileRoute} />
+        <Route path="/preferences" component={ProtectedPreferencesRoute} />
+        <Route path="/notifications" component={ProtectedNotificationsRoute} />
+        <Route path="/who-viewed-me" component={ProtectedWhoViewedMeRoute} />
+        <Route path="/sparks/payfast/return" component={ProtectedPayfastReturnRoute} />
+        <Route path="/sparks/payfast/cancel" component={ProtectedPayfastCancelRoute} />
+        <Route path="/verification/payfast/return" component={ProtectedVerificationPayfastReturnRoute} />
+        <Route path="/verification/payfast/cancel" component={ProtectedVerificationPayfastCancelRoute} />
+        <Route path="/settings" component={ProtectedSettingsRoute} />
+        <Route path="/admin" component={ProtectedAdminRoute} />
         
         {/* Catch all */}
         <Route component={NotFound} />
