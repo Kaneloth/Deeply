@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { subscribeDebugLog, clearDebugLog, type DebugLogEntry } from "@/lib/debugLog";
 
 // Temporary diagnostic tool — safe to delete once the native slowness is
@@ -6,35 +7,44 @@ import { subscribeDebugLog, clearDebugLog, type DebugLogEntry } from "@/lib/debu
 // timings, readable directly off the device with no remote debugging
 // connection needed. Tap the badge to expand/collapse; tap "Clear" to
 // reset between test runs.
+//
+// Rendered via a portal straight to document.body rather than in-place.
+// This app uses Framer Motion extensively (swipe card animations), which
+// applies CSS transforms to animated elements — and any ancestor with a
+// transform becomes the new containing block for `position: fixed`
+// descendants instead of the viewport. Combined with DiscoverPage's root
+// container using overflow-hidden, an in-place fixed overlay could end
+// up clipped and invisible despite rendering correctly in the DOM. A
+// portal sidesteps this entirely by attaching directly to <body>.
 export function DebugOverlay() {
   const [entries, setEntries] = useState<DebugLogEntry[]>([]);
   const [expanded, setExpanded] = useState(true);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
     return subscribeDebugLog(setEntries);
   }, []);
 
-  if (!expanded) {
-    return (
-      <button
-        onClick={() => setExpanded(true)}
-        style={{
-          position: "fixed", bottom: 90, right: 12, zIndex: 9999,
-          background: "#111", color: "#0f0", fontSize: 11, padding: "6px 10px",
-          borderRadius: 8, border: "1px solid #333", fontFamily: "monospace",
-        }}
-      >
-        debug ({entries.length})
-      </button>
-    );
-  }
+  if (!mounted) return null;
 
-  return (
+  const content = !expanded ? (
+    <button
+      onClick={() => setExpanded(true)}
+      style={{
+        position: "fixed", bottom: 90, right: 12, zIndex: 999999,
+        background: "#111", color: "#0f0", fontSize: 11, padding: "6px 10px",
+        borderRadius: 8, border: "1px solid #333", fontFamily: "monospace",
+      }}
+    >
+      debug ({entries.length})
+    </button>
+  ) : (
     <div
       style={{
         position: "fixed", bottom: 0, left: 0, right: 0, maxHeight: "40vh",
         background: "rgba(10,10,10,0.94)", color: "#0f0", fontFamily: "monospace",
-        fontSize: 10.5, zIndex: 9999, overflowY: "auto", borderTop: "1px solid #333",
+        fontSize: 10.5, zIndex: 999999, overflowY: "auto", borderTop: "1px solid #333",
         padding: "6px 8px",
       }}
     >
@@ -65,4 +75,6 @@ export function DebugOverlay() {
       ))}
     </div>
   );
+
+  return createPortal(content, document.body);
 }
