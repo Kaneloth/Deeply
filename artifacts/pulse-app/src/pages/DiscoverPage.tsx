@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getUserIdFromToken } from "@/lib/tokenUtils";
 import { useLocation } from "wouter";
@@ -69,6 +69,19 @@ export default function DiscoverPage() {
   const [, setLocation] = useLocation();
   const { setControls } = useDiscoverControls();
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+  // Always current, regardless of which closure of handleReshuffle
+  // happens to be registered in DiscoverControlsContext at call time.
+  // The registration effect below only re-runs when reshuffleStatus or
+  // isReshuffling change — not on every candidates update — so the
+  // registered onReshuffle callback can end up closing over a stale
+  // (sometimes still-empty) candidates array. Reading from this ref
+  // instead of the closed-over state sidesteps that staleness entirely:
+  // whichever version of the callback actually executes always sees the
+  // true current queue.
+  const candidatesRef = useRef<Candidate[]>([]);
+  useEffect(() => {
+    candidatesRef.current = candidates;
+  }, [candidates]);
   const [isLoading, setIsLoading] = useState(true);
   const [showScanWave, setShowScanWave] = useState(false);
   const [matchCelebration, setMatchCelebration] = useState<{ name: string; matchId: string; photoUrl?: string } | null>(null);
@@ -109,17 +122,18 @@ export default function DiscoverPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        // Only exclude the current TOP card, not the whole held queue.
-        // Excluding everyone currently in `candidates` (which can hold up
-        // to 20 people) is fine with a large pool, but with a small one —
-        // e.g. exactly 2 eligible people — it excludes the entire pool at
-        // once, leaving nothing to draw and producing an empty "You're
-        // all caught up" result instead of a genuine reshuffle. Excluding
-        // just the top card is enough to guarantee this reshuffle won't
-        // immediately re-show the same person in the same spot, while
-        // still degrading gracefully (alternating correctly) down to
-        // pools as small as 2.
-        body: JSON.stringify({ currentQueueIds: candidates[0] ? [candidates[0].id] : [] }),
+        // Read from candidatesRef, not the closed-over `candidates`
+        // directly — handleReshuffle can be called via a stale closure
+        // registered in DiscoverControlsContext (see candidatesRef
+        // definition above), so relying on the closure's own view of
+        // candidates was intermittently sending an empty exclusion list,
+        // making the first reshuffle after mount silently no-op visually
+        // while still consuming the free weekly reshuffle (or charging
+        // Sparks) for it. The ref is always current regardless of which
+        // closure executes.
+        body: JSON.stringify({
+          currentQueueIds: candidatesRef.current[0] ? [candidatesRef.current[0].id] : [],
+        }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to reshuffle");
