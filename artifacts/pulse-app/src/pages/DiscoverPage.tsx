@@ -44,7 +44,10 @@ const SwipeCard = memo(
       <motion.div
         className="absolute inset-0"
         style={{ zIndex: 10 - stackIndex }}
-        initial={{ scale: 0.95, opacity: 0 }}
+        // Do not fade the card itself. PhotoCarousel owns image readiness,
+        // and stacking a card opacity animation on top of image decoding
+        // produces a visible blink in native WebViews.
+        initial={{ scale: 0.98, opacity: 1 }}
         animate={
           isExiting && exitDirection
             ? EXIT_VARIANTS[exitDirection]
