@@ -99,7 +99,7 @@ const MIN_BIRTHDATE = new Date(_today.getFullYear() - 100, _today.getMonth(), _t
 // are all independently fetched. cachedProfile alone is enough to seed
 // every individual form field too — the existing population effect
 // keyed on `profile` re-runs on mount whenever it starts non-null.
-import { readPersistentCache, writePersistentCache } from "@/lib/persistentCache";
+import { readPersistentCache, writePersistentCache, registerCacheResetter } from "@/lib/persistentCache";
 
 const PROFILE_DATA_CACHE_KEY = "profile_data";
 const PROFILE_PHOTOS_CACHE_KEY = "profile_photos";
@@ -127,6 +127,12 @@ function updateProfileBoostCache(value: BoostStatus) {
   cachedBoostStatus = value;
   writePersistentCache(PROFILE_BOOST_CACHE_KEY, value);
 }
+registerCacheResetter(() => {
+  cachedProfileData = null;
+  cachedPhotos = null;
+  cachedPrompts = null;
+  cachedBoostStatus = null;
+});
 
 export default function ProfilePage() {
   const { token } = useAuth();

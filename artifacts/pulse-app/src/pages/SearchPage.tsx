@@ -120,7 +120,7 @@ function ProfileDetailOverlay({
 }
 
 // In-memory only, same pattern as DiscoverPage.tsx's cachedCandidates.
-import { readPersistentCache, writePersistentCache } from "@/lib/persistentCache";
+import { readPersistentCache, writePersistentCache, registerCacheResetter } from "@/lib/persistentCache";
 
 const CATEGORIES_CACHE_KEY = "search_categories";
 let cachedCategories: Category[] | null = readPersistentCache<Category[]>(CATEGORIES_CACHE_KEY);
@@ -128,6 +128,9 @@ function updateCategoriesCache(value: Category[]) {
   cachedCategories = value;
   writePersistentCache(CATEGORIES_CACHE_KEY, value);
 }
+registerCacheResetter(() => {
+  cachedCategories = null;
+});
 
 export default function SearchPage() {
   const { token } = useAuth();

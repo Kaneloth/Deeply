@@ -1,5 +1,20 @@
 const CACHE_KEY_PREFIX = "deeply_cache:";
 
+// Each page's module-level `let cachedX` variable lives in memory for as
+// long as the JS process is alive — separate from localStorage entirely.
+// Logout doesn't restart the app process (it just navigates to "/"), so
+// clearing localStorage alone leaves those in-memory variables holding
+// the previous user's data. The next page mount reads straight from
+// that stale in-memory variable, not from localStorage — so wiping only
+// the persisted copy does nothing to prevent the leak. Each page
+// registers a resetter here (right after declaring its cache variable)
+// so clearAllPersistentCaches() can null out BOTH layers together.
+const resetters = new Set<() => void>();
+
+export function registerCacheResetter(fn: () => void): void {
+  resetters.add(fn);
+}
+
 /** Reads a persisted cache entry, returning null if missing, corrupted,
  *  or if localStorage is unavailable for any reason (storage quota,
  *  privacy-mode edge cases, etc.) — callers already treat null as "no
@@ -41,4 +56,7 @@ export function clearAllPersistentCaches(): void {
   } catch {
     // Non-fatal.
   }
+  // Reset every page's in-memory variable too — see the comment above
+  // `resetters` for why this is required, not optional.
+  resetters.forEach((fn) => fn());
 }

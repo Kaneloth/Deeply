@@ -817,8 +817,26 @@ export default function ChatPage() {
                       {msg.message_type === "sticker" ? (
                         <div className="text-6xl leading-none">{msg.content}</div>
                       ) : msg.message_type === "gif" ? (
-                        <div className="rounded-2xl overflow-hidden">
-                          <img src={msg.media_url ?? ""} alt="GIF" className="w-full h-auto" />
+                        // A fixed aspect-ratio placeholder, not h-auto —
+                        // h-auto means the image's height is entirely
+                        // determined by its natural dimensions, which
+                        // are unknown until the GIF actually finishes
+                        // downloading. Before that it renders at ~zero
+                        // height; the moment it loads, everything below
+                        // it in the chat suddenly jumps to make room —
+                        // exactly the "bounce" this fixes. object-contain
+                        // (not cover) keeps the full GIF visible, same as
+                        // before, just within a reserved box instead of
+                        // one that collapses to nothing pre-load.
+                        <div
+                          className="rounded-2xl overflow-hidden bg-muted"
+                          style={{ aspectRatio: "4 / 3" }}
+                        >
+                          <img
+                            src={msg.media_url ?? ""}
+                            alt="GIF"
+                            className="w-full h-full object-contain"
+                          />
                         </div>
                       ) : (
                         <div

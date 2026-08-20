@@ -103,7 +103,7 @@ function InviteDetailOverlay({
 
 // In-memory only, same pattern as DiscoverPage.tsx's cachedCandidates.
 // Two separate caches since Received and Sent are independently loaded.
-import { readPersistentCache, writePersistentCache } from "@/lib/persistentCache";
+import { readPersistentCache, writePersistentCache, registerCacheResetter } from "@/lib/persistentCache";
 
 // Backed by localStorage — see MatchesPage.tsx for the full reasoning.
 // Received (revealed + newCount) and Sent are cached separately, since
@@ -128,6 +128,11 @@ function updateSentCache(value: Invite[] | null) {
   cachedSent = value;
   if (value !== null) writePersistentCache(SENT_CACHE_KEY, value);
 }
+registerCacheResetter(() => {
+  cachedRevealed = null;
+  cachedNewCount = 0;
+  cachedSent = null;
+});
 
 export default function InvitesPage() {
   const { token } = useAuth();

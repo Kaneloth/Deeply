@@ -27,7 +27,7 @@ interface Match {
 // In-memory only, same pattern as DiscoverPage.tsx's cachedCandidates —
 // lets a revisit to Matches show the last-seen list instantly instead of
 // a skeleton, while a fresh fetch quietly runs underneath.
-import { readPersistentCache, writePersistentCache } from "@/lib/persistentCache";
+import { readPersistentCache, writePersistentCache, registerCacheResetter } from "@/lib/persistentCache";
 
 // In-memory only, same pattern as DiscoverPage.tsx's cachedCandidates —
 // but ALSO backed by localStorage here, so this survives a real app
@@ -45,6 +45,9 @@ function updateMatchesCache(value: Match[]) {
   cachedMatches = value;
   writePersistentCache(MATCHES_CACHE_KEY, value);
 }
+registerCacheResetter(() => {
+  cachedMatches = null;
+});
 
 export default function MatchesPage() {
   const { token } = useAuth();

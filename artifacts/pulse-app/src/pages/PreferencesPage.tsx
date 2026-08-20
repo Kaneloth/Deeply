@@ -44,7 +44,7 @@ const DRINKING_PREFERENCE_OPTIONS = withNoPreference(DRINKING_OPTIONS);
 // `profile`) already re-runs on mount whenever `profile` starts non-null,
 // so every field gets seeded correctly for free with no extra per-field
 // caching needed.
-import { readPersistentCache, writePersistentCache } from "@/lib/persistentCache";
+import { readPersistentCache, writePersistentCache, registerCacheResetter } from "@/lib/persistentCache";
 
 const PREFERENCES_CACHE_KEY = "preferences_profile";
 let cachedProfile: any = readPersistentCache<any>(PREFERENCES_CACHE_KEY);
@@ -52,6 +52,9 @@ function updatePreferencesCache(value: any) {
   cachedProfile = value;
   writePersistentCache(PREFERENCES_CACHE_KEY, value);
 }
+registerCacheResetter(() => {
+  cachedProfile = null;
+});
 
 export default function PreferencesPage() {
   const { token } = useAuth();
