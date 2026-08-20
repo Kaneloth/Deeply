@@ -44,7 +44,14 @@ const DRINKING_PREFERENCE_OPTIONS = withNoPreference(DRINKING_OPTIONS);
 // `profile`) already re-runs on mount whenever `profile` starts non-null,
 // so every field gets seeded correctly for free with no extra per-field
 // caching needed.
-let cachedProfile: any = null;
+import { readPersistentCache, writePersistentCache } from "@/lib/persistentCache";
+
+const PREFERENCES_CACHE_KEY = "preferences_profile";
+let cachedProfile: any = readPersistentCache<any>(PREFERENCES_CACHE_KEY);
+function updatePreferencesCache(value: any) {
+  cachedProfile = value;
+  writePersistentCache(PREFERENCES_CACHE_KEY, value);
+}
 
 export default function PreferencesPage() {
   const { token } = useAuth();
@@ -62,7 +69,7 @@ export default function PreferencesPage() {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to load preferences");
-      cachedProfile = body;
+      updatePreferencesCache(body);
       setProfile(body);
     } catch (err) {
       toast({
@@ -192,7 +199,7 @@ export default function PreferencesPage() {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to save preferences");
-      cachedProfile = body;
+      updatePreferencesCache(body);
       setProfile(body);
       toast({ title: "Preferences updated", description: "Your changes have been saved." });
     } catch (err) {

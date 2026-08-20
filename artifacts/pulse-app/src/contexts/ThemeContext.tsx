@@ -18,7 +18,12 @@ function applyTheme(theme: Theme) {
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>(() => {
     const saved = typeof window !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
-    return saved === "light" ? "light" : "dark"; // app has always rendered dark by default
+    // A fresh install (nothing saved yet) now defaults to light. Someone
+    // who has actually chosen dark mode themselves at some point still
+    // gets it back every time — this only changes what a brand-new
+    // install looks like before anyone has touched the toggle, not
+    // anyone's already-made choice.
+    return saved === "dark" ? "dark" : "light";
   });
 
   useEffect(() => {

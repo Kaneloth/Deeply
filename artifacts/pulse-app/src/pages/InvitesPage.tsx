@@ -103,9 +103,31 @@ function InviteDetailOverlay({
 
 // In-memory only, same pattern as DiscoverPage.tsx's cachedCandidates.
 // Two separate caches since Received and Sent are independently loaded.
-let cachedRevealed: Invite[] | null = null;
-let cachedNewCount = 0;
-let cachedSent: Invite[] | null = null;
+import { readPersistentCache, writePersistentCache } from "@/lib/persistentCache";
+
+// Backed by localStorage — see MatchesPage.tsx for the full reasoning.
+// Received (revealed + newCount) and Sent are cached separately, since
+// they're independently loaded.
+const REVEALED_CACHE_KEY = "invites_revealed";
+const NEW_COUNT_CACHE_KEY = "invites_new_count";
+const SENT_CACHE_KEY = "invites_sent";
+
+let cachedRevealed: Invite[] | null = readPersistentCache<Invite[]>(REVEALED_CACHE_KEY);
+let cachedNewCount = readPersistentCache<number>(NEW_COUNT_CACHE_KEY) ?? 0;
+let cachedSent: Invite[] | null = readPersistentCache<Invite[]>(SENT_CACHE_KEY);
+
+function updateRevealedCache(value: Invite[]) {
+  cachedRevealed = value;
+  writePersistentCache(REVEALED_CACHE_KEY, value);
+}
+function updateNewCountCache(value: number) {
+  cachedNewCount = value;
+  writePersistentCache(NEW_COUNT_CACHE_KEY, value);
+}
+function updateSentCache(value: Invite[] | null) {
+  cachedSent = value;
+  if (value !== null) writePersistentCache(SENT_CACHE_KEY, value);
+}
 
 export default function InvitesPage() {
   const { token } = useAuth();
@@ -135,8 +157,8 @@ export default function InvitesPage() {
       if (!res.ok) throw new Error(body.error ?? "Failed to load invites");
       const freshRevealed = body.revealed ?? [];
       const freshNewCount = body.new_count ?? 0;
-      cachedRevealed = freshRevealed;
-      cachedNewCount = freshNewCount;
+      updateRevealedCache(freshRevealed);
+      updateNewCountCache(freshNewCount);
       setRevealed(freshRevealed);
       setNewCount(freshNewCount);
     } catch (err) {
@@ -170,7 +192,7 @@ export default function InvitesPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to load sent invites");
       const freshSent = body.sent ?? [];
-      cachedSent = freshSent;
+      updateSentCache(freshSent);
       setSent(freshSent);
     } catch (err) {
       toast({
@@ -210,8 +232,8 @@ export default function InvitesPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to reveal invites");
       const freshRevealed = body.invites ?? [];
-      cachedRevealed = freshRevealed;
-      cachedNewCount = 0;
+      updateRevealedCache(freshRevealed);
+      updateNewCountCache(0);
       setRevealed(freshRevealed);
       setNewCount(0);
       refreshInvitesBadge();
@@ -245,7 +267,7 @@ export default function InvitesPage() {
 
       setRevealed((prev) => {
         const next = prev.filter((i) => i.id !== invite.id);
-        cachedRevealed = next;
+        updateRevealedCache(next);
         return next;
       });
       setSelectedInvite((prev) => (prev?.id === invite.id ? null : prev));
@@ -289,7 +311,7 @@ export default function InvitesPage() {
 
       setSent((prev) => {
         const next = prev ? prev.filter((i) => i.id !== invite.id) : prev;
-        cachedSent = next;
+        updateSentCache(next);
         return next;
       });
       setSelectedInvite((prev) => (prev?.id === invite.id ? null : prev));

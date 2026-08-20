@@ -99,10 +99,34 @@ const MIN_BIRTHDATE = new Date(_today.getFullYear() - 100, _today.getMonth(), _t
 // are all independently fetched. cachedProfile alone is enough to seed
 // every individual form field too — the existing population effect
 // keyed on `profile` re-runs on mount whenever it starts non-null.
-let cachedProfileData: any = null;
-let cachedPhotos: GalleryPhoto[] | null = null;
-let cachedPrompts: AudioPrompt[] | null = null;
-let cachedBoostStatus: BoostStatus | null = null;
+import { readPersistentCache, writePersistentCache } from "@/lib/persistentCache";
+
+const PROFILE_DATA_CACHE_KEY = "profile_data";
+const PROFILE_PHOTOS_CACHE_KEY = "profile_photos";
+const PROFILE_PROMPTS_CACHE_KEY = "profile_prompts";
+const PROFILE_BOOST_CACHE_KEY = "profile_boost_status";
+
+let cachedProfileData: any = readPersistentCache<any>(PROFILE_DATA_CACHE_KEY);
+let cachedPhotos: GalleryPhoto[] | null = readPersistentCache<GalleryPhoto[]>(PROFILE_PHOTOS_CACHE_KEY);
+let cachedPrompts: AudioPrompt[] | null = readPersistentCache<AudioPrompt[]>(PROFILE_PROMPTS_CACHE_KEY);
+let cachedBoostStatus: BoostStatus | null = readPersistentCache<BoostStatus>(PROFILE_BOOST_CACHE_KEY);
+
+function updateProfileDataCache(value: any) {
+  cachedProfileData = value;
+  writePersistentCache(PROFILE_DATA_CACHE_KEY, value);
+}
+function updateProfilePhotosCache(value: GalleryPhoto[]) {
+  cachedPhotos = value;
+  writePersistentCache(PROFILE_PHOTOS_CACHE_KEY, value);
+}
+function updateProfilePromptsCache(value: AudioPrompt[]) {
+  cachedPrompts = value;
+  writePersistentCache(PROFILE_PROMPTS_CACHE_KEY, value);
+}
+function updateProfileBoostCache(value: BoostStatus) {
+  cachedBoostStatus = value;
+  writePersistentCache(PROFILE_BOOST_CACHE_KEY, value);
+}
 
 export default function ProfilePage() {
   const { token } = useAuth();
@@ -121,7 +145,7 @@ export default function ProfilePage() {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to load profile");
-      cachedProfileData = body;
+      updateProfileDataCache(body);
       setProfile(body);
     } catch (err) {
       toast({
@@ -198,7 +222,7 @@ export default function ProfilePage() {
       if (!res.ok) return;
       const body = await res.json();
       const fresh = body ?? [];
-      cachedPhotos = fresh;
+      updateProfilePhotosCache(fresh);
       setPhotos(fresh);
     } catch {
       // Silent — non-critical.
@@ -234,7 +258,7 @@ export default function ProfilePage() {
       if (!res.ok) return;
       const body = await res.json();
       const fresh = body ?? [];
-      cachedPrompts = fresh;
+      updateProfilePromptsCache(fresh);
       setPrompts(fresh);
     } catch {
       // Silent — non-critical.
@@ -335,7 +359,7 @@ export default function ProfilePage() {
       }
       setPrompts((prev) => {
         const next = prev.filter((p) => p.id !== promptId);
-        cachedPrompts = next;
+        updateProfilePromptsCache(next);
         return next;
       });
     } catch (err) {
@@ -636,7 +660,7 @@ export default function ProfilePage() {
         localPhotos = [...localPhotos, body];
         setPhotos((prev) => {
           const next = [...prev, body];
-          cachedPhotos = next;
+          updateProfilePhotosCache(next);
           return next;
         });
         successCount++;
@@ -745,7 +769,7 @@ export default function ProfilePage() {
     // visually changes. Rolled back below if the delete actually fails.
     setPhotos((prev) => {
       const next = prev.filter((p) => p.id !== photoId);
-      cachedPhotos = next;
+      updateProfilePhotosCache(next);
       return next;
     });
     try {
@@ -762,7 +786,7 @@ export default function ProfilePage() {
       // never delays the already-instant visual removal above.
       fetchPhotos();
     } catch (err) {
-      cachedPhotos = previousPhotos;
+      updateProfilePhotosCache(previousPhotos);
       setPhotos(previousPhotos); // roll back — it wasn't actually deleted
       toast({
         title: "Error",
@@ -781,7 +805,7 @@ export default function ProfilePage() {
       });
       if (!res.ok) return;
       const body = await res.json();
-      cachedBoostStatus = body;
+      updateProfileBoostCache(body);
       setBoostStatus(body);
     } catch {
       // Silent — non-critical.
@@ -924,7 +948,7 @@ export default function ProfilePage() {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to save profile");
-      cachedProfileData = body;
+      updateProfileDataCache(body);
       setProfile(body);
       toast({ title: "Profile updated", description: "Your changes have been saved." });
     } catch (err) {

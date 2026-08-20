@@ -6,6 +6,7 @@ import { setAuthTokenGetter } from "@workspace/api-client-react";
 import { useLocation } from "wouter";
 import type { BlockInfo } from "@/components/BlockedAccountScreen";
 import { setUser as setSentryUser } from "@/lib/sentry";
+import { clearAllPersistentCaches } from "@/lib/persistentCache";
 
 const ACCESS_TOKEN_KEY = "deeply_access_token";
 const REFRESH_TOKEN_KEY = "deeply_refresh_token";
@@ -81,6 +82,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // stale query still says onboarding_completed: false) and a real
     // cross-account data leak risk.
     queryClient.clear();
+    // Same reasoning as queryClient.clear() above, for the separate
+    // localStorage-backed persistent cache used by Search, Invites,
+    // Matches, Preferences, and Profile to show instant content across
+    // full app restarts — without this, that cache is exactly the same
+    // cross-account data leak risk queryClient.clear() exists to prevent,
+    // just via a different storage mechanism.
+    clearAllPersistentCaches();
     setLocation("/");
   };
 

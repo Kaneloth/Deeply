@@ -27,7 +27,24 @@ interface Match {
 // In-memory only, same pattern as DiscoverPage.tsx's cachedCandidates —
 // lets a revisit to Matches show the last-seen list instantly instead of
 // a skeleton, while a fresh fetch quietly runs underneath.
-let cachedMatches: Match[] | null = null;
+import { readPersistentCache, writePersistentCache } from "@/lib/persistentCache";
+
+// In-memory only, same pattern as DiscoverPage.tsx's cachedCandidates —
+// but ALSO backed by localStorage here, so this survives a real app
+// restart (not just a within-session revisit). Reading persisted data on
+// module init means a cold app open can show the last-seen Matches list
+// instantly instead of a skeleton, before the background fetch below
+// even resolves. Discover deliberately doesn't get this same treatment
+// — its scan-wave animation is gated by a separate, intentionally
+// non-persisted flag that always forces a fresh loading state on a real
+// app reopen regardless, so persisting its cache would add complexity
+// for zero practical benefit there.
+const MATCHES_CACHE_KEY = "matches";
+let cachedMatches: Match[] | null = readPersistentCache<Match[]>(MATCHES_CACHE_KEY);
+function updateMatchesCache(value: Match[]) {
+  cachedMatches = value;
+  writePersistentCache(MATCHES_CACHE_KEY, value);
+}
 
 export default function MatchesPage() {
   const { token } = useAuth();
@@ -67,7 +84,7 @@ export default function MatchesPage() {
       if (!res.ok) throw new Error("Failed to block");
       setMatches((prev) => {
         const next = prev.filter((m) => m.matched_user?.id !== userId);
-        cachedMatches = next;
+        updateMatchesCache(next);
         return next;
       });
       setSelectedMatchId(null);
@@ -88,7 +105,7 @@ export default function MatchesPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to load matches");
       const fresh = body ?? [];
-      cachedMatches = fresh;
+      updateMatchesCache(fresh);
       setMatches(fresh);
     } catch (err) {
       toast({
@@ -305,7 +322,7 @@ export default function MatchesPage() {
           onSuccess={() => {
             setMatches((prev) => {
               const next = prev.filter((m) => m.matched_user?.id !== reportTarget.id);
-              cachedMatches = next;
+              updateMatchesCache(next);
               return next;
             });
             setReportTarget(null);
