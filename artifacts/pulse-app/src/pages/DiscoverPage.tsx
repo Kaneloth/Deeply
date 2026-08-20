@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, memo } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getUserIdFromToken } from "@/lib/tokenUtils";
 import { useLocation } from "wouter";
@@ -11,7 +11,6 @@ import { X, Heart, MessageCircle, Star, RotateCcw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useSparks } from "@/contexts/SparksContext";
 import { useDiscoverControls } from "@/contexts/DiscoverControlsContext";
-import { captureUserLocation } from "@/lib/captureLocation";
 
 interface Candidate extends ProfileCardData {
   photo_url: string | null;
@@ -26,64 +25,35 @@ const EXIT_VARIANTS: Record<SwipeDirection, { x?: number; y?: number; opacity: n
   super_like: { y: -400, opacity: 0, scale: 1.05 },
 };
 
-const SwipeCard = memo(
-  function SwipeCard({
-    candidate,
-    isTop,
-    isExiting,
-    exitDirection,
-    stackIndex,
-  }: {
-    candidate: Candidate;
-    isTop: boolean;
-    isExiting: boolean;
-    exitDirection: SwipeDirection | null;
-    stackIndex: number;
-  }) {
-    return (
-      <motion.div
-        className="absolute inset-0"
-        style={{ zIndex: 10 - stackIndex }}
-        initial={{ scale: 0.95, opacity: 0 }}
-        animate={
-          isExiting && exitDirection
-            ? EXIT_VARIANTS[exitDirection]
-            : { scale: 1, opacity: 1, x: 0, y: 0, rotate: 0 }
-        }
-        // Small per-card stagger on the initial mount only (never on
-        // exit, so swipes still feel instant) — 3 stacked cards fading
-        // in at the exact same instant, right when the page is also
-        // busy handling several concurrent fetches, is exactly the kind
-        // of simultaneous main-thread work that can make a JS-driven
-        // animation stutter instead of animating smoothly. Spreading
-        // them by a few dozen ms each reduces peak work at any single
-        // frame without being visually noticeable as a delay.
-        transition={{ duration: 0.3, ease: "easeOut", delay: isExiting ? 0 : stackIndex * 0.04 }}
-      >
-        <ProfileCard profile={candidate} active={isTop} enablePullReveal={isTop} />
-      </motion.div>
-    );
-  },
-  // Custom comparator — candidate is a brand-new object reference on
-  // every fetch (JSON.parse always allocates fresh objects), even when
-  // the underlying data hasn't actually changed at all. This app also
-  // has several independent background polls (Sparks, notifications,
-  // match indicator) that can trigger re-renders elsewhere in the tree.
-  // Without this, any of those unrelated re-renders — or a background
-  // stale-while-revalidate refresh landing identical data — could cause
-  // this card to re-render and, if anything inside ProfileCard resets
-  // state based on object identity rather than candidate.id, visually
-  // "blink" for no real reason. Comparing by id (and the handful of
-  // props that actually affect rendering) instead of reference stops
-  // that cascade at this boundary regardless of what's happening deeper
-  // inside ProfileCard.
-  (prev, next) =>
-    prev.candidate.id === next.candidate.id &&
-    prev.isTop === next.isTop &&
-    prev.isExiting === next.isExiting &&
-    prev.exitDirection === next.exitDirection &&
-    prev.stackIndex === next.stackIndex,
-);
+function SwipeCard({
+  candidate,
+  isTop,
+  isExiting,
+  exitDirection,
+  stackIndex,
+}: {
+  candidate: Candidate;
+  isTop: boolean;
+  isExiting: boolean;
+  exitDirection: SwipeDirection | null;
+  stackIndex: number;
+}) {
+  return (
+    <motion.div
+      className="absolute inset-0"
+      style={{ zIndex: 10 - stackIndex }}
+      initial={{ scale: 0.95, opacity: 0 }}
+      animate={
+        isExiting && exitDirection
+          ? EXIT_VARIANTS[exitDirection]
+          : { scale: 1, opacity: 1, x: 0, y: 0, rotate: 0 }
+      }
+      transition={{ duration: 0.3, ease: "easeOut" }}
+    >
+      <ProfileCard profile={candidate} active={isTop} enablePullReveal={isTop} />
+    </motion.div>
+  );
+}
 
 import { MatchCelebration } from "@/components/MatchCelebration";
 import { ScanWaveLoader } from "@/components/ScanWaveLoader";
@@ -91,58 +61,18 @@ import { ScanWaveLoader } from "@/components/ScanWaveLoader";
 let hasShownDiscoverScanWave = false;
 const MIN_SCAN_WAVE_MS = 2000;
 
-// In-memory only — deliberately not persisted to localStorage, so this
-// only survives within the same app session/process (a real app restart
-// or web page reload both start fresh, same as hasShownDiscoverScanWave
-// above). Lets a REVISIT to Discover show the last-seen queue instantly
-// instead of a blank skeleton, while a fresh fetch quietly runs
-// underneath and replaces it once ready. A lightweight stopgap for
-// "every navigation feels like a cold load," short of a full migration
-// to react-query's built-in stale-while-revalidate (this app already
-// depends on @tanstack/react-query, just doesn't use it for data
-// fetching yet).
-//
-// Known limitation: the cached queue can briefly include someone the
-// user already swiped on since it was cached (e.g. swiped on Search,
-// then revisited Discover) — self-corrects within a second or two once
-// the background refresh lands, and any swipe still records correctly
-// server-side regardless, but it's a real (small, transient) tradeoff
-// of this shortcut worth knowing about.
-let cachedCandidates: Candidate[] | null = null;
-
 export default function DiscoverPage() {
   const { token } = useAuth();
   const userId = getUserIdFromToken(token);
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const { setControls } = useDiscoverControls();
-  const [candidates, setCandidates] = useState<Candidate[]>(cachedCandidates ?? []);
-  // Always current, regardless of which closure of handleReshuffle
-  // happens to be registered in DiscoverControlsContext at call time.
-  // The registration effect below only re-runs when reshuffleStatus or
-  // isReshuffling change — not on every candidates update — so the
-  // registered onReshuffle callback can end up closing over a stale
-  // (sometimes still-empty) candidates array. Reading from this ref
-  // instead of the closed-over state sidesteps that staleness entirely:
-  // whichever version of the callback actually executes always sees the
-  // true current queue.
-  const candidatesRef = useRef<Candidate[]>([]);
-  useEffect(() => {
-    candidatesRef.current = candidates;
-  }, [candidates]);
-  const [isLoading, setIsLoading] = useState(cachedCandidates === null);
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [showScanWave, setShowScanWave] = useState(false);
   const [matchCelebration, setMatchCelebration] = useState<{ name: string; matchId: string; photoUrl?: string } | null>(null);
   const [isSwiping, setIsSwiping] = useState(false);
   const [isUndoing, setIsUndoing] = useState(false);
-  // In-memory only, deliberately never persisted (no localStorage, no
-  // server-side session concept) — this is what makes undo only possible
-  // "in the same process": navigating away unmounts DiscoverPage and
-  // this state is gone; closing the app ends the JS runtime entirely and
-  // it's gone. Reopening/remounting always starts from null, with no way
-  // to reconstruct what was last swiped. Overwritten on every new swipe,
-  // so only ever the immediately preceding one is ever undoable.
-  const [lastSwiped, setLastSwiped] = useState<{ targetId: string; direction: SwipeDirection } | null>(null);
   const [exiting, setExiting] = useState<{ id: string; direction: SwipeDirection } | null>(null);
   const [composeFor, setComposeFor] = useState<Candidate | null>(null);
   const [messageText, setMessageText] = useState("");
@@ -166,28 +96,11 @@ export default function DiscoverPage() {
     try {
       const res = await fetch("/api/discover/reshuffle", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        // Read from candidatesRef, not the closed-over `candidates`
-        // directly — handleReshuffle can be called via a stale closure
-        // registered in DiscoverControlsContext (see candidatesRef
-        // definition above), so relying on the closure's own view of
-        // candidates was intermittently sending an empty exclusion list,
-        // making the first reshuffle after mount silently no-op visually
-        // while still consuming the free weekly reshuffle (or charging
-        // Sparks) for it. The ref is always current regardless of which
-        // closure executes.
-        body: JSON.stringify({
-          currentQueueIds: candidatesRef.current[0] ? [candidatesRef.current[0].id] : [],
-        }),
+        headers: { Authorization: `Bearer ${token}` },
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to reshuffle");
-      const reshuffled = body.candidates ?? [];
-      cachedCandidates = reshuffled;
-      setCandidates(reshuffled);
+      setCandidates(body.candidates ?? []);
 
       // Previously this only informed the user AFTER they'd already been
       // charged for a paid reshuffle — meaning the first (free) reshuffle
@@ -222,18 +135,11 @@ export default function DiscoverPage() {
 
   const fetchQueue = useCallback(async () => {
     const isFirstLoadOfSession = !hasShownDiscoverScanWave;
-    const hadCachedContent = cachedCandidates !== null;
     if (isFirstLoadOfSession) {
       hasShownDiscoverScanWave = true;
       setShowScanWave(true);
-      setIsLoading(true);
-    } else if (!hadCachedContent) {
-      setIsLoading(true);
     }
-    // else: cached content is already visible from initial state above —
-    // leave isLoading as-is (false) and refresh silently underneath
-    // rather than replacing it with a skeleton the user has already
-    // gotten past.
+    setIsLoading(true);
     const startedAt = Date.now();
     try {
       const res = await fetch("/api/discover/queue", {
@@ -248,9 +154,7 @@ export default function DiscoverPage() {
         if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
       }
 
-      const freshCandidates = body.candidates ?? [];
-      cachedCandidates = freshCandidates;
-      setCandidates(freshCandidates);
+      setCandidates(body.candidates ?? []);
     } catch (err) {
       toast({
         title: "Error",
@@ -270,7 +174,24 @@ export default function DiscoverPage() {
   }, []);
 
   useEffect(() => {
-    captureUserLocation(token);
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        fetch("/api/profile/me", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          }),
+        }).catch(() => {});
+      },
+      () => {},
+      { maximumAge: 10 * 60 * 1000, timeout: 10000 },
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -319,19 +240,11 @@ export default function DiscoverPage() {
     });
 
     await new Promise((resolve) => setTimeout(resolve, 300));
-    setCandidates((prev) => {
-      const next = prev.filter((c) => c.id !== target.id);
-      cachedCandidates = next;
-      return next;
-    });
+    setCandidates((prev) => prev.filter((c) => c.id !== target.id));
     setExiting(null);
 
     try {
       const body = await apiCall;
-      // Only recorded as undoable once the swipe is actually confirmed
-      // saved server-side — if the API call below fails, there's nothing
-      // real to undo yet, so lastSwiped stays whatever it was before.
-      setLastSwiped({ targetId: target.id, direction });
       if (direction === "super_like" || body.sparksCharged) {
         refreshSparksBadge();
       }
@@ -354,16 +267,12 @@ export default function DiscoverPage() {
   };
 
   const handleUndo = async () => {
-    if (isUndoing || !lastSwiped) return;
+    if (isUndoing) return;
     setIsUndoing(true);
     try {
       const res = await fetch("/api/discover/undo", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ targetId: lastSwiped.targetId }),
+        headers: { Authorization: `Bearer ${token}` },
       });
 
       if (res.status === 402) {
@@ -380,16 +289,8 @@ export default function DiscoverPage() {
       if (!res.ok) throw new Error(body.error ?? "Failed to undo");
 
       if (body.restoredProfile) {
-        setCandidates((prev) => {
-          const next = [body.restoredProfile, ...prev];
-          cachedCandidates = next;
-          return next;
-        });
+        setCandidates((prev) => [body.restoredProfile, ...prev]);
       }
-      // Only the single immediately-preceding swipe is ever undoable —
-      // once used, there's nothing left to undo until another swipe
-      // happens.
-      setLastSwiped(null);
       refreshSparksBadge();
     } catch (err) {
       toast({
@@ -427,11 +328,7 @@ export default function DiscoverPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to send message");
 
-      setCandidates((prev) => {
-        const next = prev.filter((c) => c.id !== composeFor.id);
-        cachedCandidates = next;
-        return next;
-      });
+      setCandidates((prev) => prev.filter((c) => c.id !== composeFor.id));
       setComposeFor(null);
       setMessageText("");
       setLocation(`/matches/${body.matchId}/chat`);
@@ -496,7 +393,7 @@ export default function DiscoverPage() {
         <div className="flex items-center justify-center gap-2.5 mt-2">
           <button
             onClick={handleUndo}
-            disabled={isUndoing || isSwiping || !lastSwiped}
+            disabled={isUndoing || isSwiping}
             className="w-9 h-9 rounded-full bg-card border border-card-border flex items-center justify-center text-amber-500 hover:border-amber-500 transition-colors shadow-lg active:scale-95 disabled:opacity-50"
           >
             <RotateCcw size={15} />
