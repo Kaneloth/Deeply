@@ -52,6 +52,18 @@ interface Message {
   sent_at: string;
   reactions: Reaction[];
   reply_to: ReplyPreview | null;
+  // Optional, only set on messages that went through the optimistic
+  // send path (see handleSend / sendMediaMessage). Deliberately kept
+  // STABLE across the temp-id -> real-id reconciliation swap, and used
+  // as the list's React key instead of `id` — `id` itself still updates
+  // correctly to the real server id (needed for react/unsend/reply
+  // targeting), but the key never changes, so React never treats the
+  // reconciled message as a brand-new element. Without this, swapping
+  // `id` mid-flight changed the key, which unmounted and remounted the
+  // bubble the instant the real response landed — for a GIF, that meant
+  // the browser redoing image decode/paint on a fresh DOM node, visible
+  // as a "bounce" on native WebView specifically.
+  _localKey?: string;
 }
 
 // Raw characters for the compact row we build ourselves (exact-fit, no
@@ -373,6 +385,7 @@ export default function ChatPage() {
             is_unsent: replyPreview.is_unsent,
           }
         : null,
+      _localKey: tempId,
     };
     setMessages((prev) => [...prev, optimisticMessage]);
     pendingSendCountRef.current += 1;
@@ -404,8 +417,11 @@ export default function ChatPage() {
       // The POST response already IS the fully-formed saved message
       // (id, sent_at, reactions, reply_to — everything the list endpoint
       // would return for it) — swap the optimistic bubble for it
-      // directly rather than re-fetching the whole conversation.
-      setMessages((prev) => prev.map((m) => (m.id === tempId ? (body as Message) : m)));
+      // directly rather than re-fetching the whole conversation. Keep
+      // _localKey stable across this swap (see the Message interface
+      // comment) so the list's React key never changes here, even
+      // though `id` correctly updates to the real server id.
+      setMessages((prev) => prev.map((m) => (m.id === tempId ? { ...(body as Message), _localKey: tempId } : m)));
     } catch (err) {
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
       setInput(content); // restore what they typed so they don't lose it
@@ -439,6 +455,7 @@ export default function ChatPage() {
       sent_at: new Date().toISOString(),
       reactions: [],
       reply_to: null,
+      _localKey: tempId,
     };
     setMessages((prev) => [...prev, optimisticMessage]);
     pendingSendCountRef.current += 1;
@@ -465,7 +482,7 @@ export default function ChatPage() {
 
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to send");
-      setMessages((prev) => prev.map((m) => (m.id === tempId ? (body as Message) : m)));
+      setMessages((prev) => prev.map((m) => (m.id === tempId ? { ...(body as Message), _localKey: tempId } : m)));
     } catch (err) {
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
       toast({
@@ -712,7 +729,7 @@ export default function ChatPage() {
 
             return (
               <div
-                key={msg.id}
+                key={msg._localKey ?? msg.id}
                 id={`msg-${msg.id}`}
                 className={`group rounded-xl transition-colors duration-500 ${
                   highlightedMessageId === msg.id ? "bg-primary/10" : ""
