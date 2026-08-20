@@ -111,9 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Returns the fresh access token on success, or null if refresh failed
   // (in which case logout() has already been triggered).
   const doRefresh = async (): Promise<string | null> => {
-    if (refreshPromiseRef.current) {
-      return refreshPromiseRef.current;
-    }
+    if (refreshPromiseRef.current) return refreshPromiseRef.current;
 
     const promise = (async (): Promise<string | null> => {
       const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
