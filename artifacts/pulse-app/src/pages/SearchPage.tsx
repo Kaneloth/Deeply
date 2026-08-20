@@ -121,6 +121,7 @@ function ProfileDetailOverlay({
 
 // In-memory only, same pattern as DiscoverPage.tsx's cachedCandidates.
 import { readPersistentCache, writePersistentCache, registerCacheResetter } from "@/lib/persistentCache";
+import { useRefetchOnAppResume } from "@/hooks/useRefetchOnAppResume";
 
 const CATEGORIES_CACHE_KEY = "search_categories";
 let cachedCategories: Category[] | null = readPersistentCache<Category[]>(CATEGORIES_CACHE_KEY);
@@ -188,6 +189,11 @@ export default function SearchPage() {
     fetchCategories();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // See useRefetchOnAppResume for the full reasoning — catches a
+  // background refresh that silently failed behind the cached instant
+  // load.
+  useRefetchOnAppResume(fetchCategories);
 
   // Capture device location here too, not just on Discover — otherwise
   // anyone who opens Search before ever visiting Discover has no

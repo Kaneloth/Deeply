@@ -100,6 +100,7 @@ const MIN_BIRTHDATE = new Date(_today.getFullYear() - 100, _today.getMonth(), _t
 // every individual form field too — the existing population effect
 // keyed on `profile` re-runs on mount whenever it starts non-null.
 import { readPersistentCache, writePersistentCache, registerCacheResetter } from "@/lib/persistentCache";
+import { useRefetchOnAppResume } from "@/hooks/useRefetchOnAppResume";
 
 const PROFILE_DATA_CACHE_KEY = "profile_data";
 const PROFILE_PHOTOS_CACHE_KEY = "profile_photos";
@@ -177,6 +178,7 @@ export default function ProfilePage() {
     fetchProfile();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  useRefetchOnAppResume(fetchProfile);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -242,6 +244,7 @@ export default function ProfilePage() {
     fetchPhotos();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  useRefetchOnAppResume(fetchPhotos);
 
   const MAX_AUDIO_PROMPTS = 2;
 
@@ -278,6 +281,7 @@ export default function ProfilePage() {
     fetchPrompts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  useRefetchOnAppResume(fetchPrompts);
 
   const togglePlayPrompt = (prompt: AudioPrompt) => {
     if (playingPromptId === prompt.id) {
@@ -823,6 +827,7 @@ export default function ProfilePage() {
     fetchBoostStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  useRefetchOnAppResume(fetchBoostStatus);
 
   const handleBoost = async () => {
     setIsBoosting(true);

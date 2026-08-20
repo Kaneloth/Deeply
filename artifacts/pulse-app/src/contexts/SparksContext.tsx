@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback, ReactNode } from "react";
 import { useAuth } from "./AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { useRefetchOnAppResume } from "@/hooks/useRefetchOnAppResume";
 
 // Thresholds are computed against the monthly free grant, matching the
 // airtime-style notifications: "You have 75 Sparks left", etc.
@@ -133,6 +134,16 @@ export function SparksProvider({ children }: { children: ReactNode }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated]);
+
+  // The balance shown throughout the app (including on Profile) comes
+  // from here, not from any page's own cache — so this is the one that
+  // actually matters for keeping the number the user sees accurate. A
+  // background poll that silently fails right after the app resumes
+  // (exactly when several requests tend to compete at once) would
+  // otherwise leave a stale balance on screen until the next 60s+jitter
+  // tick happens to land — this gives every resume an immediate, direct
+  // chance to catch up instead of waiting on that timer.
+  useRefetchOnAppResume(refresh);
 
   return (
     <SparksContext.Provider value={{ balance, nextGrantAt, refresh }}>

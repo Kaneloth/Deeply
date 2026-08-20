@@ -45,6 +45,7 @@ const DRINKING_PREFERENCE_OPTIONS = withNoPreference(DRINKING_OPTIONS);
 // so every field gets seeded correctly for free with no extra per-field
 // caching needed.
 import { readPersistentCache, writePersistentCache, registerCacheResetter } from "@/lib/persistentCache";
+import { useRefetchOnAppResume } from "@/hooks/useRefetchOnAppResume";
 
 const PREFERENCES_CACHE_KEY = "preferences_profile";
 let cachedProfile: any = readPersistentCache<any>(PREFERENCES_CACHE_KEY);
@@ -97,6 +98,7 @@ export default function PreferencesPage() {
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  useRefetchOnAppResume(fetchProfile);
 
   const [lookingForGender, setLookingForGender] = useState("");
   const [distanceKm, setDistanceKm] = useState(25);

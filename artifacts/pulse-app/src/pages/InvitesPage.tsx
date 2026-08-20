@@ -104,6 +104,7 @@ function InviteDetailOverlay({
 // In-memory only, same pattern as DiscoverPage.tsx's cachedCandidates.
 // Two separate caches since Received and Sent are independently loaded.
 import { readPersistentCache, writePersistentCache, registerCacheResetter } from "@/lib/persistentCache";
+import { useRefetchOnAppResume } from "@/hooks/useRefetchOnAppResume";
 
 // Backed by localStorage — see MatchesPage.tsx for the full reasoning.
 // Received (revealed + newCount) and Sent are cached separately, since
@@ -187,6 +188,13 @@ export default function InvitesPage() {
     fetchInvites();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Catches exactly the case where the one background refresh behind the
+  // cached instant-load silently failed (see useRefetchOnAppResume for
+  // the full reasoning) — without this, a real new invite could sit
+  // invisible behind stale cached content until the user manually
+  // reloaded the page.
+  useRefetchOnAppResume(fetchInvites);
 
   const fetchSent = useCallback(async () => {
     setSentLoading(true);

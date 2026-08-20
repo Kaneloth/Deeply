@@ -28,6 +28,7 @@ interface Match {
 // lets a revisit to Matches show the last-seen list instantly instead of
 // a skeleton, while a fresh fetch quietly runs underneath.
 import { readPersistentCache, writePersistentCache, registerCacheResetter } from "@/lib/persistentCache";
+import { useRefetchOnAppResume } from "@/hooks/useRefetchOnAppResume";
 
 // In-memory only, same pattern as DiscoverPage.tsx's cachedCandidates —
 // but ALSO backed by localStorage here, so this survives a real app
@@ -128,6 +129,12 @@ export default function MatchesPage() {
     fetchMatches();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // See useRefetchOnAppResume for the full reasoning — catches a
+  // background refresh that silently failed behind the cached instant
+  // load, so a real new match doesn't stay invisible until a manual
+  // reload.
+  useRefetchOnAppResume(fetchMatches);
 
   if (isLoading) {
     return (
