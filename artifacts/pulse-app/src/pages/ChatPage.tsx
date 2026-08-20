@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react";
 import { useParams, Link, useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { getUserIdFromToken } from "@/lib/tokenUtils";
@@ -340,7 +340,18 @@ export default function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchId]);
 
-  useEffect(() => {
+  // useLayoutEffect, not useEffect — this must run BEFORE the browser
+  // paints, not after. With useEffect, the very first render (empty ->
+  // full message list) paints starting from the top of the container
+  // (scrollTop defaults to 0), then this effect jumps to the bottom a
+  // frame later — meaning whoever's watching briefly sees the top of the
+  // conversation before it snaps down. Depending on how many messages
+  // fit in the visible area before that jump, that reads as exactly "the
+  // first couple of messages bounce." useLayoutEffect runs synchronously
+  // after the DOM update but before the browser paints anything, so the
+  // scroll position is already correct by the time the user sees
+  // anything at all.
+  useLayoutEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
