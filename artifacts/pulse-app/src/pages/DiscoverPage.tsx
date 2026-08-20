@@ -44,24 +44,17 @@ const SwipeCard = memo(
       <motion.div
         className="absolute inset-0"
         style={{ zIndex: 10 - stackIndex }}
-        // Do not fade the card itself. PhotoCarousel owns image readiness,
-        // and stacking a card opacity animation on top of image decoding
-        // produces a visible blink in native WebViews.
-        initial={{ scale: 0.98, opacity: 1 }}
+        // Do not animate a card into place. Even a subtle scale transform
+        // causes native WebViews to re-composite the card while the photo is
+        // decoding, which looks like a brief blink/vibration after mount.
+        // The card must be completely still until the user swipes it.
+        initial={false}
         animate={
           isExiting && exitDirection
             ? EXIT_VARIANTS[exitDirection]
             : { scale: 1, opacity: 1, x: 0, y: 0, rotate: 0 }
         }
-        // Small per-card stagger on the initial mount only (never on
-        // exit, so swipes still feel instant) — 3 stacked cards fading
-        // in at the exact same instant, right when the page is also
-        // busy handling several concurrent fetches, is exactly the kind
-        // of simultaneous main-thread work that can make a JS-driven
-        // animation stutter instead of animating smoothly. Spreading
-        // them by a few dozen ms each reduces peak work at any single
-        // frame without being visually noticeable as a delay.
-        transition={{ duration: 0.3, ease: "easeOut", delay: isExiting ? 0 : stackIndex * 0.04 }}
+        transition={isExiting ? { duration: 0.3, ease: "easeOut" } : { duration: 0 }}
       >
         <ProfileCard profile={candidate} active={isTop} enablePullReveal={isTop} />
       </motion.div>
