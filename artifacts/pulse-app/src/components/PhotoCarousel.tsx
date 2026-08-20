@@ -21,6 +21,17 @@ export function PhotoCarousel({ photos, name, active = true, onIndexChange }: Ph
   const containerRef = useRef<HTMLDivElement>(null);
   const touchStateRef = useRef({ startX: 0, startY: 0, active: false, axisLocked: false, horizontal: false });
   const videoRefs = useRef<Record<number, HTMLVideoElement | null>>({});
+  // Tracks which images have actually finished downloading/decoding, so
+  // each one can fade in independently once it's genuinely ready — not
+  // whenever the parent card's own entrance animation happens to reach
+  // full opacity. Without this, the card's container fades in on a fixed
+  // 300ms timer regardless of whether the photo inside has loaded yet;
+  // on a slow connection the image can pop in well after the card is
+  // already fully visible, which reads as a jarring flash/glitch rather
+  // than a smooth reveal. This is far more noticeable on a slow mobile
+  // connection than on fast WiFi, which is exactly the web-vs-native
+  // difference in severity.
+  const [loadedImages, setLoadedImages] = useState<Set<number>>(new Set());
 
   // Keep the latest index/length available to the native (non-passive)
   // touchmove listener without re-attaching it on every render.
@@ -182,7 +193,7 @@ export function PhotoCarousel({ photos, name, active = true, onIndexChange }: Ph
           }}
         >
           {photos.map((photo, idx) => (
-            <div key={photo.url} style={{ width: `${100 / N}%` }} className="h-full shrink-0">
+            <div key={photo.url} style={{ width: `${100 / N}%` }} className="h-full shrink-0 bg-muted">
               {photo.media_type === "video" ? (
                 <video
                   ref={(el) => {
@@ -195,7 +206,14 @@ export function PhotoCarousel({ photos, name, active = true, onIndexChange }: Ph
                   playsInline
                 />
               ) : (
-                <img src={photo.url} alt={name} className="w-full h-full object-cover" draggable={false} />
+                <img
+                  src={photo.url}
+                  alt={name}
+                  className="w-full h-full object-cover transition-opacity duration-200"
+                  style={{ opacity: loadedImages.has(idx) ? 1 : 0 }}
+                  draggable={false}
+                  onLoad={() => setLoadedImages((prev) => new Set(prev).add(idx))}
+                />
               )}
             </div>
           ))}
