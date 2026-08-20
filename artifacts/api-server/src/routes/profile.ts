@@ -1646,25 +1646,63 @@ router.post("/announcements/:announcementId/dismiss", requireAuth, async (req, r
 // Notifications & Profile Views
 // ============================================================
 
-/** GET /api/notifications — most recent 50, newest first. Excludes any
- *  notification whose clear_at has passed (used by profile_views
- *  notifications, which auto-clear 24h after being revealed). */
+/** GET /api/notifications — cursor-paginated, newest first, 10 per page
+ *  by default. Pass ?before=<ISO timestamp from the last item's
+ *  created_at> to fetch the next page. Cursor-based rather than
+ *  offset-based deliberately — with a live, frequently-changing feed,
+ *  offset pagination can skip or duplicate items if something new
+ *  arrives between page loads; a cursor on created_at doesn't have that
+ *  problem. Excludes any notification whose clear_at has passed (used
+ *  by profile_views notifications, which auto-clear 24h after being
+ *  revealed).
+ *
+ *  Also lazily deletes anything older than 90 days for this user —
+ *  piggybacked on the FIRST page's request only (not every "load more"
+ *  tap), same pattern as checkAndApplyMonthlyGrant in sparks-helper.ts:
+ *  triggered by normal usage rather than a separate cron job, so it
+ *  only ever does work for users who are actually active, and keeps
+ *  this table from growing without bound per user. */
 router.get("/notifications", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
   const nowIso = new Date().toISOString();
-  const { data, error } = await supabase
+  const { before, limit: limitParam } = req.query as { before?: string; limit?: string };
+
+  // Never trust a client-supplied limit blindly — bound it defensively.
+  const limit = Math.min(Math.max(Number(limitParam) || 10, 1), 50);
+
+  if (!before) {
+    const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    await supabase.from("notifications").delete().eq("user_id", userId).lt("created_at", ninetyDaysAgo);
+  }
+
+  let query = supabase
     .from("notifications")
     .select("*")
-    .eq("user_id", req.user!.id)
+    .eq("user_id", userId)
     .or(`clear_at.is.null,clear_at.gt.${nowIso}`)
     .order("created_at", { ascending: false })
-    .limit(50);
+    .limit(limit + 1); // one extra, to detect hasMore without a second query
+
+  if (before) {
+    query = query.lt("created_at", before);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     res.status(500).json({ error: `Failed to load notifications: ${error.message}` });
     return;
   }
 
-  res.json(data ?? []);
+  const rows = data ?? [];
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+
+  res.json({
+    notifications: page,
+    hasMore,
+    nextCursor: hasMore ? page[page.length - 1].created_at : null,
+  });
 });
 
 /** GET /api/notifications/unread-count */

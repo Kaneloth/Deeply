@@ -38,6 +38,9 @@ export default function NotificationsPage() {
   const [, setLocation] = useLocation();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
 
   const fetchNotifications = useCallback(async () => {
     setIsLoading(true);
@@ -45,7 +48,9 @@ export default function NotificationsPage() {
       const res = await fetch("/api/notifications", { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) return;
       const body = await res.json();
-      setNotifications(body ?? []);
+      setNotifications(body.notifications ?? []);
+      setHasMore(!!body.hasMore);
+      setNextCursor(body.nextCursor ?? null);
     } catch {
       // Silent — page just shows empty state.
     } finally {
@@ -53,6 +58,25 @@ export default function NotificationsPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  const loadMore = useCallback(async () => {
+    if (!nextCursor || isLoadingMore) return;
+    setIsLoadingMore(true);
+    try {
+      const res = await fetch(`/api/notifications?before=${encodeURIComponent(nextCursor)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const body = await res.json();
+      setNotifications((prev) => [...prev, ...(body.notifications ?? [])]);
+      setHasMore(!!body.hasMore);
+      setNextCursor(body.nextCursor ?? null);
+    } catch {
+      // Silent — the "Load more" button just stays available to retry.
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [token, nextCursor, isLoadingMore]);
 
   // Run once on mount only — consistent with the fix applied elsewhere
   // to avoid re-fetching (and visually resetting) on every background
@@ -154,6 +178,15 @@ export default function NotificationsPage() {
               </button>
             );
           })}
+          {hasMore && (
+            <button
+              onClick={loadMore}
+              disabled={isLoadingMore}
+              className="w-full py-3 rounded-2xl border border-card-border text-sm font-medium text-muted-foreground hover:text-foreground hover:border-primary/50 transition-colors disabled:opacity-60"
+            >
+              {isLoadingMore ? "Loading..." : "Load more"}
+            </button>
+          )}
         </div>
       )}
     </div>

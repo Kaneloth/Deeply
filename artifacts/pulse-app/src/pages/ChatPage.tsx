@@ -70,6 +70,36 @@ interface Message {
 // wasted space).
 const QUICK_REACT_EMOJIS = ["❤️", "😂", "😮", "😢", "👍", "🔥"];
 
+// 24-hour, no leading zero on the hour (0:05, 9:41, 23:59) — matches
+// what was asked for specifically, rather than a locale-dependent
+// Intl.DateTimeFormat that could zero-pad or use 12-hour time depending
+// on the device's locale settings.
+function formatMessageTime(iso: string): string {
+  const d = new Date(iso);
+  const minutes = d.getMinutes().toString().padStart(2, "0");
+  return `${d.getHours()}:${minutes}`;
+}
+
+function isDifferentLocalDay(a: string, b: string): boolean {
+  const da = new Date(a);
+  const db = new Date(b);
+  return da.getFullYear() !== db.getFullYear() || da.getMonth() !== db.getMonth() || da.getDate() !== db.getDate();
+}
+
+// WhatsApp-style: "Today" / "Yesterday" / a full date, comparing local
+// calendar days (not raw UTC), since that's what "today" actually means
+// to the person looking at their phone right now.
+function formatDateSeparator(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / (24 * 60 * 60 * 1000));
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Yesterday";
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return d.toLocaleDateString(undefined, sameYear ? { month: "long", day: "numeric" } : { month: "long", day: "numeric", year: "numeric" });
+}
+
 export default function ChatPage() {
   const params = useParams();
   const matchId = params.matchId || "";
@@ -737,10 +767,18 @@ export default function ChatPage() {
             const isLastOwnMessage = mine && !messages.slice(i + 1).some((m) => isMyMsg(m.sender_id));
             const showReadIndicator = isLastOwnMessage && receiptsUnlocked && !msg.is_unsent;
             const isMedia = msg.message_type === "sticker" || msg.message_type === "gif";
+            const showDateSeparator = i === 0 || isDifferentLocalDay(msg.sent_at, messages[i - 1].sent_at);
 
             return (
-              <div
-                key={msg._localKey ?? msg.id}
+              <div key={msg._localKey ?? msg.id}>
+                {showDateSeparator && (
+                  <div className="flex justify-center my-3">
+                    <span className="px-3 py-1 rounded-full bg-secondary text-muted-foreground text-[11px] font-medium">
+                      {formatDateSeparator(msg.sent_at)}
+                    </span>
+                  </div>
+                )}
+                <div
                 id={`msg-${msg.id}`}
                 className={`group rounded-xl transition-colors duration-500 ${
                   highlightedMessageId === msg.id ? "bg-primary/10" : ""
@@ -916,18 +954,31 @@ export default function ChatPage() {
                   )}
                 </div>
 
-                {showReadIndicator && (
-                  <div className="flex items-center justify-end gap-1 mt-1 pr-1 text-[11px] text-muted-foreground">
-                    {msg.is_read ? (
-                      <>
-                        <CheckCheck size={12} className="text-primary" />
-                        <span>Read</span>
-                      </>
-                    ) : (
-                      <span>Delivered</span>
-                    )}
-                  </div>
-                )}
+                {/* Always shows the time; extends with Delivered/Read
+                    only for the last own message once receipts are
+                    unlocked, reusing the same row instead of stacking a
+                    second one underneath it. */}
+                <div
+                  className={`flex items-center gap-1 mt-1 text-[11px] text-muted-foreground ${
+                    mine ? "justify-end pr-1" : "justify-start pl-1"
+                  }`}
+                >
+                  <span>{formatMessageTime(msg.sent_at)}</span>
+                  {showReadIndicator && (
+                    <>
+                      <span>·</span>
+                      {msg.is_read ? (
+                        <>
+                          <CheckCheck size={12} className="text-primary" />
+                          <span>Read</span>
+                        </>
+                      ) : (
+                        <span>Delivered</span>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
               </div>
             );
           })
