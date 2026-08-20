@@ -171,12 +171,22 @@ export async function spendSparks(
   // Only fire on the actual crossing (was above threshold, now at/below
   // it) — not on every subsequent spend while already low, which would
   // spam a notification per message sent.
+  //
+  // Deliberately doesn't cite a specific balance figure in the body —
+  // this notification is stored permanently and read whenever the user
+  // next opens the bell, which could be minutes or days later. Any
+  // number baked in here is only ever accurate at the instant it's
+  // written; the user's real balance keeps moving with every subsequent
+  // spend, so a stored "You have X Sparks left" reliably goes stale and
+  // shows a wrong figure by the time it's actually read — exactly the
+  // mismatch users were seeing between this and the always-live toast
+  // in SparksContext.tsx.
   if (total > LOW_BALANCE_THRESHOLD && newTotal <= LOW_BALANCE_THRESHOLD) {
     createNotification(
       userId,
       "spark_low",
       "You're running low on Sparks",
-      `You have ${newTotal} Sparks left. Recharge to keep chatting and inviting.`,
+      "Recharge to keep chatting and inviting — check your current balance on your profile.",
     ).catch(() => {});
   }
 
