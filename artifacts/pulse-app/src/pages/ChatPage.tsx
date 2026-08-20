@@ -832,7 +832,18 @@ export default function ChatPage() {
                         </button>
                       )}
                       {msg.message_type === "sticker" ? (
-                        <div className="text-6xl leading-none">{msg.content}</div>
+                        // Fixed box, not a plain text-6xl div sized purely
+                        // by its own content — large emoji glyphs on
+                        // Android WebView can briefly render with a
+                        // fallback font's metrics before the real
+                        // color-emoji font swaps in, resizing the box the
+                        // instant that happens. Reserving a fixed
+                        // footprint up front means that swap can no
+                        // longer visibly resize anything, same principle
+                        // as the GIF aspect-ratio fix above.
+                        <div className="w-24 h-24 flex items-center justify-center text-6xl leading-none">
+                          {msg.content}
+                        </div>
                       ) : msg.message_type === "gif" ? (
                         // A fixed aspect-ratio placeholder, not h-auto —
                         // h-auto means the image's height is entirely
