@@ -143,8 +143,26 @@ export default function ProfilePage() {
   const [profile, setProfile] = useState<any>(cachedProfileData);
   const [isLoading, setIsLoading] = useState(cachedProfileData === null);
   const [isSaving, setIsSaving] = useState(false);
+  // fetchProfile is defined once via useCallback and read through refs
+  // by useRefetchOnAppResume — a plain `isSaving` state read inside it
+  // would close over whatever value existed when fetchProfile was last
+  // recreated, not necessarily the current one. This ref is always
+  // current regardless of when/why fetchProfile actually runs.
+  const isSavingRef = useRef(false);
+  useEffect(() => {
+    isSavingRef.current = isSaving;
+  }, [isSaving]);
 
   const fetchProfile = useCallback(async () => {
+    // Never let a background refresh (mount, or resume-from-background
+    // via useRefetchOnAppResume) fire while a save is actively in
+    // flight — a GET and PUT racing on the exact same profiles row is
+    // exactly the kind of concurrent access previously traced to
+    // intermittent PGRST116 "0 rows returned" failures on the save
+    // itself. Skipping here is free (there's nothing to refresh that
+    // the imminent save result won't already reflect) and removes one
+    // real source of that race outright.
+    if (isSavingRef.current) return;
     if (cachedProfileData === null) setIsLoading(true);
     try {
       const res = await fetch("/api/profile/me", {

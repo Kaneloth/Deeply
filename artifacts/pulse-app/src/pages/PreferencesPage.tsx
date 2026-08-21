@@ -2,7 +2,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/PageHeader";
 import { ChipGrid } from "@/components/SelectorControls";
@@ -63,9 +63,21 @@ export default function PreferencesPage() {
   const [profile, setProfile] = useState<any>(cachedProfile);
   const [isLoading, setIsLoading] = useState(cachedProfile === null);
   const [isSaving, setIsSaving] = useState(false);
+  // See ProfilePage.tsx for the full reasoning — always-current ref so
+  // fetchProfile's closure sees the real current save state regardless
+  // of when/why it actually runs (mount, or app-resume).
+  const isSavingRef = useRef(false);
+  useEffect(() => {
+    isSavingRef.current = isSaving;
+  }, [isSaving]);
   const [dealbreakersEnabled, setDealbreakersEnabled] = useState(false);
 
   const fetchProfile = useCallback(async () => {
+    // Never let a background refresh fire while a save is actively in
+    // flight — see ProfilePage.tsx's fetchProfile for the full
+    // reasoning (a GET/PUT race on the same row is a proven cause of
+    // intermittent save failures here).
+    if (isSavingRef.current) return;
     if (cachedProfile === null) setIsLoading(true);
     try {
       const res = await fetch("/api/profile/me", {
