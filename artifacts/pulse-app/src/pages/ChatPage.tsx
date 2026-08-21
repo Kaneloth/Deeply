@@ -352,30 +352,47 @@ export default function ChatPage() {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to load messages");
-      // Merge, not replace — a plain setMessages(body) here was the real
-      // bug behind the "some messages bounce, some don't, in a repeating
-      // pattern" report. body's objects come straight from the backend
-      // and never have a renderKey field at all (it's a purely
-      // client-side concept from the send-reconciliation flow below).
-      // Blindly replacing the array wiped renderKey back to undefined on
-      // literally every poll tick, meaning any message whose 3-second
-      // poll happened to land after it was sent would silently regain an
-      // unstable key and remount — independent of anything about that
-      // specific message, purely a matter of poll timing, which is
-      // exactly why it looked like an arbitrary alternating pattern
-      // rather than something tied to any particular message. Carrying
-      // renderKey forward by matching on the real (server) id means once
-      // a message has a stable key, it keeps it for the rest of this
-      // page's lifetime, through every subsequent poll.
+      // Merge, not replace. This started out only preserving renderKey
+      // (fixing a real remount/bounce issue — see comment history), but
+      // a screen recording caught something more serious: a message that
+      // had ALREADY been successfully sent and reconciled (real server
+      // id, no error, no toast) completely vanished from view for ~8
+      // seconds across multiple poll cycles before finally reappearing.
+      // Root cause: this is the same Supabase read-after-write
+      // consistency lag traced and fixed elsewhere in this app's backend
+      // (e.g. PUT /profile/me's PGRST116 retries) — a just-written row
+      // isn't always immediately visible to a SEPARATE subsequent read.
+      // The message was genuinely saved the whole time; this particular
+      // poll's GET request just hadn't caught up to see it yet. Blindly
+      // trusting body as the complete, authoritative list (even with
+      // renderKey preserved) meant that gap silently deleted a real,
+      // successfully-sent message from the screen. Now: any message
+      // already reconciled to a real (non-"temp-") id that this specific
+      // poll's response doesn't include gets kept, not dropped — we
+      // already know it's real (its own send already confirmed that),
+      // so a poll simply not seeing it yet is never grounds to remove it.
       setMessages((prev) => {
         const renderKeyById = new Map<string, string>();
         for (const m of prev) {
           if (m.renderKey) renderKeyById.set(m.id, m.renderKey);
         }
-        return (body ?? []).map((m: Message) => ({
+        const serverMessages: Message[] = (body ?? []).map((m: Message) => ({
           ...m,
           renderKey: renderKeyById.get(m.id) ?? m.renderKey,
         }));
+
+        const serverIds = new Set(serverMessages.map((m) => m.id));
+        const missingButAlreadyConfirmed = prev.filter(
+          (m) => !m.id.startsWith("temp-") && !serverIds.has(m.id),
+        );
+
+        const merged = [...serverMessages, ...missingButAlreadyConfirmed];
+        // Keep chronological order — the server response is normally
+        // already sorted by sent_at, but a locally-retained message
+        // appended at the end could be out of place if it was actually
+        // sent before something the server response did include.
+        merged.sort((a, b) => new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime());
+        return merged;
       });
     } catch {
       // Silent — polling failures shouldn't spam the user with toasts.
