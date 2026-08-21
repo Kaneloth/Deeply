@@ -382,11 +382,20 @@ export default function ChatPage() {
         }));
 
         const serverIds = new Set(serverMessages.map((m) => m.id));
-        const missingButAlreadyConfirmed = prev.filter(
-          (m) => !m.id.startsWith("temp-") && !serverIds.has(m.id),
+        // A GET can have started before a send incremented
+        // pendingSendCountRef. In that case the response may arrive after
+        // the optimistic temp message was added, even though the guard at
+        // the start of fetchMessages allowed the request through. Do not
+        // let that stale response erase in-flight sends. Once the POST
+        // resolves, the temp id is replaced by the real id (or removed on
+        // failure), so this only protects genuinely pending messages.
+        const missingLocalMessages = prev.filter(
+          (m) =>
+            !serverIds.has(m.id) &&
+            (pendingSendCountRef.current > 0 || !m.id.startsWith("temp-")),
         );
 
-        const merged = [...serverMessages, ...missingButAlreadyConfirmed];
+        const merged = [...serverMessages, ...missingLocalMessages];
         // Keep chronological order — the server response is normally
         // already sorted by sent_at, but a locally-retained message
         // appended at the end could be out of place if it was actually
