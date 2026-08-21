@@ -883,22 +883,55 @@ router.post("/discover/message-request", requireAuth, async (req, res): Promise<
 
   await supabase.from("swipes").insert({ swiper_id: userId, target_id: targetId, direction: "like" });
 
-  const { data: match, error: matchError } = await supabase
-    .from("matches")
-    .insert({ user1_id: lo, user2_id: hi })
-    .select("id")
-    .single();
+  // Retries specifically PostgREST's "0 rows returned" transient
+  // connection-consistency error (PGRST116) — same proven pattern
+  // already used on PUT /profile/me. This flow is especially exposed to
+  // it: it chains match insert -> message insert -> (client navigates)
+  // -> chat page's own GET /matches/:matchId, three dependent reads/
+  // writes in a row with zero tolerance for any one of them lagging
+  // even briefly. Without this, a transient gap here surfaced as
+  // "Failed to send message" if the match insert itself was affected.
+  let match: { id: string } | null = null;
+  let matchError: { code?: string; message?: string } | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = await supabase.from("matches").insert({ user1_id: lo, user2_id: hi }).select("id").single();
+    if (result.data) {
+      match = result.data;
+      matchError = null;
+      break;
+    }
+    matchError = result.error;
+    if (attempt === 0 && result.error?.code === "PGRST116") {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
 
   if (matchError || !match) {
     res.status(500).json({ error: "Failed to start conversation" });
     return;
   }
 
-  const { data: message, error: messageError } = await supabase
-    .from("messages")
-    .insert({ match_id: match.id, sender_id: userId, content: content.trim() })
-    .select("*")
-    .single();
+  // Same reasoning and pattern as the match insert above — this is the
+  // insert most directly implicated by the reported "Failed to send
+  // message" error, since that's the literal fallback string below.
+  let message: Record<string, unknown> | null = null;
+  let messageError: { code?: string; message?: string } | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = await supabase
+      .from("messages")
+      .insert({ match_id: match.id, sender_id: userId, content: content.trim() })
+      .select("*")
+      .single();
+    if (result.data) {
+      message = result.data;
+      messageError = null;
+      break;
+    }
+    messageError = result.error;
+    if (attempt === 0 && result.error?.code === "PGRST116") {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
 
   if (messageError || !message) {
     res.status(500).json({ error: "Failed to send message" });
