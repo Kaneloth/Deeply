@@ -12,8 +12,6 @@ import { useToast } from "@/hooks/use-toast";
 import { useSparks } from "@/contexts/SparksContext";
 import { useDiscoverControls } from "@/contexts/DiscoverControlsContext";
 import { captureUserLocation } from "@/lib/captureLocation";
-import { debugLog } from "@/lib/debugLog";
-import { DebugOverlay } from "@/components/DebugOverlay";
 
 interface Candidate extends ProfileCardData {
   photo_url: string | null;
@@ -46,21 +44,17 @@ const SwipeCard = memo(
       <motion.div
         className="absolute inset-0"
         style={{ zIndex: 10 - stackIndex }}
-        initial={{ scale: 0.95, opacity: 0 }}
+        // Do not animate a card into place. Even a subtle scale transform
+        // causes native WebViews to re-composite the card while the photo is
+        // decoding, which looks like a brief blink/vibration after mount.
+        // The card must be completely still until the user swipes it.
+        initial={false}
         animate={
           isExiting && exitDirection
             ? EXIT_VARIANTS[exitDirection]
             : { scale: 1, opacity: 1, x: 0, y: 0, rotate: 0 }
         }
-        // Small per-card stagger on the initial mount only (never on
-        // exit, so swipes still feel instant) — 3 stacked cards fading
-        // in at the exact same instant, right when the page is also
-        // busy handling several concurrent fetches, is exactly the kind
-        // of simultaneous main-thread work that can make a JS-driven
-        // animation stutter instead of animating smoothly. Spreading
-        // them by a few dozen ms each reduces peak work at any single
-        // frame without being visually noticeable as a delay.
-        transition={{ duration: 0.3, ease: "easeOut", delay: isExiting ? 0 : stackIndex * 0.04 }}
+        transition={isExiting ? { duration: 0.3, ease: "easeOut" } : { duration: 0 }}
       >
         <ProfileCard profile={candidate} active={isTop} enablePullReveal={isTop} />
       </motion.div>
@@ -111,14 +105,17 @@ const MIN_SCAN_WAVE_MS = 2000;
 // server-side regardless, but it's a real (small, transient) tradeoff
 // of this shortcut worth knowing about.
 let cachedCandidates: Candidate[] | null = null;
+let cachedCandidatesUserId: string | null = null;
 
 export default function DiscoverPage() {
   const { token } = useAuth();
   const userId = getUserIdFromToken(token);
   const { toast } = useToast();
-  const [location, setLocation] = useLocation();
+  const [, setLocation] = useLocation();
   const { setControls } = useDiscoverControls();
-  const [candidates, setCandidates] = useState<Candidate[]>(cachedCandidates ?? []);
+  const [candidates, setCandidates] = useState<Candidate[]>(
+    cachedCandidatesUserId === userId ? (cachedCandidates ?? []) : [],
+  );
   // Always current, regardless of which closure of handleReshuffle
   // happens to be registered in DiscoverControlsContext at call time.
   // The registration effect below only re-runs when reshuffleStatus or
@@ -132,7 +129,7 @@ export default function DiscoverPage() {
   useEffect(() => {
     candidatesRef.current = candidates;
   }, [candidates]);
-  const [isLoading, setIsLoading] = useState(cachedCandidates === null);
+  const [isLoading, setIsLoading] = useState(cachedCandidatesUserId !== userId || cachedCandidates === null);
   const [showScanWave, setShowScanWave] = useState(false);
   const [matchCelebration, setMatchCelebration] = useState<{ name: string; matchId: string; photoUrl?: string } | null>(null);
   const [isSwiping, setIsSwiping] = useState(false);
@@ -164,10 +161,6 @@ export default function DiscoverPage() {
   }, [token]);
 
   const handleReshuffle = async () => {
-    // Logs a stack trace so we can see WHAT actually invoked this —
-    // whether it's genuinely the reshuffle button being tapped, or
-    // something calling it programmatically that shouldn't be.
-    debugLog(`handleReshuffle CALLED — stack: ${new Error().stack?.split("\n").slice(1, 4).join(" | ")}`);
     setIsReshuffling(true);
     try {
       const res = await fetch("/api/discover/reshuffle", {
@@ -193,7 +186,7 @@ export default function DiscoverPage() {
       if (!res.ok) throw new Error(body.error ?? "Failed to reshuffle");
       const reshuffled = body.candidates ?? [];
       cachedCandidates = reshuffled;
-      debugLog(`setCandidates from RESHUFFLE — ${reshuffled.length} candidates`);
+      cachedCandidatesUserId = userId;
       setCandidates(reshuffled);
 
       // Previously this only informed the user AFTER they'd already been
@@ -215,6 +208,7 @@ export default function DiscoverPage() {
           });
         }
       }
+      await refreshSparksBadge();
       fetchReshuffleStatus();
     } catch (err) {
       toast({
@@ -227,9 +221,14 @@ export default function DiscoverPage() {
     }
   };
 
-  const fetchQueue = useCallback(async () => {
+  const fetchQueue = useCallback(async (force = false) => {
     const isFirstLoadOfSession = !hasShownDiscoverScanWave;
-    const hadCachedContent = cachedCandidates !== null;
+    const hadCachedContent = cachedCandidatesUserId === userId && cachedCandidates !== null;
+    if (!force && hadCachedContent) {
+      setCandidates(cachedCandidates ?? []);
+      setIsLoading(false);
+      return;
+    }
     if (isFirstLoadOfSession) {
       hasShownDiscoverScanWave = true;
       setShowScanWave(true);
@@ -257,7 +256,7 @@ export default function DiscoverPage() {
 
       const freshCandidates = body.candidates ?? [];
       cachedCandidates = freshCandidates;
-      debugLog(`setCandidates from FETCHQUEUE — ${freshCandidates.length} candidates — stack: ${new Error().stack?.split("\n").slice(1, 4).join(" | ")}`);
+      cachedCandidatesUserId = userId;
       setCandidates(freshCandidates);
     } catch (err) {
       toast({
@@ -269,17 +268,13 @@ export default function DiscoverPage() {
       setIsLoading(false);
       setShowScanWave(false);
     }
-  }, [token, toast]);
+  }, [token, toast, userId]);
 
   useEffect(() => {
-    debugLog(`DiscoverPage: MOUNTED — location="${location}" visibilityState="${document.visibilityState}"`);
     fetchQueue();
     fetchReshuffleStatus();
-    return () => {
-      debugLog(`DiscoverPage: UNMOUNTING — location="${location}" visibilityState="${document.visibilityState}"`);
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     captureUserLocation(token);
@@ -334,7 +329,6 @@ export default function DiscoverPage() {
     setCandidates((prev) => {
       const next = prev.filter((c) => c.id !== target.id);
       cachedCandidates = next;
-      debugLog(`setCandidates from SWIPE — removed one, ${next.length} remain`);
       return next;
     });
     setExiting(null);
@@ -396,7 +390,6 @@ export default function DiscoverPage() {
         setCandidates((prev) => {
           const next = [body.restoredProfile, ...prev];
           cachedCandidates = next;
-          debugLog(`setCandidates from UNDO — restored one, ${next.length} total`);
           return next;
         });
       }
@@ -444,7 +437,6 @@ export default function DiscoverPage() {
       setCandidates((prev) => {
         const next = prev.filter((c) => c.id !== composeFor.id);
         cachedCandidates = next;
-        debugLog(`setCandidates from PRE-MATCH MESSAGE — removed one, ${next.length} remain`);
         return next;
       });
       setComposeFor(null);
@@ -463,18 +455,12 @@ export default function DiscoverPage() {
 
   if (isLoading) {
     if (showScanWave) {
-      return (
-        <>
-          <ScanWaveLoader />
-          <DebugOverlay />
-        </>
-      );
+      return <ScanWaveLoader />;
     }
     return (
       <div className="p-4 pt-10 space-y-6">
         <Skeleton className="h-8 w-32 mx-2" />
         <Skeleton className="h-[500px] w-full rounded-3xl" />
-        <DebugOverlay />
       </div>
     );
   }
@@ -493,7 +479,7 @@ export default function DiscoverPage() {
             <p className="text-muted-foreground mt-2 max-w-[260px]">
               No new profiles right now. Check back soon for more people to meet.
             </p>
-            <Button variant="outline" className="mt-6" onClick={fetchQueue}>
+            <Button variant="outline" className="mt-6" onClick={() => fetchQueue(true)}>
               Refresh
             </Button>
           </div>
@@ -624,8 +610,6 @@ export default function DiscoverPage() {
           </motion.div>
         )}
       </AnimatePresence>
-
-      <DebugOverlay />
     </div>
   );
 }

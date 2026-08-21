@@ -15,13 +15,6 @@ const router: IRouter = Router();
 
 const RESHUFFLE_FREE_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** Runs attachPhotoGalleries and attachAudioPrompts concurrently instead
- *  of sequentially. Despite the code visually chaining them (photos ->
- *  audio), attachAudioPrompts only ever reads `.id` from each item — it
- *  never actually depends on attachPhotoGalleries' output — so there's
- *  no reason to wait for one to finish before starting the other. Used
- *  everywhere a candidate/profile list needs both attached before going
- *  out in a response, which is most of this file's routes. */
 async function attachPhotosAndAudio<T extends { id: string; photo_url: string | null }>(items: T[]) {
   const [withPhotos, withAudio] = await Promise.all([
     attachPhotoGalleries(items),
@@ -31,21 +24,6 @@ async function attachPhotosAndAudio<T extends { id: string; photo_url: string | 
   return withPhotos.map((item) => ({ ...item, audio_prompts: audioById.get(item.id) ?? [] }));
 }
 
-/** Shared by /discover/queue and /discover/reshuffle — builds a fresh,
- *  randomized batch of candidates, boosted profiles prioritized.
- *  Distance is computed from stored lat/lng (captured from the device's
- *  geolocation) rather than the free-text city field, and used to both
- *  filter by the viewer's preferred radius and attach a real distance_km
- *  to each candidate. If the viewer hasn't granted location access yet
- *  (no lat/lng on file), distance filtering is skipped entirely rather
- *  than showing an empty queue. */
-/** Shared by the invites endpoints — fetches the viewer's location once,
- *  computes distance_km for each profile that has coordinates, and strips
- *  the raw lat/lng before returning (never exposed to the client). Skips
- *  filtering entirely (just returns everyone with distance_km: null) if
- *  the viewer hasn't granted location access — invites should never be
- *  hidden by radius, only Discover/Search do that; this is purely about
- *  showing the distance, not filtering by it. */
 async function attachDistances<T extends { id: string; latitude?: number | null; longitude?: number | null }>(
   viewerId: string,
   profiles: T[],
@@ -64,8 +42,6 @@ async function attachDistances<T extends { id: string; latitude?: number | null;
 }
 
 async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []) {
-  // These two don't depend on each other's results — run concurrently
-  // rather than one after another.
   const [excludedFromHistory, { data: viewer }] = await Promise.all([
     getExcludedCandidateIds(userId),
     supabase
@@ -103,14 +79,6 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
     return { candidates: [], error };
   }
 
-  // Hard filters — gender preference is bidirectional (both people need
-  // to be open to the other's gender), age range, plus radius and
-  // dealbreakers. Everything else is a soft signal handled by scoring
-  // below, not a filter — with a small user base, hard-filtering on
-  // every preference by default would risk an empty queue. Age range is
-  // the one exception treated as always-on rather than optional, since
-  // it's a baseline expectation on every mainstream dating app, not
-  // something people expect to have to opt into.
   const hardFiltered = candidates.filter((c) => {
     if (!genderSatisfiesPreference(c.gender, viewer.looking_for_gender)) return false;
     if (!genderSatisfiesPreference(viewer.gender, c.looking_for_gender)) return false;
@@ -119,10 +87,6 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
     return true;
   });
 
-  // Attach distance where computable; candidates without location data
-  // are kept (unknown distance) rather than excluded, so the pool isn't
-  // artificially shrunk just because someone hasn't granted geolocation
-  // access yet.
   const withDistance = hardFiltered.map((c) => {
     if (viewerHasLocation && c.latitude != null && c.longitude != null) {
       const distance_km = Math.round(haversineDistanceKm(viewer.latitude!, viewer.longitude!, c.latitude, c.longitude));
@@ -131,8 +95,6 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
     return { ...c, distance_km: null as number | null };
   });
 
-  // Only actually filter by radius for candidates whose distance we
-  // could compute — unknown-distance candidates pass through regardless.
   const withinRadius = viewerHasLocation
     ? withDistance.filter((c) => c.distance_km === null || c.distance_km <= radiusKm)
     : withDistance;
@@ -141,24 +103,10 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
   const boosted = withinRadius.filter((c) => c.boosted_until && new Date(c.boosted_until).getTime() > now);
   const rest = withinRadius.filter((c) => !c.boosted_until || new Date(c.boosted_until).getTime() <= now);
 
-  // Weighted RANDOM DRAW (sampling without replacement), not a sort with
-  // a small additive jitter. A sort-based approach (score + small random
-  // offset) silently degenerates into a near-fixed order whenever
-  // compatibility scores vary by more than the jitter's range — the
-  // higher-scoring candidate wins the comparison almost every time
-  // regardless of the random roll, so reshuffling barely changes
-  // anything even though Math.random() is genuinely being called. This
-  // draws one candidate at a time, weighted by score, so each pick is a
-  // real random event — better matches still surface more OFTEN, but
-  // the order is never effectively frozen.
   const weightedShuffle = <T extends Record<string, any>>(arr: T[]) => {
     if (arr.length === 0) return arr;
 
     const scored = arr.map((c) => ({ c, score: computeCompatibilityScore(c, { ...viewer, dealbreakers }) }));
-    // Shift so the lowest score maps to a small positive weight rather
-    // than zero/negative — a zero-weight candidate could otherwise never
-    // be drawn at all, which isn't the intent (everyone should have SOME
-    // chance, just not an equal one).
     const minScore = Math.min(...scored.map((s) => s.score));
     const pool = scored.map((s) => ({ c: s.c, weight: s.score - minScore + 1 }));
 
@@ -166,7 +114,7 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
     while (pool.length > 0) {
       const totalWeight = pool.reduce((sum, p) => sum + p.weight, 0);
       let roll = Math.random() * totalWeight;
-      let pickIndex = pool.length - 1; // fallback for float rounding at the very end
+      let pickIndex = pool.length - 1;
       for (let i = 0; i < pool.length; i++) {
         roll -= pool[i].weight;
         if (roll <= 0) {
@@ -192,8 +140,6 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
   return { candidates: withComputedAges(withPhotosAndAudio), error: null };
 }
 
-/** GET /api/discover/queue — return a batch of candidate profiles the user
- *  hasn't swiped on yet, ready to swipe through Tinder-style. */
 router.get("/discover/queue", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
   const { candidates, error } = await buildDiscoverQueue(userId);
@@ -206,9 +152,6 @@ router.get("/discover/queue", requireAuth, async (req, res): Promise<void> => {
   res.json({ candidates });
 });
 
-/** GET /api/discover/reshuffle-status — tells the frontend whether the
- *  next reshuffle is free or will cost Sparks, so the button can show
- *  the right label before the person taps it. */
 router.get("/discover/reshuffle-status", requireAuth, async (req, res): Promise<void> => {
   const { data: profile } = await supabase
     .from("profiles")
@@ -224,32 +167,9 @@ router.get("/discover/reshuffle-status", requireAuth, async (req, res): Promise<
   res.json({ isFree, cost: cost_reshuffle, nextFreeAt: isFree ? null : nextFreeAt });
 });
 
-/** POST /api/discover/reshuffle — re-randomizes the discover queue on
- *  demand. Free once every 7 days, admin-configurable Sparks otherwise.
- *  Always returns the current admin-configured cost (regardless of
- *  whether THIS reshuffle was free or paid) so the frontend has an
- *  accurate, live number available if it ever needs to display one —
- *  e.g. on the reshuffle button/status UI — never a hardcoded value. */
 router.post("/discover/reshuffle", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
-  // The frontend passes the current TOP card's id (not the whole held
-  // queue — excluding everyone currently loaded would zero out a small
-  // candidate pool entirely, see DiscoverPage.tsx). getExcludedCandidateIds
-  // only excludes people the viewer has actually swiped on/matched
-  // with/blocked — someone still undecided in the queue isn't any of
-  // those, so without this the reshuffle draws from the exact same pool
-  // every time and, with a small pool, the weighted draw (which favors
-  // higher-scoring candidates) can keep landing the same person on top
-  // for several reshuffles before pure chance finally picks someone else.
-  // This exclusion is scoped to this one draw only — it's never written
-  // to the DB, so the excluded person can still appear in a normal queue
-  // fetch or a later reshuffle once they're no longer the current top card.
-  //
-  // IDs come straight from the client, and feed into a raw
-  // .not("id", "in", `(${...})`) filter string below — validate they're
-  // well-formed UUIDs before use, so this can't become an injection
-  // vector into that filter.
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const { currentQueueIds } = req.body as { currentQueueIds?: unknown };
   const validCurrentQueueIds = Array.isArray(currentQueueIds)
@@ -265,24 +185,16 @@ router.post("/discover/reshuffle", requireAuth, async (req, res): Promise<void> 
   const lastFree = profile?.last_free_reshuffle_at ? new Date(profile.last_free_reshuffle_at) : null;
   const isFree = !lastFree || Date.now() - lastFree.getTime() >= RESHUFFLE_FREE_INTERVAL_MS;
 
-  // Fetched unconditionally (not just inside the paid branch) so it's
-  // always available to include in the response below.
   const { cost_reshuffle } = await getEconomyConfig();
 
   if (isFree) {
-    // If this update silently fails, last_free_reshuffle_at never
-    // actually persists — meaning every SUBSEQUENT reshuffle would also
-    // see lastFree as null and be wrongly treated as free forever,
-    // never charging Sparks at all. Same bug class already found and
-    // fixed on the invites reveal-status query — log loudly here too,
-    // so a recurrence is actually visible instead of silently
-    // corrupting billing.
-    const { error: markFreeError } = await supabase
+    const { error: freeMarkerError } = await supabase
       .from("profiles")
       .update({ last_free_reshuffle_at: new Date().toISOString() })
       .eq("id", userId);
-    if (markFreeError) {
-      console.error("Reshuffle: failed to record last_free_reshuffle_at:", markFreeError, "userId:", userId);
+    if (freeMarkerError) {
+      res.status(500).json({ error: "Failed to record free reshuffle" });
+      return;
     }
   } else {
     const spend = await spendSparks(userId, cost_reshuffle, "Discover reshuffle");
@@ -301,8 +213,6 @@ router.post("/discover/reshuffle", requireAuth, async (req, res): Promise<void> 
   res.json({ candidates, wasFree: isFree, cost: cost_reshuffle });
 });
 
-/** POST /api/discover/swipe — record a like / pass / super_like and report
- *  back whether it created a mutual match. Super Like costs Sparks. */
 router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
   const { targetId, direction, clientTimezone, skipInviteQuota } = req.body as {
@@ -331,10 +241,6 @@ router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
     }
   }
 
-  // Regular "like" invites draw from the daily free quota (15/day,
-  // resetting at local midnight) before falling back to a Sparks charge.
-  // Accepting an already-received invite is exempt — that's completing an
-  // existing match opportunity, not sending a fresh cold invite.
   let inviteBalanceAfter: number | null = null;
   if (direction === "like" && !skipInviteQuota) {
     const quota = await consumeFreeInviteOrCharge(userId, clientTimezone);
@@ -345,14 +251,6 @@ router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
     inviteBalanceAfter = quota.balance;
   }
 
-  // Upsert rather than insert — this lets someone swipe again on a
-  // profile they'd already swiped on before (e.g. inviting back someone
-  // from "Who Viewed You" who they'd invited earlier, before Discover's
-  // exclusion filter hid them). A plain insert would hit the unique
-  // constraint on (swiper_id, target_id) and fail — and since the
-  // Sparks/quota charge above already happened by this point, that
-  // failure meant the person was charged for a swipe that never actually
-  // recorded. Upserting avoids that entirely.
   const { error: insertError } = await supabase.from("swipes").upsert(
     {
       swiper_id: userId,
@@ -374,12 +272,6 @@ router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
 
   const [lo, hi] = [userId, targetId].sort();
 
-  // Check if the other person has already invited ME — if so, this swipe
-  // completes a mutual match. We create the match explicitly here rather
-  // than relying solely on a database trigger we don't have visibility
-  // into, so this critical path is fully under our control and doesn't
-  // silently depend on unverified trigger logic (e.g. someone accepting
-  // an invite from Discover without ever visiting the Invites page).
   const { data: reverseSwipe } = await supabase
     .from("swipes")
     .select("id")
@@ -409,9 +301,6 @@ router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
     if (!matchError && newMatch) {
       match = newMatch;
     } else if (matchError?.code === "23505") {
-      // Unique constraint hit — a trigger (or a concurrent request) beat
-      // us to creating it. Fetch what it created instead of treating
-      // this as a failure.
       const { data: raceMatch } = await supabase
         .from("matches")
         .select("id")
@@ -425,19 +314,10 @@ router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
   res.json({ matched: !!match, matchId: match?.id ?? null, sparksCharged: inviteBalanceAfter !== null });
 });
 
-/** POST /api/discover/undo — undo the user's most recent swipe (10 Sparks).
- *  Blocked if that swipe already resulted in a match. */
 router.post("/discover/undo", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
   const { targetId } = req.body as { targetId?: string };
 
-  // The frontend only ever sends this once it has just swiped someone in
-  // the current page session (in-memory state, never persisted — see
-  // DiscoverPage.tsx). No targetId means undo wasn't triggered through
-  // that normal flow at all — reject rather than falling back to "just
-  // undo whatever my most recent swipe happens to be", which is exactly
-  // the old behavior that let someone undo a swipe from a previous visit,
-  // a different device, or days later.
   if (!targetId) {
     res.status(400).json({ error: "No swipe to undo" });
     return;
@@ -451,12 +331,6 @@ router.post("/discover/undo", requireAuth, async (req, res): Promise<void> => {
     .limit(1)
     .maybeSingle();
 
-  // Must be BOTH the most recent swipe AND match what the client believes
-  // it just swiped — the second check catches a stale/mismatched client
-  // (e.g. another tab or device swiped since, or simply a page that's
-  // been sitting open long enough for something else to have happened),
-  // so this can never restore anyone other than the one swipe that was
-  // truly just made in this exact session.
   if (!lastSwipe || lastSwipe.target_id !== targetId) {
     res.status(400).json({ error: "No swipe to undo" });
     return;
@@ -497,10 +371,7 @@ router.post("/discover/undo", requireAuth, async (req, res): Promise<void> => {
 });
 
 /** GET /api/discover/invites — FREE. Returns people who already invited
- *  this user and haven't matched yet, split into:
- *  - revealed: profiles this user already paid to see (free forever now)
- *  - new_count: how many additional pending inviters haven't been
- *    revealed yet (still requires a paid reveal) */
+ *  this user and haven't matched yet. */
 router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
@@ -513,11 +384,11 @@ router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => 
   }
 
   // If this specific query fails, do NOT silently proceed as if the
-  // user has revealed nothing — that's exactly what was inflating the
-  // badge count to include people already paid-for and dealt with in a
-  // past session. Failing loudly here means the frontend's silent
-  // catch-and-keep-prior-value fallback (see InvitesContext.tsx) kicks
-  // in instead of confidently displaying a wrong, too-high number.
+  // user has revealed nothing — that inflates the badge/new_count to
+  // include people already paid-for and dealt with in a past session.
+  // Failing loudly here means the frontend's silent catch-and-keep-
+  // prior-value fallback kicks in instead of confidently displaying a
+  // wrong, too-high number.
   const { data: alreadyRevealed, error: revealedError } = await supabase
     .from("invite_reveals")
     .select("target_id")
@@ -554,10 +425,7 @@ router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => 
 });
 
 /** POST /api/discover/invites/reveal — PAID (30 Sparks), but ONLY if
- *  there's at least one genuinely new inviter since the last reveal.
- *  Already-revealed people never cost Sparks again. Returns the full
- *  updated list of everyone pending (previously revealed + newly
- *  revealed). */
+ *  there's at least one genuinely new inviter since the last reveal. */
 router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
@@ -598,8 +466,6 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
     }
     balance = spend.balance;
 
-    // Mark everyone currently pending as revealed, so revisiting never
-    // re-charges for people already seen.
     const rows = pendingInviterIds.map((targetId) => ({ user_id: userId, target_id: targetId }));
     await supabase.from("invite_reveals").upsert(rows, { onConflict: "user_id,target_id" });
   }
@@ -620,11 +486,6 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
   res.json({ invites: withComputedAges(withPhotosAndAudio), balance });
 });
 
-/** GET /api/discover/search — filter/search the same unswiped candidate
- *  pool as /queue, by name, age range, city, and personality tags. Also
- *  respects the viewer's radius preference and attaches distance_km,
- *  same as the queue — skipped if the viewer hasn't granted location
- *  access yet. */
 router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
   const { name, min_age, max_age, city, tags } = req.query as {
@@ -637,14 +498,6 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
 
   const { hardExcluded, pendingInvitedIds } = await getCandidateExclusionSets(userId);
 
-  // Deliberately searching by name is treated as "I'm specifically
-  // looking for this person" — someone already invited should still be
-  // findable that way (to check their profile again, confirm you did
-  // invite them, etc.), even though they're correctly hidden from
-  // passive browsing everywhere else (Discover, Categories, and this
-  // same search when no name is given). Only a name search lifts the
-  // pending-invite exclusion; every other exclusion (passed, matched,
-  // blocked, admin) always applies regardless.
   const isExplicitNameSearch = !!name && name.trim().length > 0;
   const excludedIds = isExplicitNameSearch ? hardExcluded : [...hardExcluded, ...pendingInvitedIds];
   const pendingInvitedSet = new Set(pendingInvitedIds);
@@ -661,12 +514,6 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
   const radiusKm = viewer?.distance_km ?? 25;
   const dealbreakers: string[] = viewer?.dealbreakers ?? [];
 
-  // Explicit query params (from typing a one-off range into this specific
-  // search) take priority when present, but fall back to the viewer's
-  // saved preference from Preferences — previously this endpoint only
-  // ever looked at the query params, so unless someone manually entered
-  // an age range for that particular search, their saved preference was
-  // silently ignored entirely.
   const effectiveMinAge = min_age ? Number(min_age) : viewer?.pref_age_min ?? 18;
   const effectiveMaxAge = max_age ? Number(max_age) : viewer?.pref_age_max ?? 99;
 
@@ -701,10 +548,6 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
-  // Same gender-preference and dealbreaker enforcement the main Discover
-  // queue applies — previously missing here entirely, meaning Search
-  // could surface people outside the viewer's stated gender preference
-  // or explicit lifestyle dealbreakers.
   const results = (rawResults ?? []).filter((c) => {
     if (!genderSatisfiesPreference(c.gender, viewer?.looking_for_gender)) return false;
     if (!genderSatisfiesPreference(viewer?.gender, c.looking_for_gender)) return false;
@@ -734,8 +577,6 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
   res.json({ results: withComputedAges(withPhotosAndAudio) });
 });
 
-/** GET /api/discover/categories — lightweight preview data for stat cards
- *  on the Search page (count + a few preview photos per category). */
 router.get("/discover/categories", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
@@ -752,12 +593,6 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
     .eq("id", userId)
     .single();
 
-  // Shared with the /categories/:key results endpoint below — applying
-  // the same gender/dealbreaker/age-range enforcement here too. Without
-  // this, a preview card could claim "2 people" using an unfiltered
-  // count while tapping into that category (which does filter) shows
-  // nobody — exactly the inconsistency that was happening before this
-  // fix, since only the results endpoint had these filters applied.
   const dealbreakers: string[] = viewerProfile?.dealbreakers ?? [];
   const applyHardFilters = (candidates: any[]): { count: number; preview_photos: string[] } => {
     const filtered = candidates.filter((c) => {
@@ -778,7 +613,6 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
 
   const categories: Array<{ key: string; label: string; count: number; preview_photos: string[] }> = [];
 
-  // New Here — joined in the last 7 days
   {
     const { data } = await supabase
       .from("profiles")
@@ -790,7 +624,6 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
     categories.push({ key: "new_here", label: "New Here", ...applyHardFilters(data ?? []) });
   }
 
-  // Verified
   {
     const { data } = await supabase
       .from("profiles")
@@ -802,7 +635,6 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
     categories.push({ key: "verified", label: "Verified", ...applyHardFilters(data ?? []) });
   }
 
-  // Has Audio Bio
   {
     const { data: audioUserRows } = await supabase.from("audio_prompts").select("user_id");
     const audioUserIds = [...new Set((audioUserRows ?? []).map((r) => r.user_id))].filter(
@@ -820,7 +652,6 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
     categories.push({ key: "has_audio", label: "Audio Bios", ...result });
   }
 
-  // Near You — same city as viewer
   if (viewerProfile?.city) {
     const { data } = await supabase
       .from("profiles")
@@ -832,8 +663,6 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
     categories.push({ key: "near_you", label: "Near You", ...applyHardFilters(data ?? []) });
   }
 
-  // Matches Your Vibe — broad pool, same holistic scoring as the results
-  // endpoint, not just a personality_tags overlap
   {
     const { data } = await supabase
       .from("profiles")
@@ -844,7 +673,6 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
     categories.push({ key: "matches_vibe", label: "Matches Your Vibe", ...applyHardFilters(data ?? []) });
   }
 
-  // Popular — most invited (liked) in the last 7 days
   {
     const { data: recentLikes } = await supabase
       .from("swipes")
@@ -865,8 +693,6 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
         .select(PREVIEW_FIELDS)
         .in("id", likedIds)
         .eq("is_incognito", false);
-      // Sort by popularity before truncating to the top 3 preview photos,
-      // same ordering the results endpoint uses.
       const sorted = (data ?? []).sort((a, b) => (countMap.get(b.id) ?? 0) - (countMap.get(a.id) ?? 0));
       result = applyHardFilters(sorted);
     }
@@ -876,8 +702,6 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
   res.json({ categories });
 });
 
-/** GET /api/discover/categories/:key — full profile results for a tapped
- *  stat card. */
 router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
   const key = Array.isArray(req.params.key) ? req.params.key[0] : req.params.key;
@@ -957,13 +781,6 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
       break;
     }
     case "matches_vibe": {
-      // Previously this only checked personality_tags overlap at the
-      // database level — meaning two people who shared one hobby tag
-      // but disagreed on everything else (smoking, drinking, activity
-      // level, relationship type) could still show up here, which is
-      // exactly backwards for a category promising overall compatibility.
-      // Now: fetch a broad pool, then use the same holistic scoring
-      // function the main Discover queue uses, and take the best matches.
       const { data } = await supabase
         .from("profiles")
         .select(SELECT_FIELDS)
@@ -993,7 +810,6 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
       const topIds = [...countMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([id]) => id);
       if (topIds.length > 0) {
         const { data } = await supabase.from("profiles").select(SELECT_FIELDS).in("id", topIds).eq("is_incognito", false);
-        // Preserve popularity order
         results = topIds.map((id) => (data ?? []).find((p) => p.id === id)).filter(Boolean);
       }
       break;
@@ -1004,13 +820,6 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
     }
   }
 
-  // Applied uniformly across every category, regardless of which one was
-  // requested — gender preference, dealbreakers, and age range are
-  // baseline expectations a user set deliberately, and previously none
-  // of these categories respected any of them at all. A category being
-  // "New Here" or "Popular" doesn't make someone's stated preferences
-  // optional; those are about ordering/selection criteria, not about
-  // who's allowed to be shown in the first place.
   if (viewerProfile) {
     const dealbreakers: string[] = viewerProfile.dealbreakers ?? [];
     results = results.filter((c) => {
@@ -1029,10 +838,6 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
   res.json({ results: withComputedAges(withPhotosAndAudio) });
 });
 
-/** POST /api/discover/message-request — send an opening message to
- *  someone before matching (30 Sparks). Creates the match immediately so
- *  the conversation works exactly like a normal match's chat from then
- *  on, for both people. */
 router.post("/discover/message-request", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
   const { targetId, content } = req.body as { targetId?: string; content?: string };
@@ -1076,9 +881,6 @@ router.post("/discover/message-request", requireAuth, async (req, res): Promise<
     return;
   }
 
-  // Best-effort: record this as an implicit invite so the profile doesn't
-  // keep reappearing in the sender's Discover queue. Not fatal if it
-  // conflicts with an existing swipe row.
   await supabase.from("swipes").insert({ swiper_id: userId, target_id: targetId, direction: "like" });
 
   const { data: match, error: matchError } = await supabase
@@ -1108,9 +910,6 @@ router.post("/discover/message-request", requireAuth, async (req, res): Promise<
   res.status(201).json({ matchId: match.id, message, balance: spend.balance });
 });
 
-/** GET /api/discover/invites/sent — FREE. People this user has invited
- *  (liked/super-liked) who haven't matched back yet. No paywall here —
- *  the user already knows exactly who they chose to invite. */
 router.get("/discover/invites/sent", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
@@ -1158,9 +957,6 @@ router.get("/discover/invites/sent", requireAuth, async (req, res): Promise<void
   res.json({ sent: withComputedAges(withPhotosAndAudio) });
 });
 
-/** DELETE /api/discover/invites/sent/:targetId — withdraw an invite you
- *  sent that hasn't been matched yet. Removes the underlying swipe, which
- *  also lets that profile reappear in your Discover/Search queue again. */
 router.delete("/discover/invites/sent/:targetId", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
   const targetId = Array.isArray(req.params.targetId) ? req.params.targetId[0] : req.params.targetId;

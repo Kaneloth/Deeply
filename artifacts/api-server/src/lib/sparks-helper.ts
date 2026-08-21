@@ -11,15 +11,6 @@ interface SparksProfile {
   next_spark_grant_at: string;
 }
 
-/**
- * Checks whether this user's monthly free-Spark grant is due, and applies
- * it if so (resetting free_sparks_balance to 300 — no rollover — and
- * pushing next_spark_grant_at one month out). Called lazily at the start
- * of any Sparks-reading or Sparks-spending action, so no cron job is
- * needed.
- *
- * Returns the up-to-date profile balances.
- */
 export async function checkAndApplyMonthlyGrant(userId: string): Promise<SparksProfile> {
   const { data: profile, error } = await supabase
     .from("profiles")
@@ -58,11 +49,6 @@ export async function checkAndApplyMonthlyGrant(userId: string): Promise<SparksP
     return profile as SparksProfile;
   }
 
-  // Fire-and-forget — this is an audit-log row, not the balance itself
-  // (already durably applied by the awaited .update() above). Blocking
-  // the response on it added a full extra round trip to every single
-  // Sparks-reading/spending action across the app, since this function
-  // runs at the start of all of them.
   supabase
     .from("sparks_transactions")
     .insert({
@@ -73,8 +59,6 @@ export async function checkAndApplyMonthlyGrant(userId: string): Promise<SparksP
     })
     .then(() => {});
 
-  // Fire-and-forget — a notification failure shouldn't block the grant
-  // itself from applying.
   createNotification(
     userId,
     "spark_grant",
@@ -85,11 +69,6 @@ export async function checkAndApplyMonthlyGrant(userId: string): Promise<SparksP
   return updated as SparksProfile;
 }
 
-/**
- * Add PAID Sparks to a user's balance (e.g. after a purchase in Phase 5)
- * and record the transaction. Paid Sparks never expire. Returns the new
- * total balance (free + paid).
- */
 export async function addPaidSparks(
   userId: string,
   amount: number,
@@ -105,9 +84,6 @@ export async function addPaidSparks(
 
   const newTotal = profile.free_sparks_balance + newPaidBalance;
 
-  // Fire-and-forget — same reasoning as checkAndApplyMonthlyGrant: this
-  // is the audit-log row, not the balance itself, which is already
-  // durably applied by the awaited .update() above.
   supabase
     .from("sparks_transactions")
     .insert({
@@ -121,12 +97,6 @@ export async function addPaidSparks(
   return newTotal;
 }
 
-/**
- * Deduct Sparks from a user's balance, spending free Sparks first and
- * paid Sparks second. Returns { success: true, balance } on success, or
- * { success: false, balance } if the combined balance is insufficient
- * (nothing is deducted in that case).
- */
 export async function spendSparks(
   userId: string,
   amount: number,
@@ -145,19 +115,16 @@ export async function spendSparks(
   const newFree = profile.free_sparks_balance - spendFromFree;
   const newPaid = profile.paid_sparks_balance - spendFromPaid;
 
-  await supabase
+  const { error: spendError } = await supabase
     .from("profiles")
     .update({ free_sparks_balance: newFree, paid_sparks_balance: newPaid })
     .eq("id", userId);
+  if (spendError) {
+    throw spendError;
+  }
 
   const newTotal = newFree + newPaid;
 
-  // Fire-and-forget — same reasoning as above. This is the single
-  // highest-impact change here: spendSparks runs at the start of nearly
-  // every paid action in the app (super likes, reshuffle, undo, unsend,
-  // read-receipt unlocks, message-before-match), so removing one
-  // blocking round trip from it removes that same round trip from all
-  // of them at once.
   supabase
     .from("sparks_transactions")
     .insert({
@@ -178,9 +145,7 @@ export async function spendSparks(
   // number baked in here is only ever accurate at the instant it's
   // written; the user's real balance keeps moving with every subsequent
   // spend, so a stored "You have X Sparks left" reliably goes stale and
-  // shows a wrong figure by the time it's actually read — exactly the
-  // mismatch users were seeing between this and the always-live toast
-  // in SparksContext.tsx.
+  // shows a wrong figure by the time it's actually read.
   if (total > LOW_BALANCE_THRESHOLD && newTotal <= LOW_BALANCE_THRESHOLD) {
     createNotification(
       userId,
@@ -193,10 +158,6 @@ export async function spendSparks(
   return { success: true, balance: newTotal };
 }
 
-/**
- * Read-only balance + next grant date, applying the monthly grant first
- * if it's due. Used by GET /api/sparks.
- */
 export async function getSparksSummary(userId: string): Promise<{
   balance: number;
   next_grant_at: string;
