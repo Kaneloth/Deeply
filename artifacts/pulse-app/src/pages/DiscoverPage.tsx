@@ -116,7 +116,7 @@ export default function DiscoverPage() {
   const { token } = useAuth();
   const userId = getUserIdFromToken(token);
   const { toast } = useToast();
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
   const { setControls } = useDiscoverControls();
   const [candidates, setCandidates] = useState<Candidate[]>(cachedCandidates ?? []);
   // Always current, regardless of which closure of handleReshuffle
@@ -272,9 +272,12 @@ export default function DiscoverPage() {
   }, [token, toast]);
 
   useEffect(() => {
-    debugLog("DiscoverPage: MOUNTED (fetchQueue + fetchReshuffleStatus about to run)");
+    debugLog(`DiscoverPage: MOUNTED — location="${location}" visibilityState="${document.visibilityState}"`);
     fetchQueue();
     fetchReshuffleStatus();
+    return () => {
+      debugLog(`DiscoverPage: UNMOUNTING — location="${location}" visibilityState="${document.visibilityState}"`);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
