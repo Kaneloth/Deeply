@@ -954,14 +954,32 @@ export default function ChatPage() {
                         // onLoad wouldn't fire again to re-learn the
                         // ratio under the new id. The URL itself never
                         // changes across that transition.
-                        <div
-                          className="rounded-2xl overflow-hidden bg-muted"
-                          style={{ aspectRatio: gifAspectRatios[msg.media_url ?? ""] ?? 4 / 3 }}
-                        >
+                        //
+                        // aspect-ratio applied DIRECTLY to the img, not
+                        // to a wrapping div with the img at h-full inside
+                        // it. A percentage height (h-full = height: 100%)
+                        // requires its parent to have a "definite" height
+                        // to resolve against — and a parent sized purely
+                        // via aspect-ratio doesn't reliably count as
+                        // definite for that purpose in every browser's
+                        // layout path. When that resolution fails, the
+                        // img falls back to its own natural (often
+                        // taller) height instead of the intended 100%,
+                        // and the parent's overflow-hidden silently clips
+                        // the excess — exactly the "cropped at top or
+                        // bottom" symptom this was producing, confirmed
+                        // present on both web and native, which is what
+                        // pointed at a genuine CSS issue rather than
+                        // anything WebView-specific. Putting aspect-ratio
+                        // directly on the img removes the percentage-
+                        // height relationship entirely — there's nothing
+                        // left to fail to resolve.
+                        <div className="rounded-2xl overflow-hidden bg-muted">
                           <img
                             src={msg.media_url ?? ""}
                             alt="GIF"
-                            className="w-full h-full object-contain"
+                            className="w-full block object-contain"
+                            style={{ aspectRatio: gifAspectRatios[msg.media_url ?? ""] ?? 4 / 3 }}
                             onLoad={(e) => {
                               const img = e.currentTarget;
                               const key = msg.media_url ?? "";
