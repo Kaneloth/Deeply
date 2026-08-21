@@ -42,6 +42,13 @@ interface ReplyPreview {
 
 interface Message {
   id: string;
+  // Keep the rendered bubble's identity stable while an optimistic message
+  // changes from its temporary id to the server id. This prevents native
+  // WebViews from remounting stickers/GIFs immediately after sending.
+  // Purely a client-side concept — the backend never returns this field,
+  // which is exactly why fetchMessages below has to explicitly re-attach
+  // it after every poll, not just after the initial send reconciliation.
+  renderKey?: string;
   match_id: string;
   sender_id: string;
   content: string;
@@ -52,18 +59,6 @@ interface Message {
   sent_at: string;
   reactions: Reaction[];
   reply_to: ReplyPreview | null;
-  // Optional, only set on messages that went through the optimistic
-  // send path (see handleSend / sendMediaMessage). Deliberately kept
-  // STABLE across the temp-id -> real-id reconciliation swap, and used
-  // as the list's React key instead of `id` — `id` itself still updates
-  // correctly to the real server id (needed for react/unsend/reply
-  // targeting), but the key never changes, so React never treats the
-  // reconciled message as a brand-new element. Without this, swapping
-  // `id` mid-flight changed the key, which unmounted and remounted the
-  // bubble the instant the real response landed — for a GIF, that meant
-  // the browser redoing image decode/paint on a fresh DOM node, visible
-  // as a "bounce" on native WebView specifically.
-  _localKey?: string;
 }
 
 // Raw characters for the compact row we build ourselves (exact-fit, no
@@ -134,6 +129,19 @@ export default function ChatPage() {
 
   // Swipe-to-reply
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  // Tracks each GIF's real aspect ratio once it actually loads, keyed by
+  // media_url (stable across the optimistic-send id transition — see
+  // the usage site below for why msg.id specifically wouldn't work here).
+  // Before a ratio is known, the container falls back to a reasonable
+  // guess (4:3) purely to reserve space and avoid the original
+  // load-then-jump bounce — but a fixed guess doesn't match every GIF's
+  // real proportions (Giphy/Tenor GIFs are often closer to square, or
+  // even portrait), and object-contain letterboxing a mismatched ratio
+  // can visually read as the content being cropped rather than cleanly
+  // fitted. Capturing the real ratio on load and resizing the container
+  // to match exactly eliminates that mismatch — this happens via a
+  // plain state update, not a key change, so it never causes a remount.
+  const [gifAspectRatios, setGifAspectRatios] = useState<Record<string, number>>({});
   const [swipingMessageId, setSwipingMessageId] = useState<string | null>(null);
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
@@ -344,7 +352,31 @@ export default function ChatPage() {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to load messages");
-      setMessages(body ?? []);
+      // Merge, not replace — a plain setMessages(body) here was the real
+      // bug behind the "some messages bounce, some don't, in a repeating
+      // pattern" report. body's objects come straight from the backend
+      // and never have a renderKey field at all (it's a purely
+      // client-side concept from the send-reconciliation flow below).
+      // Blindly replacing the array wiped renderKey back to undefined on
+      // literally every poll tick, meaning any message whose 3-second
+      // poll happened to land after it was sent would silently regain an
+      // unstable key and remount — independent of anything about that
+      // specific message, purely a matter of poll timing, which is
+      // exactly why it looked like an arbitrary alternating pattern
+      // rather than something tied to any particular message. Carrying
+      // renderKey forward by matching on the real (server) id means once
+      // a message has a stable key, it keeps it for the rest of this
+      // page's lifetime, through every subsequent poll.
+      setMessages((prev) => {
+        const renderKeyById = new Map<string, string>();
+        for (const m of prev) {
+          if (m.renderKey) renderKeyById.set(m.id, m.renderKey);
+        }
+        return (body ?? []).map((m: Message) => ({
+          ...m,
+          renderKey: renderKeyById.get(m.id) ?? m.renderKey,
+        }));
+      });
     } catch {
       // Silent — polling failures shouldn't spam the user with toasts.
     }
@@ -383,7 +415,7 @@ export default function ChatPage() {
   // anything at all.
   useLayoutEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "auto" });
     }
   }, [messages.length]);
 
@@ -408,6 +440,7 @@ export default function ChatPage() {
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const optimisticMessage: Message = {
       id: tempId,
+      renderKey: tempId,
       match_id: matchId,
       sender_id: userId ?? tempId,
       content,
@@ -426,7 +459,6 @@ export default function ChatPage() {
             is_unsent: replyPreview.is_unsent,
           }
         : null,
-      _localKey: tempId,
     };
     setMessages((prev) => [...prev, optimisticMessage]);
     pendingSendCountRef.current += 1;
@@ -459,10 +491,12 @@ export default function ChatPage() {
       // (id, sent_at, reactions, reply_to — everything the list endpoint
       // would return for it) — swap the optimistic bubble for it
       // directly rather than re-fetching the whole conversation. Keep
-      // _localKey stable across this swap (see the Message interface
+      // renderKey stable across this swap (see the Message interface
       // comment) so the list's React key never changes here, even
       // though `id` correctly updates to the real server id.
-      setMessages((prev) => prev.map((m) => (m.id === tempId ? { ...(body as Message), _localKey: tempId } : m)));
+      setMessages((prev) =>
+        prev.map((m) => (m.id === tempId ? { ...(body as Message), renderKey: m.renderKey ?? tempId } : m)),
+      );
     } catch (err) {
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
       setInput(content); // restore what they typed so they don't lose it
@@ -486,6 +520,7 @@ export default function ChatPage() {
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const optimisticMessage: Message = {
       id: tempId,
+      renderKey: tempId,
       match_id: matchId,
       sender_id: userId ?? tempId,
       content,
@@ -496,7 +531,6 @@ export default function ChatPage() {
       sent_at: new Date().toISOString(),
       reactions: [],
       reply_to: null,
-      _localKey: tempId,
     };
     setMessages((prev) => [...prev, optimisticMessage]);
     pendingSendCountRef.current += 1;
@@ -523,7 +557,9 @@ export default function ChatPage() {
 
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to send");
-      setMessages((prev) => prev.map((m) => (m.id === tempId ? { ...(body as Message), _localKey: tempId } : m)));
+      setMessages((prev) =>
+        prev.map((m) => (m.id === tempId ? { ...(body as Message), renderKey: m.renderKey ?? tempId } : m)),
+      );
     } catch (err) {
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
       toast({
@@ -770,7 +806,7 @@ export default function ChatPage() {
             const showDateSeparator = i === 0 || isDifferentLocalDay(msg.sent_at, messages[i - 1].sent_at);
 
             return (
-              <div key={msg._localKey ?? msg.id}>
+              <div key={msg.renderKey ?? msg.id}>
                 {showDateSeparator && (
                   <div className="flex justify-center my-3">
                     <span className="px-3 py-1 rounded-full bg-secondary text-muted-foreground text-[11px] font-medium">
@@ -904,15 +940,38 @@ export default function ChatPage() {
                         // exactly the "bounce" this fixes. object-contain
                         // (not cover) keeps the full GIF visible, same as
                         // before, just within a reserved box instead of
-                        // one that collapses to nothing pre-load.
+                        // one that collapses to nothing pre-load. The
+                        // 4/3 fallback below is only a placeholder guess
+                        // for before the image has loaded — once it has,
+                        // gifAspectRatios holds the GIF's real ratio, so
+                        // the box always ends up matching the actual
+                        // content exactly rather than letterboxing (or
+                        // visually appearing to crop) a mismatched guess.
+                        // Keyed by media_url, not msg.id — id changes
+                        // from a temp id to the real server id once an
+                        // optimistically-sent GIF's POST resolves, but by
+                        // then the image is already loaded/cached, so
+                        // onLoad wouldn't fire again to re-learn the
+                        // ratio under the new id. The URL itself never
+                        // changes across that transition.
                         <div
                           className="rounded-2xl overflow-hidden bg-muted"
-                          style={{ aspectRatio: "4 / 3" }}
+                          style={{ aspectRatio: gifAspectRatios[msg.media_url ?? ""] ?? 4 / 3 }}
                         >
                           <img
                             src={msg.media_url ?? ""}
                             alt="GIF"
                             className="w-full h-full object-contain"
+                            onLoad={(e) => {
+                              const img = e.currentTarget;
+                              const key = msg.media_url ?? "";
+                              if (img.naturalWidth && img.naturalHeight && key) {
+                                const ratio = img.naturalWidth / img.naturalHeight;
+                                setGifAspectRatios((prev) =>
+                                  prev[key] === ratio ? prev : { ...prev, [key]: ratio },
+                                );
+                              }
+                            }}
                           />
                         </div>
                       ) : (
