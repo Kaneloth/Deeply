@@ -44,6 +44,34 @@ export function clearDebugLog() {
   notify();
 }
 
+// Patches console.error/warn so React's OWN internal warnings (duplicate
+// keys, unstable component identity causing unexpected remounts, etc.)
+// show up in this same on-screen panel — previously only manual
+// debugLog() calls were visible here, meaning React's own diagnostic
+// output about exactly this class of bug was invisible without real
+// devtools access. Call once, early (e.g. at the top of App.tsx).
+let consolePatched = false;
+export function patchConsoleIntoDebugLog() {
+  if (consolePatched) return;
+  consolePatched = true;
+
+  const originalError = console.error.bind(console);
+  const originalWarn = console.warn.bind(console);
+
+  console.error = (...args: unknown[]) => {
+    originalError(...args);
+    debugLog(`[console.error] ${args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ")}`, {
+      level: "error",
+    });
+  };
+  console.warn = (...args: unknown[]) => {
+    originalWarn(...args);
+    debugLog(`[console.warn] ${args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ")}`, {
+      level: "warn",
+    });
+  };
+}
+
 // Convenience helper: times an async operation and logs it automatically,
 // whether it succeeds or throws.
 export async function timeIt<T>(label: string, fn: () => Promise<T>): Promise<T> {
