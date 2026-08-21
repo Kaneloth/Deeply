@@ -270,7 +270,20 @@ router.post("/discover/reshuffle", requireAuth, async (req, res): Promise<void> 
   const { cost_reshuffle } = await getEconomyConfig();
 
   if (isFree) {
-    await supabase.from("profiles").update({ last_free_reshuffle_at: new Date().toISOString() }).eq("id", userId);
+    // If this update silently fails, last_free_reshuffle_at never
+    // actually persists — meaning every SUBSEQUENT reshuffle would also
+    // see lastFree as null and be wrongly treated as free forever,
+    // never charging Sparks at all. Same bug class already found and
+    // fixed on the invites reveal-status query — log loudly here too,
+    // so a recurrence is actually visible instead of silently
+    // corrupting billing.
+    const { error: markFreeError } = await supabase
+      .from("profiles")
+      .update({ last_free_reshuffle_at: new Date().toISOString() })
+      .eq("id", userId);
+    if (markFreeError) {
+      console.error("Reshuffle: failed to record last_free_reshuffle_at:", markFreeError, "userId:", userId);
+    }
   } else {
     const spend = await spendSparks(userId, cost_reshuffle, "Discover reshuffle");
     if (!spend.success) {
@@ -499,11 +512,22 @@ router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => 
     return;
   }
 
-  const { data: alreadyRevealed } = await supabase
+  // If this specific query fails, do NOT silently proceed as if the
+  // user has revealed nothing — that's exactly what was inflating the
+  // badge count to include people already paid-for and dealt with in a
+  // past session. Failing loudly here means the frontend's silent
+  // catch-and-keep-prior-value fallback (see InvitesContext.tsx) kicks
+  // in instead of confidently displaying a wrong, too-high number.
+  const { data: alreadyRevealed, error: revealedError } = await supabase
     .from("invite_reveals")
     .select("target_id")
     .eq("user_id", userId)
     .in("target_id", pendingInviterIds);
+
+  if (revealedError) {
+    res.status(500).json({ error: "Failed to load invite reveal status" });
+    return;
+  }
 
   const revealedIds = new Set((alreadyRevealed ?? []).map((r) => r.target_id));
   const revealedPendingIds = pendingInviterIds.filter((id) => revealedIds.has(id));
@@ -545,11 +569,20 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
     return;
   }
 
-  const { data: alreadyRevealed } = await supabase
+  // Same reasoning as the GET handler above — a failed query here must
+  // not be silently treated as "nothing revealed", since that would
+  // wrongly set hasNew=true and charge Sparks for revealing invites the
+  // user has already paid for.
+  const { data: alreadyRevealed, error: revealedError } = await supabase
     .from("invite_reveals")
     .select("target_id")
     .eq("user_id", userId)
     .in("target_id", pendingInviterIds);
+
+  if (revealedError) {
+    res.status(500).json({ error: "Failed to load invite reveal status" });
+    return;
+  }
 
   const revealedIds = new Set((alreadyRevealed ?? []).map((r) => r.target_id));
   const hasNew = pendingInviterIds.some((id) => !revealedIds.has(id));

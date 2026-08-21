@@ -12,6 +12,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useSparks } from "@/contexts/SparksContext";
 import { useDiscoverControls } from "@/contexts/DiscoverControlsContext";
 import { captureUserLocation } from "@/lib/captureLocation";
+import { debugLog } from "@/lib/debugLog";
+import { DebugOverlay } from "@/components/DebugOverlay";
 
 interface Candidate extends ProfileCardData {
   photo_url: string | null;
@@ -44,17 +46,21 @@ const SwipeCard = memo(
       <motion.div
         className="absolute inset-0"
         style={{ zIndex: 10 - stackIndex }}
-        // Do not animate a card into place. Even a subtle scale transform
-        // causes native WebViews to re-composite the card while the photo is
-        // decoding, which looks like a brief blink/vibration after mount.
-        // The card must be completely still until the user swipes it.
-        initial={false}
+        initial={{ scale: 0.95, opacity: 0 }}
         animate={
           isExiting && exitDirection
             ? EXIT_VARIANTS[exitDirection]
             : { scale: 1, opacity: 1, x: 0, y: 0, rotate: 0 }
         }
-        transition={isExiting ? { duration: 0.3, ease: "easeOut" } : { duration: 0 }}
+        // Small per-card stagger on the initial mount only (never on
+        // exit, so swipes still feel instant) — 3 stacked cards fading
+        // in at the exact same instant, right when the page is also
+        // busy handling several concurrent fetches, is exactly the kind
+        // of simultaneous main-thread work that can make a JS-driven
+        // animation stutter instead of animating smoothly. Spreading
+        // them by a few dozen ms each reduces peak work at any single
+        // frame without being visually noticeable as a delay.
+        transition={{ duration: 0.3, ease: "easeOut", delay: isExiting ? 0 : stackIndex * 0.04 }}
       >
         <ProfileCard profile={candidate} active={isTop} enablePullReveal={isTop} />
       </motion.div>
@@ -158,6 +164,10 @@ export default function DiscoverPage() {
   }, [token]);
 
   const handleReshuffle = async () => {
+    // Logs a stack trace so we can see WHAT actually invoked this —
+    // whether it's genuinely the reshuffle button being tapped, or
+    // something calling it programmatically that shouldn't be.
+    debugLog(`handleReshuffle CALLED — stack: ${new Error().stack?.split("\n").slice(1, 4).join(" | ")}`);
     setIsReshuffling(true);
     try {
       const res = await fetch("/api/discover/reshuffle", {
@@ -183,6 +193,7 @@ export default function DiscoverPage() {
       if (!res.ok) throw new Error(body.error ?? "Failed to reshuffle");
       const reshuffled = body.candidates ?? [];
       cachedCandidates = reshuffled;
+      debugLog(`setCandidates from RESHUFFLE — ${reshuffled.length} candidates`);
       setCandidates(reshuffled);
 
       // Previously this only informed the user AFTER they'd already been
@@ -246,6 +257,7 @@ export default function DiscoverPage() {
 
       const freshCandidates = body.candidates ?? [];
       cachedCandidates = freshCandidates;
+      debugLog(`setCandidates from FETCHQUEUE — ${freshCandidates.length} candidates — stack: ${new Error().stack?.split("\n").slice(1, 4).join(" | ")}`);
       setCandidates(freshCandidates);
     } catch (err) {
       toast({
@@ -260,6 +272,7 @@ export default function DiscoverPage() {
   }, [token, toast]);
 
   useEffect(() => {
+    debugLog("DiscoverPage: MOUNTED (fetchQueue + fetchReshuffleStatus about to run)");
     fetchQueue();
     fetchReshuffleStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -318,6 +331,7 @@ export default function DiscoverPage() {
     setCandidates((prev) => {
       const next = prev.filter((c) => c.id !== target.id);
       cachedCandidates = next;
+      debugLog(`setCandidates from SWIPE — removed one, ${next.length} remain`);
       return next;
     });
     setExiting(null);
@@ -379,6 +393,7 @@ export default function DiscoverPage() {
         setCandidates((prev) => {
           const next = [body.restoredProfile, ...prev];
           cachedCandidates = next;
+          debugLog(`setCandidates from UNDO — restored one, ${next.length} total`);
           return next;
         });
       }
@@ -426,6 +441,7 @@ export default function DiscoverPage() {
       setCandidates((prev) => {
         const next = prev.filter((c) => c.id !== composeFor.id);
         cachedCandidates = next;
+        debugLog(`setCandidates from PRE-MATCH MESSAGE — removed one, ${next.length} remain`);
         return next;
       });
       setComposeFor(null);
@@ -444,12 +460,18 @@ export default function DiscoverPage() {
 
   if (isLoading) {
     if (showScanWave) {
-      return <ScanWaveLoader />;
+      return (
+        <>
+          <ScanWaveLoader />
+          <DebugOverlay />
+        </>
+      );
     }
     return (
       <div className="p-4 pt-10 space-y-6">
         <Skeleton className="h-8 w-32 mx-2" />
         <Skeleton className="h-[500px] w-full rounded-3xl" />
+        <DebugOverlay />
       </div>
     );
   }
@@ -599,6 +621,8 @@ export default function DiscoverPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <DebugOverlay />
     </div>
   );
 }
