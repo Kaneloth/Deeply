@@ -243,22 +243,44 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     }
   }
 
-  const { data: profile, error } = await supabase
-    .from("profiles")
-    .update(updates)
-    .eq("id", req.user!.id)
-    .select("*")
-    .single();
-  if (error || !profile) {
-    // TEMPORARY — remove once this is diagnosed. error.message alone
-    // (what the client sees) often omits detail/hint/code fields that
-    // pinpoint the actual Postgres-level cause.
-    console.error("PUT /profile/me FAILED — full error object:", JSON.stringify(error, null, 2));
-    console.error("PUT /profile/me FAILED — updates object was:", JSON.stringify(updates, null, 2));
-    console.error("PUT /profile/me FAILED — user id was:", req.user!.id);
-    res.status(400).json({ error: error?.message ?? "Update failed" });
+  if (Object.keys(updates).length === 0) {
+    res.status(400).json({ error: "No profile changes supplied" });
     return;
   }
+
+  // Keep the write separate from the read-back. Chaining `.select().single()`
+  // onto UPDATE makes PostgREST coerce the UPDATE representation into exactly
+  // one JSON object. In production that representation can occasionally be
+  // empty even though the UPDATE itself succeeded, producing the misleading
+  // "Cannot coerce the result to a single JSON object" 400. This was
+  // especially easy to reproduce from the profile/preferences pages because
+  // they submit the full form snapshot even when only one field changed.
+  const { error: updateError } = await supabase
+    .from("profiles")
+    .update(updates)
+    .eq("id", req.user!.id);
+
+  if (updateError) {
+    console.error("PUT /profile/me UPDATE FAILED:", JSON.stringify(updateError, null, 2));
+    console.error("PUT /profile/me FAILED — updates object was:", JSON.stringify(updates, null, 2));
+    console.error("PUT /profile/me FAILED — user id was:", req.user!.id);
+    res.status(400).json({ error: updateError.message ?? "Update failed" });
+    return;
+  }
+
+  const { data: profile, error: readBackError } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", req.user!.id)
+    .maybeSingle();
+
+  if (readBackError || !profile) {
+    console.error("PUT /profile/me READ-BACK FAILED:", JSON.stringify(readBackError, null, 2));
+    console.error("PUT /profile/me — user id was:", req.user!.id);
+    res.status(500).json({ error: "Profile was updated, but could not be read back." });
+    return;
+  }
+
   res.json(withComputedAge(profile));
 });
 
