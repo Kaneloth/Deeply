@@ -74,20 +74,28 @@ async function formatMatchesBatch(rawMatches: Record<string, any>[], viewerId: s
 router.get("/matches", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
-  const { data: viewerProfile } = await supabase
+  const { data: viewerProfile, error: viewerError } = await supabase
     .from("profiles")
     .select("matches_last_viewed_at")
     .eq("id", userId)
     .single();
+  if (viewerError) {
+    res.status(500).json({ error: "Failed to load matches view state" });
+    return;
+  }
   const lastViewedAt = viewerProfile?.matches_last_viewed_at
     ? new Date(viewerProfile.matches_last_viewed_at)
     : new Date(0);
 
-  const { data: rawMatches } = await supabase
+  const { data: rawMatches, error: matchesError } = await supabase
     .from("matches")
     .select(MATCH_SELECT)
     .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
     .order("created_at", { ascending: false });
+  if (matchesError) {
+    res.status(500).json({ error: "Failed to load matches" });
+    return;
+  }
 
   const blockedIds = new Set(await getBlockedUserIds(userId));
   const matches = (rawMatches ?? []).filter((m) => {
@@ -98,12 +106,16 @@ router.get("/matches", requireAuth, async (req, res): Promise<void> => {
   const matchIds = matches.map((m) => m.id);
   let unreadMatchIds = new Set<string>();
   if (matchIds.length > 0) {
-    const { data: unreadRows } = await supabase
+    const { data: unreadRows, error: unreadError } = await supabase
       .from("messages")
       .select("match_id")
       .in("match_id", matchIds)
       .eq("is_read", false)
       .neq("sender_id", userId);
+    if (unreadError) {
+      res.status(500).json({ error: "Failed to load unread match messages" });
+      return;
+    }
     unreadMatchIds = new Set((unreadRows ?? []).map((r) => r.match_id));
   }
 

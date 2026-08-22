@@ -425,6 +425,10 @@ router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => 
   const userId = req.user!.id;
 
   const pendingInviters = await getPendingInviterIds(userId);
+  if (pendingInviters === null) {
+    res.status(500).json({ error: "Failed to load received invites" });
+    return;
+  }
   const pendingInviterIds = pendingInviters.map((p) => p.id);
 
   if (pendingInviterIds.length === 0) {
@@ -484,6 +488,10 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
   const userId = req.user!.id;
 
   const pendingInviters = await getPendingInviterIds(userId);
+  if (pendingInviters === null) {
+    res.status(500).json({ error: "Failed to load received invites" });
+    return;
+  }
   const pendingInviterIds = pendingInviters.map((p) => p.id);
 
   if (pendingInviterIds.length === 0) {

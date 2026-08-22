@@ -42,6 +42,7 @@ import { useRefetchOnAppResume } from "@/hooks/useRefetchOnAppResume";
 // for zero practical benefit there.
 const MATCHES_CACHE_KEY = "matches";
 let cachedMatches: Match[] | null = readPersistentCache<Match[]>(MATCHES_CACHE_KEY);
+let latestMatchesRequest = 0;
 function updateMatchesCache(value: Match[]) {
   cachedMatches = value;
   writePersistentCache(MATCHES_CACHE_KEY, value);
@@ -101,6 +102,7 @@ export default function MatchesPage() {
   };
 
   const fetchMatches = useCallback(async () => {
+    const requestId = ++latestMatchesRequest;
     if (cachedMatches === null) setIsLoading(true);
     try {
       const res = await fetch("/api/matches", {
@@ -109,16 +111,18 @@ export default function MatchesPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to load matches");
       const fresh = body ?? [];
+      if (requestId !== latestMatchesRequest) return;
       updateMatchesCache(fresh);
       setMatches(fresh);
     } catch (err) {
+      if (requestId !== latestMatchesRequest) return;
       toast({
         title: "Error",
         description: err instanceof Error ? err.message : "Failed to load matches.",
         variant: "destructive",
       });
     } finally {
-      setIsLoading(false);
+      if (requestId === latestMatchesRequest) setIsLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);

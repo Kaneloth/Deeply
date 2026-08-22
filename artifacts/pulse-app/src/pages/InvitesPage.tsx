@@ -130,6 +130,8 @@ const SENT_CACHE_KEY = "invites_sent";
 let cachedRevealed: Invite[] | null = readPersistentCache<Invite[]>(REVEALED_CACHE_KEY);
 let cachedNewCount = readPersistentCache<number>(NEW_COUNT_CACHE_KEY) ?? 0;
 let cachedSent: Invite[] | null = readPersistentCache<Invite[]>(SENT_CACHE_KEY);
+let latestReceivedInvitesRequest = 0;
+let latestSentInvitesRequest = 0;
 
 function updateRevealedCache(value: Invite[]) {
   cachedRevealed = value;
@@ -168,6 +170,7 @@ export default function InvitesPage() {
   const [sentLoading, setSentLoading] = useState(false);
 
   const fetchInvites = useCallback(async () => {
+    const requestId = ++latestReceivedInvitesRequest;
     if (cachedRevealed === null) setIsLoading(true);
     try {
       const res = await fetch("/api/discover/invites", {
@@ -177,18 +180,20 @@ export default function InvitesPage() {
       if (!res.ok) throw new Error(body.error ?? "Failed to load invites");
       const freshRevealed = body.revealed ?? [];
       const freshNewCount = body.new_count ?? 0;
+      if (requestId !== latestReceivedInvitesRequest) return;
       updateRevealedCache(freshRevealed);
       updateNewCountCache(freshNewCount);
       setRevealed(freshRevealed);
       setNewCount(freshNewCount);
     } catch (err) {
+      if (requestId !== latestReceivedInvitesRequest) return;
       toast({
         title: "Error",
         description: err instanceof Error ? err.message : "Failed to load invites.",
         variant: "destructive",
       });
     } finally {
-      setIsLoading(false);
+      if (requestId === latestReceivedInvitesRequest) setIsLoading(false);
     }
   }, [token, toast]);
 
@@ -211,6 +216,7 @@ export default function InvitesPage() {
   useRefetchOnAppResume(fetchInvites);
 
   const fetchSent = useCallback(async () => {
+    const requestId = ++latestSentInvitesRequest;
     setSentLoading(true);
     try {
       const res = await fetch("/api/discover/invites/sent", {
@@ -219,16 +225,18 @@ export default function InvitesPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to load sent invites");
       const freshSent = body.sent ?? [];
+      if (requestId !== latestSentInvitesRequest) return;
       updateSentCache(freshSent);
       setSent(freshSent);
     } catch (err) {
+      if (requestId !== latestSentInvitesRequest) return;
       toast({
         title: "Error",
         description: err instanceof Error ? err.message : "Failed to load sent invites.",
         variant: "destructive",
       });
     } finally {
-      setSentLoading(false);
+      if (requestId === latestSentInvitesRequest) setSentLoading(false);
     }
   }, [token, toast]);
 
