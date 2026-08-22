@@ -1,4 +1,4 @@
-s removeimport { supabase } from "./supabase";
+import { supabase } from "./supabase";
 import { getBlockedUserIds } from "./blocks-helper";
 
 /** IDs to exclude from any discovery/search candidate list: the viewer
