@@ -36,7 +36,10 @@ export function InvitesProvider({ children }: { children: ReactNode }) {
     if (!token) return;
     const requestId = ++latestInvitesBadgeRequest;
     try {
-      const res = await fetch("/api/discover/invites", { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch("/api/discover/invites", {
+        cache: "no-store",
+        headers: { Authorization: `Bearer ${token}` },
+      });
       if (!res.ok) return;
       const body = await res.json();
       if (requestId !== latestInvitesBadgeRequest) return;

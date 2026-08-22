@@ -174,6 +174,7 @@ export default function InvitesPage() {
     if (cachedRevealed === null) setIsLoading(true);
     try {
       const res = await fetch("/api/discover/invites", {
+        cache: "no-store",
         headers: { Authorization: `Bearer ${token}` },
       });
       const body = await res.json();
@@ -185,6 +186,8 @@ export default function InvitesPage() {
       updateNewCountCache(freshNewCount);
       setRevealed(freshRevealed);
       setNewCount(freshNewCount);
+      // Keep the shared bottom-nav badge tied to the response rendered here.
+      setInvitesBadgeCount(freshNewCount);
     } catch (err) {
       if (requestId !== latestReceivedInvitesRequest) return;
       toast({

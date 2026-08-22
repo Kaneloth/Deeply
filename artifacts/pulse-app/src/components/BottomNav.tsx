@@ -28,7 +28,10 @@ export function BottomNav() {
   const fetchIndicatorStatus = useCallback(async () => {
     const requestId = ++latestIndicatorRequest.current;
     try {
-      const res = await fetch("/api/matches/indicator-status", { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch("/api/matches/indicator-status", {
+        cache: "no-store",
+        headers: { Authorization: `Bearer ${token}` },
+      });
       if (!res.ok) return;
       const body = await res.json();
       if (requestId !== latestIndicatorRequest.current) return;

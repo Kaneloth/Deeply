@@ -422,6 +422,7 @@ router.post("/discover/undo", requireAuth, async (req, res): Promise<void> => {
 /** GET /api/discover/invites — FREE. Returns people who already invited
  *  this user and haven't matched yet. */
 router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
   const userId = req.user!.id;
 
   const pendingInviters = await getPendingInviterIds(userId);

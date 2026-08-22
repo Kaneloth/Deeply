@@ -143,6 +143,7 @@ router.get("/matches", requireAuth, async (req, res): Promise<void> => {
  *  the full match/photo/audio hydration that GET /matches does, since
  *  this gets polled frequently just to decide whether to show a dot. */
 router.get("/matches/indicator-status", requireAuth, async (req, res): Promise<void> => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
   const userId = req.user!.id;
 
   const [{ data: viewerProfile }, { data: myMatches }] = await Promise.all([
