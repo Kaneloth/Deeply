@@ -1,4 +1,4 @@
-import { supabase } from "./supabase";
+s removeimport { supabase } from "./supabase";
 import { getBlockedUserIds } from "./blocks-helper";
 
 /** IDs to exclude from any discovery/search candidate list: the viewer
@@ -100,15 +100,6 @@ export async function getPendingInviterIds(userId: string): Promise<PendingInvit
     .select("swiper_id, direction, created_at, message_content")
     .eq("target_id", userId)
     .in("direction", ["like", "super_like"]);
-
-  // TEMPORARY — pairs with the write-side logging in discover.ts's
-  // message-request handler. Shows exactly what this read sees for
-  // message_content per inviter, to isolate whether a reported-missing
-  // message is a write problem or a read problem. Remove once diagnosed.
-  console.error(
-    "GET-PENDING-INVITERS DEBUG: incomingLikes was:",
-    JSON.stringify(incomingLikes, null, 2),
-  );
 
   if (!incomingLikes || incomingLikes.length === 0) return [];
 
