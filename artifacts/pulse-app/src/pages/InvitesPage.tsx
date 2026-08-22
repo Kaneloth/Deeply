@@ -10,7 +10,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
 import { MatchCelebration } from "@/components/MatchCelebration";
-import { ChevronLeft, Star, Lock, Heart, X } from "lucide-react";
+import { ChevronLeft, Star, Lock, Heart, X, MessageCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -24,6 +24,11 @@ interface Invite {
   photos: { url: string; media_type: "image" | "video" }[];
   personality_tags: string[];
   super_liked: boolean;
+  // Present when this invite came from a "message before match" send —
+  // see discover.ts's message-request handler. Received invites show it
+  // as the other person's opening message; sent invites show it as a
+  // reminder of what was sent.
+  message_content: string | null;
 }
 
 function InviteDetailOverlay({
@@ -59,6 +64,15 @@ function InviteDetailOverlay({
               </div>
             )}
           </div>
+
+          {invite.message_content && (
+            <div className="flex-none mt-3 px-4 py-3 rounded-2xl bg-card border border-card-border">
+              <p className="text-xs font-medium text-muted-foreground mb-1">
+                {onDecide ? `${invite.name}'s message` : "Your message"}
+              </p>
+              <p className="text-sm text-foreground leading-snug">{invite.message_content}</p>
+            </div>
+          )}
 
           <div className="flex-none pt-3 flex items-center justify-center gap-3">
             {onDecide ? (
@@ -399,7 +413,8 @@ export default function InvitesPage() {
                 )}
                 <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-black/70 to-transparent" />
                 <div className="absolute bottom-2 left-3 right-3">
-                  <p className="text-white font-semibold text-sm truncate">
+                  <p className="text-white font-semibold text-sm truncate flex items-center gap-1">
+                    {invite.message_content && <MessageCircle size={12} className="shrink-0" />}
                     {invite.name}, {invite.age}
                   </p>
                   <p className="text-white/70 text-xs">Pending</p>
@@ -468,7 +483,8 @@ export default function InvitesPage() {
                     )}
                     <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-black/70 to-transparent" />
                     <div className="absolute bottom-2 left-3 right-3">
-                      <p className="text-white font-semibold text-sm truncate">
+                      <p className="text-white font-semibold text-sm truncate flex items-center gap-1">
+                        {invite.message_content && <MessageCircle size={12} className="shrink-0" />}
                         {invite.name}, {invite.age}
                       </p>
                     </div>

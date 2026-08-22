@@ -434,14 +434,31 @@ export default function DiscoverPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to send message");
 
+      const sentTo = composeFor;
       setCandidates((prev) => {
-        const next = prev.filter((c) => c.id !== composeFor.id);
+        const next = prev.filter((c) => c.id !== sentTo.id);
         cachedCandidates = next;
         return next;
       });
       setComposeFor(null);
       setMessageText("");
-      setLocation(`/matches/${body.matchId}/chat`);
+
+      // This is now an invite with an attached message, not an
+      // immediate match — see discover.ts's message-request handler for
+      // the full reasoning. matched only comes back true in the rare
+      // crossed-invites case (the target had already invited this user
+      // first), which is a genuine mutual match right now — same
+      // celebration flow as a normal match from a regular swipe.
+      // Otherwise, just confirm the invite was sent; it now shows up in
+      // Invites (Sent) until the other person accepts or declines it.
+      if (body.matched && body.matchId) {
+        setMatchCelebration({ name: sentTo.name, matchId: body.matchId, photoUrl: sentTo.photo_url ?? undefined });
+      } else {
+        toast({
+          title: "Invite sent",
+          description: `${sentTo.name} will see your message if they accept your invite.`,
+        });
+      }
     } catch (err) {
       toast({
         title: "Error",

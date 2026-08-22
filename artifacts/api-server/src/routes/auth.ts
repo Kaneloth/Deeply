@@ -6,21 +6,28 @@ const router: IRouter = Router();
 
 /** POST /api/auth/signup */
 router.post("/auth/signup", async (req, res): Promise<void> => {
-  const { email, password, name } = req.body as {
+  const { email, password } = req.body as {
     email?: string;
     password?: string;
-    name?: string;
   };
 
-  if (!email || !password || !name) {
-    res.status(400).json({ error: "email, password, and name are required" });
+  if (!email || !password) {
+    res.status(400).json({ error: "email and password are required" });
     return;
   }
 
+  // Name is no longer collected here — the signup screen asking for it
+  // duplicated the Name field onboarding already asks for right after
+  // (and for Google sign-in, that name gets auto-populated from Google's
+  // own profile data without ever being confirmed by the person at all).
+  // Collecting it once, during onboarding, avoids both problems — see
+  // OnboardingPage.tsx and profile.ts. options.data is passed as an
+  // empty object rather than omitted entirely, since Supabase's signUp
+  // still expects the `options` shape even with nothing in `data`.
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
-    options: { data: { name } },
+    options: { data: {} },
   });
 
   if (error) {

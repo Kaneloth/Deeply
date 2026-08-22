@@ -213,6 +213,82 @@ router.post("/discover/reshuffle", requireAuth, async (req, res): Promise<void> 
   res.json({ candidates, wasFree: isFree, cost: cost_reshuffle });
 });
 
+/** Creates a match between two users — idempotent, returns the existing
+ *  match if one's already there (e.g. a race between two near-
+ *  simultaneous requests). If either person's swipe toward the other
+ *  carried an attached message_content — a "message before match"
+ *  invite (see POST /discover/message-request) — that text becomes the
+ *  match's opening message rather than being lost, inserted in
+ *  chronological order if BOTH sides happen to have one (the rare
+ *  crossed-invites case: each person messaged the other before either
+ *  had accepted). Shared by the normal swipe endpoint (accepting a
+ *  message-invite through Invites goes through there) and
+ *  message-request itself (the crossed-invites case, where the target
+ *  had already invited first). */
+async function createMatchWithAnyPendingMessages(
+  userId: string,
+  targetId: string,
+): Promise<{ id: string } | null> {
+  const [lo, hi] = [userId, targetId].sort();
+
+  const { data: existingMatch } = await supabase
+    .from("matches")
+    .select("id")
+    .eq("user1_id", lo)
+    .eq("user2_id", hi)
+    .maybeSingle();
+  if (existingMatch) return existingMatch;
+
+  // Same PGRST116 retry pattern used elsewhere in this file — a match
+  // insert immediately followed by a read-back is exactly the kind of
+  // operation that's previously hit transient connection-consistency
+  // lag.
+  let match: { id: string } | null = null;
+  let matchError: { code?: string } | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = await supabase.from("matches").insert({ user1_id: lo, user2_id: hi }).select("id").single();
+    if (result.data) {
+      match = result.data;
+      matchError = null;
+      break;
+    }
+    matchError = result.error;
+    if (attempt === 0 && result.error?.code === "PGRST116") {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+  if (matchError?.code === "23505") {
+    // A concurrent request beat us to it — fetch what it created rather
+    // than treating this as a failure.
+    const { data: raceMatch } = await supabase.from("matches").select("id").eq("user1_id", lo).eq("user2_id", hi).maybeSingle();
+    match = raceMatch ?? null;
+  }
+  if (!match) return null;
+
+  const [{ data: mySwipe }, { data: theirSwipe }] = await Promise.all([
+    supabase.from("swipes").select("message_content, created_at").eq("swiper_id", userId).eq("target_id", targetId).maybeSingle(),
+    supabase.from("swipes").select("message_content, created_at").eq("swiper_id", targetId).eq("target_id", userId).maybeSingle(),
+  ]);
+
+  const pendingMessages: { sender_id: string; content: string; created_at: string }[] = [];
+  if (mySwipe?.message_content) {
+    pendingMessages.push({ sender_id: userId, content: mySwipe.message_content, created_at: mySwipe.created_at });
+  }
+  if (theirSwipe?.message_content) {
+    pendingMessages.push({ sender_id: targetId, content: theirSwipe.message_content, created_at: theirSwipe.created_at });
+  }
+  pendingMessages.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+  if (pendingMessages.length > 0) {
+    await supabase
+      .from("messages")
+      .insert(pendingMessages.map((m) => ({ match_id: match!.id, sender_id: m.sender_id, content: m.content })));
+    await supabase.from("matches").update({ message_count: pendingMessages.length }).eq("id", match.id);
+  }
+
+  return match;
+}
+
 router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
   const { targetId, direction, clientTimezone, skipInviteQuota } = req.body as {
@@ -270,8 +346,6 @@ router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
-  const [lo, hi] = [userId, targetId].sort();
-
   const { data: reverseSwipe } = await supabase
     .from("swipes")
     .select("id")
@@ -280,36 +354,11 @@ router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
     .in("direction", ["like", "super_like"])
     .maybeSingle();
 
-  let match: { id: string } | null = null;
-
-  const { data: existingMatch } = await supabase
-    .from("matches")
-    .select("id")
-    .eq("user1_id", lo)
-    .eq("user2_id", hi)
-    .maybeSingle();
-
-  if (existingMatch) {
-    match = existingMatch;
-  } else if (reverseSwipe) {
-    const { data: newMatch, error: matchError } = await supabase
-      .from("matches")
-      .insert({ user1_id: lo, user2_id: hi })
-      .select("id")
-      .single();
-
-    if (!matchError && newMatch) {
-      match = newMatch;
-    } else if (matchError?.code === "23505") {
-      const { data: raceMatch } = await supabase
-        .from("matches")
-        .select("id")
-        .eq("user1_id", lo)
-        .eq("user2_id", hi)
-        .maybeSingle();
-      match = raceMatch ?? null;
-    }
-  }
+  // Handles both a genuinely new match AND the "accepting a message-
+  // before-match invite" case — if the target's earlier swipe carried a
+  // message_content, createMatchWithAnyPendingMessages inserts it as
+  // this match's opening message automatically.
+  const match = reverseSwipe ? await createMatchWithAnyPendingMessages(userId, targetId) : null;
 
   res.json({ matched: !!match, matchId: match?.id ?? null, sparksCharged: inviteBalanceAfter !== null });
 });
@@ -417,7 +466,12 @@ router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => 
   const superLikerIds = new Set(
     pendingInviters.filter((p) => p.direction === "super_like").map((p) => p.id),
   );
-  const enriched = (revealedProfiles ?? []).map((p) => ({ ...p, super_liked: superLikerIds.has(p.id) }));
+  const messageById = new Map(pendingInviters.map((p) => [p.id, p.message_content]));
+  const enriched = (revealedProfiles ?? []).map((p) => ({
+    ...p,
+    super_liked: superLikerIds.has(p.id),
+    message_content: messageById.get(p.id) ?? null,
+  }));
   const withDistance = await attachDistances(userId, enriched);
   const withPhotosAndAudio = await attachPhotosAndAudio(withDistance);
 
@@ -478,8 +532,13 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
   const superLikerIds = new Set(
     pendingInviters.filter((p) => p.direction === "super_like").map((p) => p.id),
   );
+  const messageById = new Map(pendingInviters.map((p) => [p.id, p.message_content]));
 
-  const enriched = (inviters ?? []).map((l) => ({ ...l, super_liked: superLikerIds.has(l.id) }));
+  const enriched = (inviters ?? []).map((l) => ({
+    ...l,
+    super_liked: superLikerIds.has(l.id),
+    message_content: messageById.get(l.id) ?? null,
+  }));
   const withDistance = await attachDistances(userId, enriched);
   const withPhotosAndAudio = await attachPhotosAndAudio(withDistance);
 
@@ -838,6 +897,20 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
   res.json({ results: withComputedAges(withPhotosAndAudio) });
 });
 
+/** POST /api/discover/message-request — send an opening message to
+ *  someone before matching (costs Sparks, admin-configurable). Treated
+ *  as an invite with an attached message, exactly like a normal like —
+ *  NOT an immediate match. The target sees it in their Received Invites
+ *  with the message text attached, and can Accept (via the normal
+ *  swipe/accept flow, which then surfaces this message as the match's
+ *  opening line) or Decline it, same as any other invite. This
+ *  deliberately replaced the previous behavior of creating a real match
+ *  immediately, which put two people in a "match" neither had actually
+ *  both agreed to — the target never confirmed anything, yet showed up
+ *  in the sender's Matches list right away, and the resulting
+ *  half-agreed-upon match caused real confusion (e.g. "match not found"
+ *  errors once one side later interacted with a match the other side
+ *  had never consciously accepted). */
 router.post("/discover/message-request", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
   const { targetId, content } = req.body as { targetId?: string; content?: string };
@@ -881,66 +954,41 @@ router.post("/discover/message-request", requireAuth, async (req, res): Promise<
     return;
   }
 
-  await supabase.from("swipes").insert({ swiper_id: userId, target_id: targetId, direction: "like" });
+  // The invite itself — same upsert shape as a normal like, just with
+  // the message text riding along in message_content. onConflict means
+  // re-sending (e.g. after editing) simply replaces the earlier draft
+  // rather than erroring on the unique constraint.
+  const { error: upsertError } = await supabase.from("swipes").upsert(
+    {
+      swiper_id: userId,
+      target_id: targetId,
+      direction: "like",
+      message_content: content.trim(),
+    },
+    { onConflict: "swiper_id,target_id" },
+  );
 
-  // Retries specifically PostgREST's "0 rows returned" transient
-  // connection-consistency error (PGRST116) — same proven pattern
-  // already used on PUT /profile/me. This flow is especially exposed to
-  // it: it chains match insert -> message insert -> (client navigates)
-  // -> chat page's own GET /matches/:matchId, three dependent reads/
-  // writes in a row with zero tolerance for any one of them lagging
-  // even briefly. Without this, a transient gap here surfaced as
-  // "Failed to send message" if the match insert itself was affected.
-  let match: { id: string } | null = null;
-  let matchError: { code?: string; message?: string } | null = null;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const result = await supabase.from("matches").insert({ user1_id: lo, user2_id: hi }).select("id").single();
-    if (result.data) {
-      match = result.data;
-      matchError = null;
-      break;
-    }
-    matchError = result.error;
-    if (attempt === 0 && result.error?.code === "PGRST116") {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-  }
-
-  if (matchError || !match) {
-    res.status(500).json({ error: "Failed to start conversation" });
+  if (upsertError) {
+    res.status(500).json({ error: `Failed to send invite: ${upsertError.message}` });
     return;
   }
 
-  // Same reasoning and pattern as the match insert above — this is the
-  // insert most directly implicated by the reported "Failed to send
-  // message" error, since that's the literal fallback string below.
-  let message: Record<string, unknown> | null = null;
-  let messageError: { code?: string; message?: string } | null = null;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const result = await supabase
-      .from("messages")
-      .insert({ match_id: match.id, sender_id: userId, content: content.trim() })
-      .select("*")
-      .single();
-    if (result.data) {
-      message = result.data;
-      messageError = null;
-      break;
-    }
-    messageError = result.error;
-    if (attempt === 0 && result.error?.code === "PGRST116") {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-  }
+  // Crossed invites: the target had already invited (liked) this user
+  // first, before this message was sent. That's a genuine mutual match
+  // right now — createMatchWithAnyPendingMessages picks up this
+  // message_content (and the target's, if they'd also attached one)
+  // automatically as the opening message(s).
+  const { data: reverseSwipe } = await supabase
+    .from("swipes")
+    .select("id")
+    .eq("swiper_id", targetId)
+    .eq("target_id", userId)
+    .in("direction", ["like", "super_like"])
+    .maybeSingle();
 
-  if (messageError || !message) {
-    res.status(500).json({ error: "Failed to send message" });
-    return;
-  }
+  const match = reverseSwipe ? await createMatchWithAnyPendingMessages(userId, targetId) : null;
 
-  await supabase.from("matches").update({ message_count: 1 }).eq("id", match.id);
-
-  res.status(201).json({ matchId: match.id, message, balance: spend.balance });
+  res.status(201).json({ matched: !!match, matchId: match?.id ?? null, balance: spend.balance });
 });
 
 router.get("/discover/invites/sent", requireAuth, async (req, res): Promise<void> => {
@@ -948,7 +996,7 @@ router.get("/discover/invites/sent", requireAuth, async (req, res): Promise<void
 
   const { data: outgoingLikes } = await supabase
     .from("swipes")
-    .select("target_id, direction")
+    .select("target_id, direction, message_content")
     .eq("swiper_id", userId)
     .in("direction", ["like", "super_like"]);
 
@@ -983,7 +1031,12 @@ router.get("/discover/invites/sent", requireAuth, async (req, res): Promise<void
   const superSentIds = new Set(
     (outgoingLikes ?? []).filter((l) => l.direction === "super_like").map((l) => l.target_id),
   );
-  const enriched = (sentProfiles ?? []).map((p) => ({ ...p, super_liked: superSentIds.has(p.id) }));
+  const messageByTargetId = new Map((outgoingLikes ?? []).map((l) => [l.target_id, l.message_content ?? null]));
+  const enriched = (sentProfiles ?? []).map((p) => ({
+    ...p,
+    super_liked: superSentIds.has(p.id),
+    message_content: messageByTargetId.get(p.id) ?? null,
+  }));
   const withDistance = await attachDistances(userId, enriched);
   const withPhotosAndAudio = await attachPhotosAndAudio(withDistance);
 

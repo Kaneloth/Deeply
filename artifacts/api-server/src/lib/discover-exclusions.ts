@@ -79,6 +79,7 @@ export async function getCandidateExclusionSets(
 export interface PendingInviter {
   id: string;
   direction: "like" | "super_like";
+  message_content: string | null;
 }
 
 /** Returns everyone with a currently-pending (unmatched, not-yet-decided)
@@ -96,7 +97,7 @@ export interface PendingInviter {
 export async function getPendingInviterIds(userId: string): Promise<PendingInviter[]> {
   const { data: incomingLikes } = await supabase
     .from("swipes")
-    .select("swiper_id, direction, created_at")
+    .select("swiper_id, direction, created_at, message_content")
     .eq("target_id", userId)
     .in("direction", ["like", "super_like"]);
 
@@ -128,13 +129,21 @@ export async function getPendingInviterIds(userId: string): Promise<PendingInvit
 
   // Keep only the most recent inbound invite per inviter, along with its
   // direction (someone could have an old "like" plus a newer
-  // "super_like", for instance — we want the newer one's direction).
-  const latestInvitePerInviter = new Map<string, { createdAt: number; direction: "like" | "super_like" }>();
+  // "super_like", for instance — we want the newer one's direction) and
+  // any attached message_content from a "message before match" invite.
+  const latestInvitePerInviter = new Map<
+    string,
+    { createdAt: number; direction: "like" | "super_like"; message_content: string | null }
+  >();
   for (const invite of incomingLikes) {
     const t = new Date(invite.created_at).getTime();
     const existing = latestInvitePerInviter.get(invite.swiper_id);
     if (existing === undefined || t > existing.createdAt) {
-      latestInvitePerInviter.set(invite.swiper_id, { createdAt: t, direction: invite.direction });
+      latestInvitePerInviter.set(invite.swiper_id, {
+        createdAt: t,
+        direction: invite.direction,
+        message_content: invite.message_content ?? null,
+      });
     }
   }
 
@@ -158,7 +167,7 @@ export async function getPendingInviterIds(userId: string): Promise<PendingInvit
     console.error(
       `INVITES DEBUG: ${inviterId} INCLUDED as pending — invite at ${new Date(invite.createdAt).toISOString()}, my decision at ${decidedAt ? new Date(decidedAt).toISOString() : "never"}, matched: ${matchedIds.has(inviterId)}`,
     );
-    pending.push({ id: inviterId, direction: invite.direction });
+    pending.push({ id: inviterId, direction: invite.direction, message_content: invite.message_content });
   }
 
   console.error(`INVITES DEBUG: userId=${userId} final pending count=${pending.length}, ids=${pending.map((p) => p.id).join(",")}`);

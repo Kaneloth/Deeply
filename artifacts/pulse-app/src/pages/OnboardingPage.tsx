@@ -100,12 +100,6 @@ export default function OnboardingPage() {
   const [founderReveal, setFounderReveal] = useState<{ rank: number } | null>(null);
 
   const [name, setName] = useState("");
-  // Whether the name has already been captured before onboarding (at
-  // signup for email/password accounts, or from Google's own profile
-  // data for Google sign-in) — while this is unresolved we don't yet
-  // know whether to show the Name field on step 1, so we hold off
-  // rendering it rather than flashing it and immediately hiding it.
-  const [nameAlreadyCaptured, setNameAlreadyCaptured] = useState<boolean | null>(null);
   const [gender, setGender] = useState("");
   const [birthday, setBirthday] = useState("");
   const [lookingForGender, setLookingForGender] = useState("");
@@ -147,10 +141,15 @@ export default function OnboardingPage() {
 
   const [notifySparks, setNotifySparks] = useState(true);
 
-  // Pull whatever name was already captured before onboarding — either
-  // typed at signup (email/password) or pulled from Google's profile
-  // data (Google sign-in) — so step 1 never re-asks for it. Runs once on
-  // mount; token doesn't change mid-onboarding in any way relevant here.
+  // Pre-fill whatever name already exists — currently only possible via
+  // Google sign-in, which auto-populates it from Google's own profile
+  // data without the person ever confirming it themselves. The Name
+  // field below is always shown regardless (email signup no longer
+  // collects a name at all — see AuthPage.tsx), so this only saves a
+  // Google user from re-typing a name that's very likely already
+  // correct, while still giving them the chance to see and edit it
+  // before continuing. Runs once on mount; token doesn't change
+  // mid-onboarding in any way relevant here.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -158,20 +157,15 @@ export default function OnboardingPage() {
         const res = await fetch("/api/profile/me", {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (!res.ok) throw new Error();
+        if (!res.ok) return;
         const body = await res.json();
         if (cancelled) return;
         if (body.name && typeof body.name === "string" && body.name.trim()) {
           setName(body.name);
-          setNameAlreadyCaptured(true);
-        } else {
-          setNameAlreadyCaptured(false);
         }
       } catch {
-        // Couldn't confirm either way — fall back to asking, same as
-        // today's behavior, rather than silently leaving name blank
-        // with no way to fill it in.
-        if (!cancelled) setNameAlreadyCaptured(false);
+        // Non-fatal — the field just starts empty, same as any
+        // email-signup user.
       }
     })();
     return () => {
@@ -428,15 +422,10 @@ export default function OnboardingPage() {
           >
             <h2 className="text-2xl font-['Syne'] font-bold mb-6">Tell us about yourself.</h2>
             <div className="space-y-6">
-              {/* Only shown if we couldn't confirm a name was already
-                  captured before onboarding (signup, or Google profile
-                  data) — most users never see this field at all. */}
-              {nameAlreadyCaptured === false && (
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Name</label>
-                  <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" className="bg-card border-card-border h-12 rounded-xl" />
-                </div>
-              )}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Name</label>
+                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" className="bg-card border-card-border h-12 rounded-xl" />
+              </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium">I am a</label>
                 <RadioList value={gender} onChange={setGender} options={GENDER_OPTIONS} />
