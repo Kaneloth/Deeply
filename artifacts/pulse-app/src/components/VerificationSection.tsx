@@ -58,6 +58,15 @@ export function VerificationSection() {
   // shows. PayFast must never render inside the native app shell.
   const isNative = useMemo(() => Capacitor.isNativePlatform(), []);
   const [nativePrice, setNativePrice] = useState<string | null>(null);
+  // The web-path equivalent of nativePrice — previously this whole
+  // section had "R99" hardcoded directly in three separate places
+  // (badge, button, and the post-failure notice), completely
+  // disconnected from id_verification_fee_zar, the actual admin-
+  // configurable value. Changing the price in the dashboard silently
+  // had zero effect here. Fetched from /api/app-settings, which already
+  // returns every app_settings row (including this one) unfiltered —
+  // no new backend endpoint needed.
+  const [webPriceZar, setWebPriceZar] = useState<number | null>(null);
 
   const [idFrontFile, setIdFrontFile] = useState<File | null>(null);
   const [idBackFile, setIdBackFile] = useState<File | null>(null);
@@ -103,6 +112,21 @@ export function VerificationSection() {
         // real price info is available.
       });
   }, [isNative]);
+
+  useEffect(() => {
+    if (isNative) return;
+    fetch("/api/app-settings", { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (body && typeof body.id_verification_fee_zar === "number") {
+          setWebPriceZar(body.id_verification_fee_zar);
+        }
+      })
+      .catch(() => {
+        // Silent — button/badge stay in their loading state until real
+        // price info is available, same as the native path above.
+      });
+  }, [isNative, token]);
 
   const handleTakeSelfie = async () => {
     const file = await capturePhoto();
@@ -362,7 +386,7 @@ export function VerificationSection() {
         <div className="flex items-center justify-between mb-2">
           <p className="text-sm font-semibold">ID Verified</p>
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-            {isFounderEligible ? "Free" : isNative ? (nativePrice ?? "...") : "R99 once-off"}
+            {isFounderEligible ? "Free" : isNative ? (nativePrice ?? "...") : webPriceZar !== null ? `R${webPriceZar} once-off` : "..."}
           </span>
         </div>
         <p className="text-xs text-muted-foreground mb-3">
@@ -389,7 +413,7 @@ export function VerificationSection() {
             {!hasPaidForId ? (
               <Button
                 onClick={handlePayForId}
-                disabled={isPaying || (isNative && !isFounderEligible && !nativePrice)}
+                disabled={isPaying || (isNative && !isFounderEligible && !nativePrice) || (!isNative && !isFounderEligible && webPriceZar === null)}
                 className="w-full h-11 rounded-xl gap-2 bg-gradient-accent border-0"
               >
                 {isFounderEligible ? <Crown size={16} /> : <CreditCard size={16} />}
@@ -399,7 +423,7 @@ export function VerificationSection() {
                     ? "Claim Free Verification (Founders)"
                     : isNative
                       ? (nativePrice ? `Pay ${nativePrice} to Start` : "Loading price...")
-                      : "Pay R99 to Start"}
+                      : (webPriceZar !== null ? `Pay R${webPriceZar} to Start` : "Loading price...")}
               </Button>
             ) : !showIdForm ? (
               <Button onClick={() => setShowIdForm(true)} variant="outline" className="w-full h-11 rounded-xl gap-2">
@@ -415,7 +439,7 @@ export function VerificationSection() {
                 {submitFailed ? (
                   <div className="space-y-2">
                     <p className="text-xs text-muted-foreground bg-secondary/60 rounded-xl p-3">
-                      Submission failed. Your R99 payment is still valid — you can try again, or request a refund instead.
+                      Submission failed. Your payment is still valid — you can try again, or request a refund instead.
                     </p>
                     <div className="flex gap-2">
                       <Button
