@@ -1604,6 +1604,13 @@ function EconomySection({ token, toast }: { token: string | null; toast: any }) 
       ],
     },
     { title: "Real-Money Fees", keys: ["id_verification_fee_zar"] },
+    {
+      title: "Sparks Bundle Prices (ZAR)",
+      keys: [
+        "sparks_price_starter", "sparks_price_popular", "sparks_price_date_night",
+        "sparks_price_power_user", "sparks_price_deep_connection",
+      ],
+    },
   ];
 
   return (
@@ -1614,6 +1621,14 @@ function EconomySection({ token, toast }: { token: string | null; toast: any }) 
       {groups.map((group) => (
         <div key={group.title}>
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2 pl-1">{group.title}</p>
+          {group.title === "Sparks Bundle Prices (ZAR)" && (
+            <p className="text-xs text-amber-600 dark:text-amber-500 mb-2 pl-1">
+              These only control what PayFast charges on web and what's displayed in the app. Google Play has its
+              own separate price for each bundle, set directly in Play Console — changing a price here does NOT
+              update Google Play, and the two are never automatically synced. Update both places when changing a
+              Sparks price.
+            </p>
+          )}
           <div className="space-y-2">
             {group.keys
               .map((key) => figures.find((f) => f.key === key))

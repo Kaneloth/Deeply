@@ -4,18 +4,44 @@ import { supabase } from "../lib/supabase";
 import { getSparksSummary, addPaidSparks } from "../lib/sparks-helper";
 import { verifyAndConsumeGooglePurchase } from "../lib/google-play-helper";
 import { buildPayfastCheckout, validateItn } from "../lib/payfast-helper";
+import { getEconomyConfig, type EconomyConfig } from "../lib/economy-config";
 
 const router: IRouter = Router();
 
 // google_product_id must exactly match an in-app product created in
-// Google Play Console under this app's package (za.co.deeplydating.app).
-const BUNDLES = [
-  { id: "starter", sparks: 100, price_zar: 29, google_product_id: "sparks_starter" },
-  { id: "popular", sparks: 300, price_zar: 79, google_product_id: "sparks_popular" },
-  { id: "date_night", sparks: 600, price_zar: 149, google_product_id: "sparks_date_night" },
-  { id: "power_user", sparks: 1500, price_zar: 299, google_product_id: "sparks_power_user" },
-  { id: "deep_connection", sparks: 4000, price_zar: 699, google_product_id: "sparks_deep_connection" },
+// Google Play Console under this app's package (za.co.deeplydating.app)
+// — permanent once created there, so this stays a fixed constant, never
+// admin-editable. sparks (the quantity granted) is likewise fixed: it's
+// what the bundle actually IS, not a price. Only price_zar is admin-
+// configurable — see price_config_key below and economy-config.ts.
+const BUNDLE_DEFINITIONS = [
+  { id: "starter", sparks: 100, google_product_id: "sparks_starter", price_config_key: "sparks_price_starter" as const },
+  { id: "popular", sparks: 300, google_product_id: "sparks_popular", price_config_key: "sparks_price_popular" as const },
+  { id: "date_night", sparks: 600, google_product_id: "sparks_date_night", price_config_key: "sparks_price_date_night" as const },
+  { id: "power_user", sparks: 1500, google_product_id: "sparks_power_user", price_config_key: "sparks_price_power_user" as const },
+  { id: "deep_connection", sparks: 4000, google_product_id: "sparks_deep_connection", price_config_key: "sparks_price_deep_connection" as const },
 ];
+
+/** Attaches the current admin-configured price_zar to every bundle
+ *  definition. Async (unlike the old static BUNDLES array) since prices
+ *  now live in app_settings via getEconomyConfig() rather than being
+ *  hardcoded here — this is what actually makes them admin-editable
+ *  from the dashboard, the same mechanism already used for the ID
+ *  verification fee. Note this ONLY affects price_zar (what PayFast
+ *  charges on web, and what's displayed in the app) — it has zero
+ *  effect on what Google Play itself charges for a native purchase,
+ *  which is set entirely separately, directly in Play Console. The two
+ *  are never automatically synced; changing one doesn't change the
+ *  other. */
+async function getBundlesWithPrices() {
+  const config = await getEconomyConfig();
+  return BUNDLE_DEFINITIONS.map((b) => ({
+    id: b.id,
+    sparks: b.sparks,
+    google_product_id: b.google_product_id,
+    price_zar: config[b.price_config_key as keyof EconomyConfig] as number,
+  }));
+}
 
 /** GET /api/sparks — current balance and next monthly grant date */
 router.get("/sparks", requireAuth, async (req, res): Promise<void> => {
@@ -37,7 +63,7 @@ router.get("/sparks/history", requireAuth, async (req, res): Promise<void> => {
 
 /** GET /api/sparks/bundles */
 router.get("/sparks/bundles", requireAuth, async (_req, res): Promise<void> => {
-  res.json(BUNDLES);
+  res.json(await getBundlesWithPrices());
 });
 
 /** POST /api/sparks/purchase/google — verifies a completed Google Play
@@ -50,7 +76,12 @@ router.post("/sparks/purchase/google", requireAuth, async (req, res): Promise<vo
   const userId = req.user!.id;
   const { bundle_id, purchase_token } = req.body as { bundle_id?: string; purchase_token?: string };
 
-  const bundle = BUNDLES.find((b) => b.id === bundle_id);
+  // Doesn't need price_zar at all — the actual charge already happened
+  // entirely within Google Play, independent of anything in this
+  // backend, and verifyAndConsumeGooglePurchase below confirms that
+  // against Google's own records rather than trusting any price we'd
+  // supply here. Only google_product_id and sparks matter for this flow.
+  const bundle = BUNDLE_DEFINITIONS.find((b) => b.id === bundle_id);
   if (!bundle) {
     res.status(400).json({ error: "Invalid bundle_id" });
     return;
@@ -102,7 +133,10 @@ router.post("/sparks/checkout/payfast", requireAuth, async (req, res): Promise<v
   const userId = req.user!.id;
   const { bundle_id } = req.body as { bundle_id?: string };
 
-  const bundle = BUNDLES.find((b) => b.id === bundle_id);
+  // Needs the live, admin-configured price — unlike Google Play (which
+  // charges independently of anything here), PayFast charges exactly
+  // whatever amount we tell it to below.
+  const bundle = (await getBundlesWithPrices()).find((b) => b.id === bundle_id);
   if (!bundle) {
     res.status(400).json({ error: "Invalid bundle_id" });
     return;

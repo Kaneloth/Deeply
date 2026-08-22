@@ -2626,6 +2626,11 @@ const ECONOMY_CONFIG_LABELS: Record<string, { label: string; description: string
   cost_boost: { label: "Profile Boost", description: "Cost for a 5-hour profile boost (24h cooldown)", unit: "Sparks" },
   cost_incognito_per_day: { label: "Incognito Mode", description: "Cost per day while Incognito is active", unit: "Sparks" },
   id_verification_fee_zar: { label: "ID Verification Fee", description: "One-off fee for paid ID verification", unit: "ZAR" },
+  sparks_price_starter: { label: "Starter Bundle Price", description: "Price for the 100-Sparks starter bundle", unit: "ZAR" },
+  sparks_price_popular: { label: "Popular Bundle Price", description: "Price for the 300-Sparks popular bundle", unit: "ZAR" },
+  sparks_price_date_night: { label: "Date Night Bundle Price", description: "Price for the 600-Sparks date night bundle", unit: "ZAR" },
+  sparks_price_power_user: { label: "Power User Bundle Price", description: "Price for the 1500-Sparks power user bundle", unit: "ZAR" },
+  sparks_price_deep_connection: { label: "Deep Connection Bundle Price", description: "Price for the 4000-Sparks deep connection bundle", unit: "ZAR" },
 };
 
 /** GET /api/admin/economy-config — current value of every configurable

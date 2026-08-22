@@ -17,6 +17,11 @@ export interface EconomyConfig {
   cost_boost: number;
   cost_incognito_per_day: number;
   id_verification_fee_zar: number;
+  sparks_price_starter: number;
+  sparks_price_popular: number;
+  sparks_price_date_night: number;
+  sparks_price_power_user: number;
+  sparks_price_deep_connection: number;
 }
 
 // Mirrors the values these figures replaced — used only as a fallback
@@ -40,6 +45,16 @@ const DEFAULTS: EconomyConfig = {
   cost_boost: 50,
   cost_incognito_per_day: 5,
   id_verification_fee_zar: 99,
+  // Mirrors what was previously hardcoded directly in sparks.ts's
+  // BUNDLES array — moving these here doesn't change any current price,
+  // it just makes them admin-editable going forward. See sparks.ts for
+  // why sparks (quantity) and google_product_id stay fixed constants
+  // rather than becoming admin-configurable too.
+  sparks_price_starter: 29,
+  sparks_price_popular: 79,
+  sparks_price_date_night: 149,
+  sparks_price_power_user: 299,
+  sparks_price_deep_connection: 699,
 };
 
 let cache: { value: EconomyConfig; expiresAt: number } | null = null;
