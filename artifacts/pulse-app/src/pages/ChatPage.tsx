@@ -297,9 +297,15 @@ export default function ChatPage() {
 
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to unlock read receipts");
+      // No fetchMessages() here — unlocking receipts doesn't change any
+      // message's own data, it only reveals read/delivered indicators
+      // the render logic already computes from receiptsUnlocked plus
+      // each message's existing is_read value (already present from
+      // regular polling). A fetch here would be redundant at best, and
+      // at worst risks the same read-after-write lag traced elsewhere
+      // in this app, showing stale data right after a successful action.
       setReceiptsUnlocked(true);
       refreshSparksBadge();
-      await fetchMessages();
       toast({ title: "Read receipts unlocked", description: "You'll now see when your messages are read." });
     } catch (err) {
       toast({
@@ -693,7 +699,17 @@ export default function ChatPage() {
 
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to unsend message");
-      await fetchMessages();
+      // Update locally rather than await fetchMessages() — the same
+      // read-after-write lag traced repeatedly elsewhere in this app
+      // means a fresh GET immediately after this POST can still return
+      // the message's pre-unsend content, since Postgres hasn't
+      // guaranteed a separate subsequent read sees this exact write yet.
+      // We already know the unsend succeeded (this response confirms
+      // it), so there's no need to ask the server again and risk it
+      // answering with stale data — this is exactly why "leave the page
+      // and come back" was the only thing that reliably fixed it (by
+      // then, the lag had cleared).
+      setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, is_unsent: true } : m)));
     } catch (err) {
       toast({
         title: "Error",
