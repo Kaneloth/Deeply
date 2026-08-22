@@ -840,9 +840,21 @@ export default function ChatPage() {
           </div>
         ) : (
           messages.map((msg, i) => {
+            // Unsent messages disappear from the conversation entirely,
+            // not shown as a "Message unsent" placeholder — kept in the
+            // underlying messages array (so index-based calculations
+            // below, and any OTHER message's reply_to snapshot of this
+            // one, stay correct) but never rendered.
+            if (msg.is_unsent) return null;
+
             const mine = isMyMsg(msg.sender_id);
             const showUnsend = mine && canUnsend(msg);
-            const isLastOwnMessage = mine && !messages.slice(i + 1).some((m) => isMyMsg(m.sender_id));
+            // Excludes unsent messages from the lookahead — otherwise,
+            // if the actual last message I sent was unsent (and so
+            // isn't rendered at all, per the early return above), the
+            // read-receipt indicator would never appear on the last
+            // message that's actually visible.
+            const isLastOwnMessage = mine && !messages.slice(i + 1).some((m) => isMyMsg(m.sender_id) && !m.is_unsent);
             const showReadIndicator = isLastOwnMessage && receiptsUnlocked && !msg.is_unsent;
             const isMedia = msg.message_type === "sticker" || msg.message_type === "gif";
             const showDateSeparator = i === 0 || isDifferentLocalDay(msg.sent_at, messages[i - 1].sent_at);
@@ -924,6 +936,12 @@ export default function ChatPage() {
                     </div>
                   )}
 
+                  {/* This branch is now unreachable — the early return
+                      at the top of this map callback means an unsent
+                      message never gets this far at all. Left in place
+                      rather than restructured, since removing it would
+                      mean re-indenting the entire bubble-rendering block
+                      below for no behavioral difference. */}
                   {msg.is_unsent ? (
                     <div className="max-w-[75%] px-4 py-2.5 text-[15px] leading-snug bg-secondary text-foreground rounded-2xl opacity-50 italic line-through">
                       Message unsent
