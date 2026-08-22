@@ -6,6 +6,18 @@ const POLL_INTERVAL_MS = 45_000;
 interface InvitesContextType {
   invitesCount: number;
   refresh: () => Promise<void>;
+  // Lets a page that just performed an action set the badge directly,
+  // rather than trigger a fresh poll. A poll immediately after a write
+  // (e.g. right after revealing invites) can hit the same Supabase
+  // read-after-write lag traced elsewhere in this app — the poll's GET
+  // request landing on a connection that hasn't yet seen the write this
+  // same request just made moments earlier, showing a stale, too-high
+  // count even though the reveal genuinely succeeded. Revealing marks
+  // EVERY currently-pending invite as revealed in one action, so the
+  // page that just did that already knows with certainty the new count
+  // is 0 — no need to ask the server again and risk it answering with
+  // stale data.
+  setCount: (count: number) => void;
 }
 
 const InvitesContext = createContext<InvitesContextType | undefined>(undefined);
@@ -42,7 +54,7 @@ export function InvitesProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated]);
 
-  return <InvitesContext.Provider value={{ invitesCount, refresh }}>{children}</InvitesContext.Provider>;
+  return <InvitesContext.Provider value={{ invitesCount, refresh, setCount: setInvitesCount }}>{children}</InvitesContext.Provider>;
 }
 
 export function useInvites() {

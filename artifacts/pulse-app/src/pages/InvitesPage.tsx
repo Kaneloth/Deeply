@@ -152,7 +152,7 @@ registerCacheResetter(() => {
 export default function InvitesPage() {
   const { token } = useAuth();
   const { refresh: refreshSparksBadge } = useSparks();
-  const { refresh: refreshInvitesBadge } = useInvites();
+  const { refresh: refreshInvitesBadge, setCount: setInvitesBadgeCount } = useInvites();
   const { toast } = useToast();
 
   const [revealed, setRevealed] = useState<Invite[]>(cachedRevealed ?? []);
@@ -263,7 +263,13 @@ export default function InvitesPage() {
       updateNewCountCache(0);
       setRevealed(freshRevealed);
       setNewCount(0);
-      refreshInvitesBadge();
+      // Set directly rather than refreshInvitesBadge() — revealing marks
+      // every currently-pending invite as revealed in this same request,
+      // so 0 is known with certainty here. A fresh poll immediately
+      // after this write risks landing on a connection that hasn't seen
+      // it yet and reporting a stale, too-high count right back — see
+      // InvitesContext.tsx for the full reasoning.
+      setInvitesBadgeCount(0);
       if (body.balance !== null) {
         refreshSparksBadge();
       }

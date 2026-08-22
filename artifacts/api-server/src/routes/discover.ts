@@ -958,14 +958,34 @@ router.post("/discover/message-request", requireAuth, async (req, res): Promise<
   // the message text riding along in message_content. onConflict means
   // re-sending (e.g. after editing) simply replaces the earlier draft
   // rather than erroring on the unique constraint.
-  const { error: upsertError } = await supabase.from("swipes").upsert(
-    {
-      swiper_id: userId,
-      target_id: targetId,
-      direction: "like",
-      message_content: content.trim(),
-    },
-    { onConflict: "swiper_id,target_id" },
+  //
+  // TEMPORARY — diagnostic logging + immediate read-back, to trace why
+  // message_content has been reported missing on the receiver's side
+  // despite the column existing and this upsert appearing correct.
+  // .select().single() forces Postgres to return exactly the row that
+  // was just written, straight from THIS request's own connection —
+  // if message_content is present here but still missing moments later
+  // via getPendingInviterIds, that isolates the problem to a read-path
+  // issue rather than the write itself. Remove once diagnosed.
+  const { data: upsertedSwipe, error: upsertError } = await supabase
+    .from("swipes")
+    .upsert(
+      {
+        swiper_id: userId,
+        target_id: targetId,
+        direction: "like",
+        message_content: content.trim(),
+      },
+      { onConflict: "swiper_id,target_id" },
+    )
+    .select("*")
+    .single();
+
+  console.error(
+    "MESSAGE-REQUEST DEBUG: upserted swipe row was:",
+    JSON.stringify(upsertedSwipe, null, 2),
+    "— error was:",
+    JSON.stringify(upsertError, null, 2),
   );
 
   if (upsertError) {
