@@ -215,6 +215,29 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
         res.status(403).json({ error: "Incognito mode is not currently available." });
         return;
       }
+
+      // cost_incognito_per_day had a label and an admin-editable value
+      // (used in the frontend's "What uses Sparks?" list) but was never
+      // actually charged anywhere — turning Incognito on has always
+      // been free, silently, since this route was written. Charge only
+      // on the real off→on transition (same "before vs after" check as
+      // the Founders-program block below) — an idempotent "still true"
+      // update, e.g. re-saving the same preferences form, must never
+      // double-charge for a day already paid for.
+      const { data: currentProfile } = await supabase
+        .from("profiles")
+        .select("is_incognito")
+        .eq("id", req.user!.id)
+        .single();
+
+      if (!currentProfile?.is_incognito) {
+        const { cost_incognito_per_day } = await getEconomyConfig();
+        const spend = await spendSparks(req.user!.id, cost_incognito_per_day, "Incognito Mode (1 day)");
+        if (!spend.success) {
+          res.status(402).json({ error: `Insufficient Sparks (need ${cost_incognito_per_day})`, balance: spend.balance });
+          return;
+        }
+      }
     }
     updates.is_incognito = is_incognito;
   }
@@ -234,7 +257,20 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
       .single();
 
     if (currentProfile && !currentProfile.onboarding_completed) {
-      const { data: rank } = await supabase.rpc("claim_founder_slot", { cap: 112 });
+      const { data: rank, error: founderClaimError } = await supabase.rpc("claim_founder_slot", { cap: 112 });
+      if (founderClaimError) {
+        // Previously silently swallowed — this destructured only
+        // `data`, so a failing RPC call (e.g. a permissions/RLS issue)
+        // was indistinguishable from "all 112 slots are genuinely
+        // taken": both just left `rank` null and skipped awarding
+        // anything, with zero visibility into which one actually
+        // happened. Logging this doesn't fix the underlying cause on
+        // its own, but means a real failure now shows up instead of
+        // silently looking like the founders program just ran out.
+        console.error(
+          `FOUNDER CLAIM DEBUG: claim_founder_slot RPC failed for userId=${req.user!.id}: ${founderClaimError.message}`,
+        );
+      }
       if (typeof rank === "number") {
         updates.is_founder = true;
         updates.founder_rank = rank;
