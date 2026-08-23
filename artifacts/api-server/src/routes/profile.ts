@@ -304,11 +304,33 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
-  const { data: profile, error: readBackError } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", req.user!.id)
-    .maybeSingle();
+  // Retries the read-back specifically for the same Supabase read-after-
+  // write consistency lag traced repeatedly elsewhere in this app: the
+  // UPDATE above can succeed while THIS separate, subsequent read
+  // transiently doesn't see it yet. Without this retry, that lag meant
+  // the endpoint returned a 500 to the client even when the update
+  // (including, critically, the founders-program fields set above)
+  // genuinely succeeded — the client would see an error and never learn
+  // it actually worked. Since claim_founder_slot is a one-time atomic
+  // claim, a user hitting this on their onboarding-completion request
+  // would have a permanently correct is_founder=true in the database
+  // with no way to ever see confirmation of it, even on retry (the
+  // founders check only fires on the false->true transition, which
+  // their retry would no longer see).
+  let profile: Record<string, unknown> | null = null;
+  let readBackError: { message?: string } | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const result = await supabase.from("profiles").select("*").eq("id", req.user!.id).maybeSingle();
+    if (result.data) {
+      profile = result.data;
+      readBackError = null;
+      break;
+    }
+    readBackError = result.error;
+    if (attempt < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
 
   if (readBackError || !profile) {
     console.error("PUT /profile/me READ-BACK FAILED:", JSON.stringify(readBackError, null, 2));
