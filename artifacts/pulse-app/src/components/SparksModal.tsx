@@ -26,19 +26,34 @@ interface NativeProduct {
   displayPrice: string;
 }
 
-const COST_ITEMS: { label: string; cost: string }[] = [
-  { label: "Send a message", cost: "10 Sparks" },
-  { label: "Spark Invite (Super Invite)", cost: "10 Sparks" },
-  { label: "Undo a swipe", cost: "5 Sparks" },
-  { label: "Withdraw a sent invite", cost: "5 Sparks" },
-  { label: "Extra invite past your daily 15 free", cost: "5 Sparks" },
-  { label: "Unsend a message", cost: "10 Sparks" },
-  { label: "Unlock read receipts (per match)", cost: "20 Sparks" },
-  { label: "Message before matching", cost: "30 Sparks" },
-  { label: "See who invited you", cost: "30 Sparks" },
-  { label: "Extra photo (past 8 free)", cost: "10 Sparks" },
-  { label: "Profile Boost", cost: "50 Sparks" },
-  { label: "Incognito Mode", cost: "5 Sparks/day" },
+// Maps each row shown in "What uses Sparks?" to the actual admin-
+// configurable key it should reflect (see ECONOMY_CONFIG_LABELS in
+// profile.ts — these are the exact same keys the admin dashboard's
+// Economy Config panel edits, stored in app_settings and returned
+// unfiltered by GET /api/app-settings). Previously this whole list was
+// a static array of guessed-at numbers that never moved when an admin
+// changed a price — same bug class as the monthly grant amount, just
+// with twelve numbers instead of one.
+//
+// "labelTemplate" can reference {daily_free_invites} — the only value
+// among these that appears in the LABEL text itself, not just the
+// cost. There's no equivalent admin key for the "8" free-photo limit
+// mentioned in that row's label (checked ECONOMY_CONFIG_LABELS — no
+// such key exists), so that number is left as-is; it appears to be a
+// genuinely fixed platform limit rather than an admin-configurable one.
+const COST_ITEM_DEFS: { labelTemplate: string; configKey: string; unitSuffix?: string }[] = [
+  { labelTemplate: "Send a message", configKey: "cost_send_message" },
+  { labelTemplate: "Spark Invite (Super Invite)", configKey: "cost_super_like" },
+  { labelTemplate: "Undo a swipe", configKey: "cost_undo_swipe" },
+  { labelTemplate: "Withdraw a sent invite", configKey: "cost_undo_swipe" },
+  { labelTemplate: "Extra invite past your daily {daily_free_invites} free", configKey: "cost_extra_invite" },
+  { labelTemplate: "Unsend a message", configKey: "cost_unsend_message" },
+  { labelTemplate: "Unlock read receipts (per match)", configKey: "cost_unlock_read_receipts" },
+  { labelTemplate: "Message before matching", configKey: "cost_message_before_match" },
+  { labelTemplate: "See who invited you", configKey: "cost_reveal_invites" },
+  { labelTemplate: "Extra photo (past 8 free)", configKey: "cost_extra_photo" },
+  { labelTemplate: "Profile Boost", configKey: "cost_boost" },
+  { labelTemplate: "Incognito Mode", configKey: "cost_incognito_per_day", unitSuffix: "/day" },
 ];
 
 export function SparksModal({ onClose }: { onClose: () => void }) {
@@ -55,6 +70,7 @@ export function SparksModal({ onClose }: { onClose: () => void }) {
 
   const [summary, setSummary] = useState<SparksSummary | null>(null);
   const [bundles, setBundles] = useState<Bundle[]>([]);
+  const [appSettings, setAppSettings] = useState<Record<string, unknown>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [purchasingId, setPurchasingId] = useState<string | null>(null);
   const [showCostList, setShowCostList] = useState(false);
@@ -71,10 +87,17 @@ export function SparksModal({ onClose }: { onClose: () => void }) {
     Promise.all([
       fetch("/api/sparks", { headers: { Authorization: `Bearer ${token}` } }).then((res) => (res.ok ? res.json() : null)),
       fetch("/api/sparks/bundles", { headers: { Authorization: `Bearer ${token}` } }).then((res) => (res.ok ? res.json() : [])),
+      // Same endpoint already used elsewhere in the app (e.g. the
+      // Incognito/Dealbreakers flags) to read admin-configured
+      // app_settings values — economy config (all the cost_* keys)
+      // lives in that same table, so this is already everything "What
+      // uses Sparks?" needs, no new backend route required.
+      fetch("/api/app-settings", { headers: { Authorization: `Bearer ${token}` } }).then((res) => (res.ok ? res.json() : {})),
     ])
-      .then(([summaryBody, bundlesBody]) => {
+      .then(([summaryBody, bundlesBody, settingsBody]) => {
         setSummary(summaryBody);
         setBundles(bundlesBody ?? []);
+        setAppSettings(settingsBody ?? {});
       })
       .catch(() => {})
       .finally(() => setIsLoading(false));
@@ -140,6 +163,22 @@ export function SparksModal({ onClose }: { onClose: () => void }) {
   const nextGrantLabel = nextGrantDate
     ? new Date(nextGrantDate).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" })
     : null;
+
+  // Same fail-safe approach as the monthly-grant fix above: a row is
+  // only shown once we actually have a live number for it. Silently
+  // falling back to a guessed value here would just reintroduce this
+  // exact bug in a slightly different shape.
+  const costItems = COST_ITEM_DEFS.reduce<{ label: string; cost: string }[]>((items, def) => {
+    const value = appSettings[def.configKey];
+    if (typeof value !== "number") return items;
+    const dailyFreeInvites = appSettings.daily_free_invites;
+    const label =
+      typeof dailyFreeInvites === "number"
+        ? def.labelTemplate.replace("{daily_free_invites}", String(dailyFreeInvites))
+        : def.labelTemplate.replace("your daily {daily_free_invites} free", "your daily free quota");
+    items.push({ label, cost: `${value} Sparks${def.unitSuffix ?? ""}` });
+    return items;
+  }, []);
 
   const handleGooglePurchase = async (bundle: Bundle) => {
     setPurchasingId(bundle.id);
@@ -304,7 +343,7 @@ export function SparksModal({ onClose }: { onClose: () => void }) {
               </button>
               {showCostList && (
                 <div className="mt-3 space-y-2">
-                  {COST_ITEMS.map((item) => (
+                  {costItems.map((item) => (
                     <div key={item.label} className="flex items-center justify-between text-sm py-1.5 border-b border-border/50 last:border-b-0">
                       <span className="text-muted-foreground">{item.label}</span>
                       <span className="font-medium shrink-0 ml-3">{item.cost}</span>
