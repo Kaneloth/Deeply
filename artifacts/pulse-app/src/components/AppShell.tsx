@@ -173,16 +173,32 @@ function AppShellInner({ children }: AppShellProps) {
             />
           </div>
         )}
-        <div
-          className="h-full"
-          style={
-            indicatorHeight > 0
-              ? { transform: `translateY(${indicatorHeight}px)`, transition: isRefreshing ? "transform 0.2s ease-out" : undefined }
-              : undefined
-          }
-        >
-          {children}
-        </div>
+        {indicatorHeight > 0 ? (
+          // Only exists while actively pulling/refreshing — the h-full
+          // here clamps this wrapper to exactly <main>'s visible height
+          // rather than the page's true (often taller, scrollable)
+          // content height. That's fine for the brief moment a pull is
+          // in progress, but making this permanent (as an earlier
+          // version of this file did, to fix Discover's card stack
+          // needing a definite height to fill) broke every other
+          // page's own position: sticky bottom-anchored elements (e.g.
+          // Save buttons on Profile/Preferences) the rest of the time —
+          // sticky positioning needs its container sized to the real
+          // content, not artificially clamped to viewport height.
+          // Discover itself never registers a pull-to-refresh handler
+          // (see PullToRefreshContext's comment on why), so it never
+          // hits this branch at all — its children are always direct
+          // children of <main>, exactly as before, with no wrapper
+          // interference ever.
+          <div
+            className="h-full"
+            style={{ transform: `translateY(${indicatorHeight}px)`, transition: isRefreshing ? "transform 0.2s ease-out" : undefined }}
+          >
+            {children}
+          </div>
+        ) : (
+          children
+        )}
       </main>
 
       <BottomNav />
