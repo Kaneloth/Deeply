@@ -29,6 +29,7 @@ interface Match {
 // a skeleton, while a fresh fetch quietly runs underneath.
 import { readPersistentCache, writePersistentCache, registerCacheResetter } from "@/lib/persistentCache";
 import { useRefetchOnAppResume } from "@/hooks/useRefetchOnAppResume";
+import { usePullToRefresh } from "@/contexts/PullToRefreshContext";
 
 // In-memory only, same pattern as DiscoverPage.tsx's cachedCandidates —
 // but ALSO backed by localStorage here, so this survives a real app
@@ -171,6 +172,7 @@ export default function MatchesPage() {
   // load, so a real new match doesn't stay invisible until a manual
   // reload.
   useRefetchOnAppResume(fetchMatches);
+  usePullToRefresh(fetchMatches);
 
   if (isLoading) {
     return (

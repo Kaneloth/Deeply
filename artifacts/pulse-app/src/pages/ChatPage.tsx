@@ -6,7 +6,7 @@ import { useSparks } from "@/contexts/SparksContext";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, Send, Undo2, Eye, CheckCheck, Smile, ImagePlus, X, MoreVertical, UserX, Flag, Copy, Trash2, Reply } from "lucide-react";
+import { ChevronLeft, Send, Undo2, Eye, CheckCheck, Smile, ImagePlus, X, MoreVertical, UserX, Flag, Copy, Trash2, Reply, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { EmojiPicker } from "@/components/EmojiPicker";
 import ReactionPicker from "emoji-picker-react";
@@ -113,6 +113,20 @@ export default function ChatPage() {
   const [showMediaPicker, setShowMediaPicker] = useState(false);
   const [reactingToMessageId, setReactingToMessageId] = useState<string | null>(null);
   const [showFullEmojiPicker, setShowFullEmojiPicker] = useState(false);
+  // Chat manages its own internal scroll container (scrollRef below),
+  // separate from the shared <main> the app shell scrolls for most
+  // other pages — a message list needs to stay pinned to the bottom on
+  // new messages, with its own header and input bar outside the
+  // scrollable area, which the shared container isn't set up for. That
+  // means chat can't use the shared pull-to-refresh registration
+  // (usePullToRefresh/PullToRefreshContext) the other pages use — that
+  // mechanism checks the shared <main>'s scroll position, which stays
+  // at 0 here regardless of where the user's actually scrolled within
+  // messages, since <main> itself doesn't scroll on this page. This is
+  // a small local implementation of the same gesture, scoped correctly
+  // to scrollRef instead.
+  const [pullDistance, setPullDistance] = useState(0);
+  const [isPullRefreshing, setIsPullRefreshing] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
@@ -453,6 +467,91 @@ export default function ChatPage() {
     // restart this poll, not a token refresh recreating fetchMessages.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchId]);
+
+  // Always the current fetchMessages (fresh token included) — the
+  // gesture effect below intentionally only attaches its listeners
+  // once, so it reads this ref rather than closing over fetchMessages
+  // directly, which would otherwise go stale after any background token
+  // refresh (fetchMessages depends on token, so its identity changes
+  // whenever that happens, even though matchId hasn't).
+  const fetchMessagesRef = useRef(fetchMessages);
+  fetchMessagesRef.current = fetchMessages;
+
+  // Pull-to-refresh, scoped to this page's own scrollRef — see the
+  // comment above the pullDistance/isPullRefreshing state for why this
+  // is separate from the shared usePullToRefresh mechanism. Mirrors
+  // that same gesture feel (damping, threshold) for consistency.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const PULL_THRESHOLD_PX = 70;
+    const MAX_PULL_PX = 100;
+    const PULL_DAMPING = 0.5;
+
+    let touchStartY: number | null = null;
+    let isPulling = false;
+    let pullDistanceLocal = 0;
+    let isRefreshingLocal = false;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (isRefreshingLocal) return;
+      if (el.scrollTop > 0) return;
+      touchStartY = e.touches[0].clientY;
+      isPulling = true;
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (!isPulling || touchStartY === null) return;
+      const delta = e.touches[0].clientY - touchStartY;
+      if (delta <= 0) {
+        pullDistanceLocal = 0;
+        setPullDistance(0);
+        return;
+      }
+      e.preventDefault();
+      const damped = Math.min(delta * PULL_DAMPING, MAX_PULL_PX);
+      pullDistanceLocal = damped;
+      setPullDistance(damped);
+    };
+
+    const onTouchEnd = async () => {
+      if (!isPulling) return;
+      isPulling = false;
+      touchStartY = null;
+      const finalDistance = pullDistanceLocal;
+      pullDistanceLocal = 0;
+      setPullDistance(0);
+
+      if (finalDistance >= PULL_THRESHOLD_PX) {
+        isRefreshingLocal = true;
+        setIsPullRefreshing(true);
+        try {
+          await fetchMessagesRef.current();
+        } finally {
+          isRefreshingLocal = false;
+          setIsPullRefreshing(false);
+        }
+      }
+    };
+
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    el.addEventListener("touchend", onTouchEnd);
+    el.addEventListener("touchcancel", onTouchEnd);
+
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+      el.removeEventListener("touchcancel", onTouchEnd);
+    };
+    // Intentionally empty deps — attaches once to a stable DOM node.
+    // Always calls the LATEST fetchMessages via fetchMessagesRef, not a
+    // stale closure, so this doesn't need to re-run on every token
+    // refresh the way the poll effect above does.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // useLayoutEffect, not useEffect — this must run BEFORE the browser
   // paints, not after. With useEffect, the very first render (empty ->
@@ -849,6 +948,21 @@ export default function ChatPage() {
 
       {/* Messages Area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
+        {(pullDistance > 0 || isPullRefreshing) && (
+          <div
+            className="flex items-center justify-center overflow-hidden"
+            style={{
+              height: isPullRefreshing ? 50 : pullDistance,
+              transition: isPullRefreshing ? "height 0.2s ease-out" : undefined,
+            }}
+          >
+            <Loader2
+              size={20}
+              className={`text-primary ${isPullRefreshing || pullDistance >= 70 ? "animate-spin" : ""}`}
+              style={{ opacity: Math.min((isPullRefreshing ? 50 : pullDistance) / 70, 1) }}
+            />
+          </div>
+        )}
         {messages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center p-6">
             <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-4 text-primary font-bold font-['Syne'] text-2xl">

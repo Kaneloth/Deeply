@@ -122,6 +122,7 @@ function ProfileDetailOverlay({
 // In-memory only, same pattern as DiscoverPage.tsx's cachedCandidates.
 import { readPersistentCache, writePersistentCache, registerCacheResetter } from "@/lib/persistentCache";
 import { useRefetchOnAppResume } from "@/hooks/useRefetchOnAppResume";
+import { usePullToRefresh } from "@/contexts/PullToRefreshContext";
 
 const CATEGORIES_CACHE_KEY = "search_categories";
 let cachedCategories: Category[] | null = readPersistentCache<Category[]>(CATEGORIES_CACHE_KEY);
@@ -194,6 +195,10 @@ export default function SearchPage() {
   // background refresh that silently failed behind the cached instant
   // load.
   useRefetchOnAppResume(fetchCategories);
+  // Refreshes the passive browse categories (New Here, Popular, etc.)
+  // — a name/filter search is a deliberate user action with its own
+  // Search button, not something a pull gesture should silently re-run.
+  usePullToRefresh(fetchCategories);
 
   // Capture device location here too, not just on Discover — otherwise
   // anyone who opens Search before ever visiting Discover has no

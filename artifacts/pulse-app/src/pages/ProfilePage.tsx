@@ -101,6 +101,7 @@ const MIN_BIRTHDATE = new Date(_today.getFullYear() - 100, _today.getMonth(), _t
 // keyed on `profile` re-runs on mount whenever it starts non-null.
 import { readPersistentCache, writePersistentCache, registerCacheResetter } from "@/lib/persistentCache";
 import { useRefetchOnAppResume } from "@/hooks/useRefetchOnAppResume";
+import { usePullToRefresh } from "@/contexts/PullToRefreshContext";
 
 const PROFILE_DATA_CACHE_KEY = "profile_data";
 const PROFILE_PHOTOS_CACHE_KEY = "profile_photos";
@@ -846,6 +847,14 @@ export default function ProfilePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useRefetchOnAppResume(fetchBoostStatus);
+
+  // Combines all four of this page's independent fetches (each already
+  // has its own useRefetchOnAppResume above) into one handler for pull-
+  // to-refresh — a person pulling down on their own profile means "make
+  // sure everything here is current", not just one piece of it.
+  usePullToRefresh(async () => {
+    await Promise.all([fetchProfile(), fetchPhotos(), fetchPrompts(), fetchBoostStatus()]);
+  });
 
   const handleBoost = async () => {
     setIsBoosting(true);

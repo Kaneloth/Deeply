@@ -119,6 +119,7 @@ function InviteDetailOverlay({
 // Two separate caches since Received and Sent are independently loaded.
 import { readPersistentCache, writePersistentCache, registerCacheResetter } from "@/lib/persistentCache";
 import { useRefetchOnAppResume } from "@/hooks/useRefetchOnAppResume";
+import { usePullToRefresh } from "@/contexts/PullToRefreshContext";
 
 // Backed by localStorage — see MatchesPage.tsx for the full reasoning.
 // Received (revealed + newCount) and Sent are cached separately, since
@@ -231,6 +232,12 @@ export default function InvitesPage() {
       setSentLoading(false);
     }
   }, [token, toast]);
+
+  // Refreshes whichever tab is actually visible — Sent is fetched
+  // lazily (only when the user has switched to it), so pulling to
+  // refresh while on Received shouldn't trigger a Sent fetch that
+  // hasn't otherwise happened yet, and vice versa.
+  usePullToRefresh(mode === "sent" ? fetchSent : fetchInvites);
 
   const handleSwitchMode = (next: "received" | "sent") => {
     setMode(next);
