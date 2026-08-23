@@ -445,6 +445,7 @@ router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => 
     .in("target_id", pendingInviterIds);
 
   if (revealedError) {
+    console.error(`INVITES DEBUG [GET /discover/invites] ${new Date().toISOString()} userId=${userId} invite_reveals READ FAILED: ${revealedError.message}`);
     res.status(500).json({ error: "Failed to load invite reveal status" });
     return;
   }
@@ -452,6 +453,10 @@ router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => 
   const revealedIds = new Set((alreadyRevealed ?? []).map((r) => r.target_id));
   const revealedPendingIds = pendingInviterIds.filter((id) => revealedIds.has(id));
   const newCount = pendingInviterIds.length - revealedPendingIds.length;
+
+  console.error(
+    `INVITES DEBUG [GET /discover/invites] ${new Date().toISOString()} userId=${userId} pendingInviterIds=[${pendingInviterIds.join(",")}] revealedIds=[${[...revealedIds].join(",")}] revealedPendingIds=[${revealedPendingIds.join(",")}] new_count=${newCount}`,
+  );
 
   if (revealedPendingIds.length === 0) {
     res.json({ revealed: [], new_count: newCount });
@@ -502,12 +507,17 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
     .in("target_id", pendingInviterIds);
 
   if (revealedError) {
+    console.error(`INVITES DEBUG [POST /discover/invites/reveal] ${new Date().toISOString()} userId=${userId} invite_reveals READ FAILED: ${revealedError.message}`);
     res.status(500).json({ error: "Failed to load invite reveal status" });
     return;
   }
 
   const revealedIds = new Set((alreadyRevealed ?? []).map((r) => r.target_id));
   const hasNew = pendingInviterIds.some((id) => !revealedIds.has(id));
+
+  console.error(
+    `INVITES DEBUG [POST /discover/invites/reveal] ${new Date().toISOString()} userId=${userId} pendingInviterIds=[${pendingInviterIds.join(",")}] revealedIds=[${[...revealedIds].join(",")}] hasNew=${hasNew}`,
+  );
 
   let balance: number | null = null;
 
