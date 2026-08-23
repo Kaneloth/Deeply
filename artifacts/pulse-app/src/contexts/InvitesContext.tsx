@@ -2,7 +2,6 @@ import { createContext, useContext, useEffect, useCallback, useState, ReactNode 
 import { useAuth } from "./AuthContext";
 
 const POLL_INTERVAL_MS = 45_000;
-let latestInvitesBadgeRequest = 0;
 
 interface InvitesContextType {
   invitesCount: number;
@@ -34,15 +33,10 @@ export function InvitesProvider({ children }: { children: ReactNode }) {
   // badge should mean "new/unseen".
   const refresh = useCallback(async () => {
     if (!token) return;
-    const requestId = ++latestInvitesBadgeRequest;
     try {
-      const res = await fetch("/api/discover/invites", {
-        cache: "no-store",
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetch("/api/discover/invites", { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) return;
       const body = await res.json();
-      if (requestId !== latestInvitesBadgeRequest) return;
       setInvitesCount(body.new_count ?? 0);
     } catch {
       // Silent — non-critical background fetch.
@@ -60,12 +54,7 @@ export function InvitesProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated]);
 
-  const setCount = useCallback((count: number) => {
-    latestInvitesBadgeRequest += 1;
-    setInvitesCount(count);
-  }, []);
-
-  return <InvitesContext.Provider value={{ invitesCount, refresh, setCount }}>{children}</InvitesContext.Provider>;
+  return <InvitesContext.Provider value={{ invitesCount, refresh, setCount: setInvitesCount }}>{children}</InvitesContext.Provider>;
 }
 
 export function useInvites() {

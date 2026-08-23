@@ -1,4 +1,4 @@
-import { ReactNode, useState, useEffect, useCallback, useRef } from "react";
+import { ReactNode, useState, useEffect, useCallback } from "react";
 import { Link, useLocation } from "wouter";
 import { Compass, Search, Mail, Heart, HeartHandshake, SlidersHorizontal } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -23,18 +23,12 @@ export function BottomNav() {
   const { token } = useAuth();
   const [hasMatchIndicator, setHasMatchIndicator] = useState(false);
   const { invitesCount } = useInvites();
-  const latestIndicatorRequest = useRef(0);
 
   const fetchIndicatorStatus = useCallback(async () => {
-    const requestId = ++latestIndicatorRequest.current;
     try {
-      const res = await fetch("/api/matches/indicator-status", {
-        cache: "no-store",
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetch("/api/matches/indicator-status", { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) return;
       const body = await res.json();
-      if (requestId !== latestIndicatorRequest.current) return;
       setHasMatchIndicator(!!body.indicator);
     } catch {
       // Silent — non-critical background fetch.

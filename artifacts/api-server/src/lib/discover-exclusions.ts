@@ -94,34 +94,31 @@ export interface PendingInviter {
  *  them" check — an old pass/decision shouldn't permanently suppress a
  *  genuinely new invite attempt the same person sends later (e.g. trying
  *  again with a Super Invite after being declined once). */
-export async function getPendingInviterIds(userId: string): Promise<PendingInviter[] | null> {
-  const { data: incomingLikes, error: incomingError } = await supabase
+export async function getPendingInviterIds(userId: string): Promise<PendingInviter[]> {
+  const { data: incomingLikes } = await supabase
     .from("swipes")
     .select("swiper_id, direction, created_at, message_content")
     .eq("target_id", userId)
     .in("direction", ["like", "super_like"]);
 
-  if (incomingError) return null;
   if (!incomingLikes || incomingLikes.length === 0) return [];
 
-  const { data: existingMatches, error: matchesError } = await supabase
+  const { data: existingMatches } = await supabase
     .from("matches")
     .select("user1_id, user2_id")
     .or(`user1_id.eq.${userId},user2_id.eq.${userId}`);
 
-  if (matchesError) return null;
   const matchedIds = new Set(
     (existingMatches ?? []).map((m) => (m.user1_id === userId ? m.user2_id : m.user1_id)),
   );
 
   const blockedIds = new Set(await getBlockedUserIds(userId));
 
-  const { data: myOwnSwipes, error: ownSwipesError } = await supabase
+  const { data: myOwnSwipes } = await supabase
     .from("swipes")
     .select("target_id, created_at")
     .eq("swiper_id", userId);
 
-  if (ownSwipesError) return null;
   // Map of person -> the most recent time I swiped on them myself.
   const myLatestDecisionAt = new Map<string, number>();
   for (const s of myOwnSwipes ?? []) {
