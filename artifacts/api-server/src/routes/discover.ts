@@ -6,7 +6,7 @@ import { attachPhotoGalleries } from "../lib/photo-galleries";
 import { attachAudioPrompts } from "../lib/audio-prompts-helper";
 import { withComputedAge, withComputedAges, calculateAge } from "../lib/age";
 import { consumeFreeInviteOrCharge } from "../lib/invites-quota";
-import { getExcludedCandidateIds, getPendingInviterIds, getCandidateExclusionSets, rememberRevealed, getStickyRevealed } from "../lib/discover-exclusions";
+import { getExcludedCandidateIds, getPendingInviterIds, getCandidateExclusionSets, rememberRevealed, getStickyRevealed, rememberReshuffleTimestamp, getStickyReshuffleTimestamp } from "../lib/discover-exclusions";
 import { haversineDistanceKm } from "../lib/geo";
 import { genderSatisfiesPreference, passesDealbreakers, passesAgeRange, computeCompatibilityScore } from "../lib/matching";
 import { getEconomyConfig } from "../lib/economy-config";
@@ -152,14 +152,29 @@ router.get("/discover/queue", requireAuth, async (req, res): Promise<void> => {
   res.json({ candidates });
 });
 
-router.get("/discover/reshuffle-status", requireAuth, async (req, res): Promise<void> => {
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("last_free_reshuffle_at")
-    .eq("id", req.user!.id)
-    .single();
+// Reads BOTH the fresh DB value and the sticky cache concurrently, and
+// uses whichever is more recent — same reasoning as the matched/
+// revealed caches in discover-exclusions.ts. A lagged DB read here
+// (which happens especially easily on rapid consecutive reshuffle taps,
+// only a second or two apart) must never be allowed to hide a more
+// recent free-reshuffle timestamp this exact server already recorded a
+// moment earlier, or it re-evaluates as free and skips the Sparks
+// charge it should have applied.
+async function getEffectiveLastFreeReshuffleAt(userId: string): Promise<Date | null> {
+  const [{ data: profile }, stickyTimestamp] = await Promise.all([
+    supabase.from("profiles").select("last_free_reshuffle_at").eq("id", userId).single(),
+    getStickyReshuffleTimestamp(userId),
+  ]);
 
-  const lastFree = profile?.last_free_reshuffle_at ? new Date(profile.last_free_reshuffle_at) : null;
+  const dbMs = profile?.last_free_reshuffle_at ? new Date(profile.last_free_reshuffle_at).getTime() : 0;
+  const stickyMs = stickyTimestamp ? new Date(stickyTimestamp).getTime() : 0;
+  const effectiveMs = Math.max(dbMs, stickyMs);
+
+  return effectiveMs > 0 ? new Date(effectiveMs) : null;
+}
+
+router.get("/discover/reshuffle-status", requireAuth, async (req, res): Promise<void> => {
+  const lastFree = await getEffectiveLastFreeReshuffleAt(req.user!.id);
   const isFree = !lastFree || Date.now() - lastFree.getTime() >= RESHUFFLE_FREE_INTERVAL_MS;
   const nextFreeAt = lastFree ? new Date(lastFree.getTime() + RESHUFFLE_FREE_INTERVAL_MS).toISOString() : null;
 
@@ -176,26 +191,27 @@ router.post("/discover/reshuffle", requireAuth, async (req, res): Promise<void> 
     ? currentQueueIds.filter((id): id is string => typeof id === "string" && UUID_RE.test(id))
     : [];
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("last_free_reshuffle_at")
-    .eq("id", userId)
-    .single();
-
-  const lastFree = profile?.last_free_reshuffle_at ? new Date(profile.last_free_reshuffle_at) : null;
+  const lastFree = await getEffectiveLastFreeReshuffleAt(userId);
   const isFree = !lastFree || Date.now() - lastFree.getTime() >= RESHUFFLE_FREE_INTERVAL_MS;
 
   const { cost_reshuffle } = await getEconomyConfig();
 
   if (isFree) {
+    const nowIso = new Date().toISOString();
     const { error: freeMarkerError } = await supabase
       .from("profiles")
-      .update({ last_free_reshuffle_at: new Date().toISOString() })
+      .update({ last_free_reshuffle_at: nowIso })
       .eq("id", userId);
     if (freeMarkerError) {
       res.status(500).json({ error: "Failed to record free reshuffle" });
       return;
     }
+    // Don't wait on a subsequent read to confirm what this request just
+    // wrote itself — see getEffectiveLastFreeReshuffleAt and the
+    // discover-exclusions.ts comment above rememberReshuffleTimestamp.
+    // Awaited so it's guaranteed to land before this function returns,
+    // which is what actually protects the very next rapid tap.
+    await rememberReshuffleTimestamp(userId, nowIso);
   } else {
     const spend = await spendSparks(userId, cost_reshuffle, "Discover reshuffle");
     if (!spend.success) {
