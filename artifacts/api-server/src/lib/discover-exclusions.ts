@@ -130,6 +130,42 @@ function getStickyMatched(viewerId: string): Set<string> {
   return result;
 }
 
+// Same mitigation, same reasoning, now for `invite_reveals` — logging on
+// 2026-08-23 showed the identical flapping pattern on this table too:
+// the same viewer/target pair's revealed status vanishing and
+// reappearing across reads seconds apart, with no action taken,
+// causing an invite the user already paid to reveal to slide back into
+// the "N new people invited you" banner. Exported so discover.ts's
+// route handlers (both GET /discover/invites and POST
+// /discover/invites/reveal, which both read this same table) can use
+// it; POST also calls rememberRevealed() right after its own successful
+// write, so this instance never has to wait on a lagged read to know
+// about its own just-completed reveal.
+const REVEALED_STICKY_TTL_MS = 5 * 60 * 1000;
+const stickyRevealedPairs = new Map<string, number>(); // `${viewerId}:${targetId}` -> expiry
+
+export function rememberRevealed(viewerId: string, targetIds: Iterable<string>): void {
+  const expiry = Date.now() + REVEALED_STICKY_TTL_MS;
+  for (const targetId of targetIds) {
+    stickyRevealedPairs.set(stickyKey(viewerId, targetId), expiry);
+  }
+}
+
+export function getStickyRevealed(viewerId: string): Set<string> {
+  const now = Date.now();
+  const result = new Set<string>();
+  for (const [key, expiry] of stickyRevealedPairs) {
+    if (expiry < now) {
+      stickyRevealedPairs.delete(key);
+      continue;
+    }
+    if (key.startsWith(`${viewerId}:`)) {
+      result.add(key.slice(viewerId.length + 1));
+    }
+  }
+  return result;
+}
+
 /** Returns everyone with a currently-pending (unmatched, not-yet-decided)
  *  invite toward this user — i.e. who should show up in their "received
  *  invites" list right now — along with the direction of their most
@@ -151,10 +187,28 @@ export async function getPendingInviterIds(userId: string): Promise<PendingInvit
 
   if (!incomingLikes || incomingLikes.length === 0) return [];
 
-  const { data: existingMatches } = await supabase
+  // This query previously had no error handling — data would silently
+  // become `undefined` on any failure (timeout, rate limit, etc. — and
+  // this function runs on nearly every Invites/Discover page load, so
+  // it's under real concurrent load) and `existingMatches ?? []` would
+  // quietly treat that as "you have zero matches", making a genuinely
+  // matched person look like a new pending invite. This exact query is
+  // the one the original handoff notes said had already been hardened
+  // this way — it evidently didn't survive the later revert to the
+  // stable baseline. Restoring it: on failure, return no pending
+  // invites rather than risk showing someone already matched as
+  // actionable (Accept/Decline) again.
+  const { data: existingMatches, error: matchesError } = await supabase
     .from("matches")
     .select("user1_id, user2_id")
     .or(`user1_id.eq.${userId},user2_id.eq.${userId}`);
+
+  if (matchesError) {
+    console.error(
+      `INVITES DEBUG: matches query FAILED for userId=${userId}: ${matchesError.message} — returning no pending invites rather than risk showing an already-matched person as new`,
+    );
+    return [];
+  }
 
   const matchedIds = new Set(
     (existingMatches ?? []).map((m) => (m.user1_id === userId ? m.user2_id : m.user1_id)),

@@ -6,7 +6,7 @@ import { attachPhotoGalleries } from "../lib/photo-galleries";
 import { attachAudioPrompts } from "../lib/audio-prompts-helper";
 import { withComputedAge, withComputedAges, calculateAge } from "../lib/age";
 import { consumeFreeInviteOrCharge } from "../lib/invites-quota";
-import { getExcludedCandidateIds, getPendingInviterIds, getCandidateExclusionSets } from "../lib/discover-exclusions";
+import { getExcludedCandidateIds, getPendingInviterIds, getCandidateExclusionSets, rememberRevealed, getStickyRevealed } from "../lib/discover-exclusions";
 import { haversineDistanceKm } from "../lib/geo";
 import { genderSatisfiesPreference, passesDealbreakers, passesAgeRange, computeCompatibilityScore } from "../lib/matching";
 import { getEconomyConfig } from "../lib/economy-config";
@@ -451,6 +451,27 @@ router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => 
   }
 
   const revealedIds = new Set((alreadyRevealed ?? []).map((r) => r.target_id));
+
+  // Same mitigation as the sticky-matched cache, now for invite_reveals
+  // — see the comment above rememberRevealed/getStickyRevealed for the
+  // production log evidence. Remember whatever this read genuinely
+  // found, then union in anything remembered from a recent prior
+  // read/write so a lagged read can't make an already-paid-for reveal
+  // look new again.
+  rememberRevealed(userId, revealedIds);
+  const stickyRevealedAdditions: string[] = [];
+  for (const targetId of getStickyRevealed(userId)) {
+    if (pendingInviterIds.includes(targetId) && !revealedIds.has(targetId)) {
+      revealedIds.add(targetId);
+      stickyRevealedAdditions.push(targetId);
+    }
+  }
+  if (stickyRevealedAdditions.length > 0) {
+    console.error(
+      `INVITES DEBUG: sticky-revealed cache added [${stickyRevealedAdditions.join(",")}] for userId=${userId} — this read's own invite_reveals query missed them`,
+    );
+  }
+
   const revealedPendingIds = pendingInviterIds.filter((id) => revealedIds.has(id));
   const newCount = pendingInviterIds.length - revealedPendingIds.length;
 
@@ -513,6 +534,25 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
   }
 
   const revealedIds = new Set((alreadyRevealed ?? []).map((r) => r.target_id));
+
+  // Same sticky-cache mitigation as the GET handler — see the comment
+  // above rememberRevealed/getStickyRevealed. Without this, a lagged
+  // read here can make hasNew wrongly true for someone already
+  // revealed, charging Sparks again for nothing new.
+  rememberRevealed(userId, revealedIds);
+  const stickyRevealedAdditionsForReveal: string[] = [];
+  for (const targetId of getStickyRevealed(userId)) {
+    if (pendingInviterIds.includes(targetId) && !revealedIds.has(targetId)) {
+      revealedIds.add(targetId);
+      stickyRevealedAdditionsForReveal.push(targetId);
+    }
+  }
+  if (stickyRevealedAdditionsForReveal.length > 0) {
+    console.error(
+      `INVITES DEBUG: sticky-revealed cache added [${stickyRevealedAdditionsForReveal.join(",")}] for userId=${userId} — this read's own invite_reveals query missed them`,
+    );
+  }
+
   const hasNew = pendingInviterIds.some((id) => !revealedIds.has(id));
 
   console.error(
@@ -532,6 +572,9 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
 
     const rows = pendingInviterIds.map((targetId) => ({ user_id: userId, target_id: targetId }));
     await supabase.from("invite_reveals").upsert(rows, { onConflict: "user_id,target_id" });
+    // Don't wait on a subsequent read to confirm what this request just
+    // wrote itself — see the sticky-revealed comment above.
+    rememberRevealed(userId, pendingInviterIds);
   }
 
   const { data: inviters } = await supabase
