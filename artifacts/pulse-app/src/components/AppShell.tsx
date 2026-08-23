@@ -33,6 +33,13 @@ function AppShellInner({ children }: AppShellProps) {
   const { blockInfo, clearBlockInfo } = useAuth();
   const refreshHandlerRef = usePullToRefreshRef();
 
+  // Computed early (before the gesture effect below) rather than in its
+  // usual spot right before the JSX return — this effect needs it as a
+  // dependency, and hooks must be called unconditionally before any
+  // early return, so the value has to exist before that point too.
+  const hideChrome = location === "/" || location === "/onboarding" || location === "/reset-password";
+  const mainShouldExist = !blockInfo && !hideChrome;
+
   const mainRef = useRef<HTMLDivElement>(null);
   const touchStartYRef = useRef<number | null>(null);
   const isPullingRef = useRef(false);
@@ -41,13 +48,23 @@ function AppShellInner({ children }: AppShellProps) {
   const [pullDistance, setPullDistance] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Attached once (empty deps) and reads everything through refs, so a
-  // pull in progress never causes this effect to tear down and
-  // re-subscribe mid-gesture. Only active at all when the current page
-  // has registered a handler via usePullToRefresh — pages that haven't
-  // (Discover, Preferences, Settings, Admin, etc.) leave
-  // refreshHandlerRef.current null, so onTouchStart bails immediately
-  // and the gesture is fully inert there, no route-checking needed.
+  // Depends on mainShouldExist — NOT empty deps. <main> (and mainRef)
+  // only exists in the non-hideChrome, non-blocked branch below; a
+  // fresh login routinely renders the hideChrome branch first (the auth
+  // page) before ever reaching a page with <main> at all. With empty
+  // deps, this effect ran exactly once on that very first commit, found
+  // mainRef.current still null, and exited — permanently, since empty
+  // deps means it never runs again even after <main> mounts moments
+  // later. That's not a flaky edge case, it's the normal shape of every
+  // login: the gesture was never actually attached for practically any
+  // real session. Re-running whenever mainShouldExist flips to true
+  // fixes this — by the time this effect body runs, React has already
+  // committed the DOM and set the ref, so mainRef.current is guaranteed
+  // to be populated on that pass.
+  //
+  // Otherwise unchanged: everything inside still reads through refs, so
+  // a pull in progress is never disrupted, and this doesn't re-run on
+  // every render — only when <main>'s presence actually changes.
   useEffect(() => {
     const el = mainRef.current;
     if (!el) return;
@@ -112,7 +129,7 @@ function AppShellInner({ children }: AppShellProps) {
       el.removeEventListener("touchcancel", onTouchEnd);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [mainShouldExist]);
 
   // A ban/suspension can be detected mid-session, on any route — this
   // takes over the entire screen regardless of what would otherwise
@@ -122,8 +139,6 @@ function AppShellInner({ children }: AppShellProps) {
     return <BlockedAccountScreen blockInfo={blockInfo} onBack={clearBlockInfo} />;
   }
 
-  // Hide nav and top bar on auth and onboarding routes
-  const hideChrome = location === "/" || location === "/onboarding" || location === "/reset-password";
   if (hideChrome) {
     return (
       // overflow-y-auto, NOT overflow-hidden — these pages (especially
