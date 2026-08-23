@@ -224,6 +224,42 @@ export async function getStickyRevealed(viewerId: string): Promise<Set<string>> 
   return new Set((data ?? []).map((r) => r.target_id as string));
 }
 
+// Same underlying mechanism as the matched/revealed caches above,
+// applied to discover.ts's reshuffle-free-vs-paid check — a rapid
+// sequence of reshuffle taps hits the identical read-after-write lag:
+// each tap's read of profiles.last_free_reshuffle_at can fail to see
+// the PREVIOUS tap's own just-written update (especially likely here
+// since taps can be only a second or two apart), making that tap
+// incorrectly re-evaluate isFree=true and skip charging Sparks for it.
+// Observed directly: 4 rapid reshuffles, only 2 correctly charged.
+//
+// Unlike the matched cache, there's no "un-reshuffle" action that would
+// ever need this fact to reverse — once a free reshuffle happens, that
+// timestamp only ever moves forward. So no TTL is needed here at all:
+// this is a single upserted row per user (never appended), not a
+// growing log, so there's no accumulation concern to bound either.
+export async function rememberReshuffleTimestamp(userId: string, timestampIso: string): Promise<void> {
+  const { error } = await supabase
+    .from("confirmed_reshuffle_timestamps")
+    .upsert({ user_id: userId, last_free_reshuffle_at: timestampIso }, { onConflict: "user_id" });
+  if (error) {
+    console.error(`RESHUFFLE DEBUG: failed to write sticky-reshuffle cache for userId=${userId}: ${error.message}`);
+  }
+}
+
+export async function getStickyReshuffleTimestamp(userId: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("confirmed_reshuffle_timestamps")
+    .select("last_free_reshuffle_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) {
+    console.error(`RESHUFFLE DEBUG: failed to read sticky-reshuffle cache for userId=${userId}: ${error.message}`);
+    return null;
+  }
+  return data?.last_free_reshuffle_at ?? null;
+}
+
 /** Returns everyone with a currently-pending (unmatched, not-yet-decided)
  *  invite toward this user — i.e. who should show up in their "received
  *  invites" list right now — along with the direction of their most
