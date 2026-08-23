@@ -86,48 +86,52 @@ export interface PendingInviter {
 // inside getPendingInviterIds is genuinely inconsistent between calls —
 // not just the invite_reveals join originally suspected. The SAME
 // viewer/target pair was observed flipping between "excluded — already
-// matched" and "INCLUDED as pending" four times within five minutes,
-// with no unmatch or any real action happening in between (see
-// production log excerpt from 08:12–08:16 UTC that day). That
-// inconsistency let an already-matched person spuriously reappear as a
-// pending invite, complete with Accept/Decline buttons.
+// matched" and "INCLUDED as pending" repeatedly within seconds, with no
+// unmatch or any real action happening in between. That inconsistency
+// let an already-matched person spuriously reappear as a pending
+// invite, complete with Accept/Decline buttons.
 //
-// This is a best-effort, same-instance-only mitigation (this runs as a
-// stateless serverless function — there's no guarantee this module
-// stays warm or is shared across invocations), following the same
-// "merge, don't replace" principle used elsewhere in this app for the
-// same class of read-after-write lag: once a match is genuinely
-// observed for a viewer/partner pair, remember it for a bounded window
-// so a subsequent lagged read that misses it can't un-match them. The
-// TTL bounds the downside — a genuine unmatch is still reflected within
-// a few minutes rather than the pair being stuck matched forever.
+// An earlier version of this mitigation used an in-memory Map, but
+// logs showed it only helping intermittently: it's scoped to a single
+// serverless instance, and Netlify clearly spreads requests across many
+// different instances (visible in the varying `hostname` per request in
+// the function logs) — so the "remembered" match was very often on a
+// different instance than the one handling the next request. This
+// version stores it in the database instead (see
+// migration_confirmed_pairs.sql), so every instance sees the same
+// memory. Same "merge, don't replace" principle as before: once a match
+// is genuinely observed for a viewer/partner pair, remember it for a
+// bounded window so a subsequent lagged/inconsistent read can't
+// un-match them. The TTL bounds the downside — a genuine unmatch is
+// still reflected within a few minutes rather than the pair being stuck
+// matched forever.
 const MATCHED_STICKY_TTL_MS = 5 * 60 * 1000;
-const stickyMatchedPairs = new Map<string, number>(); // `${viewerId}:${partnerId}` -> expiry
 
-function stickyKey(viewerId: string, partnerId: string): string {
-  return `${viewerId}:${partnerId}`;
-}
-
-function rememberMatched(viewerId: string, partnerIds: Iterable<string>): void {
-  const expiry = Date.now() + MATCHED_STICKY_TTL_MS;
-  for (const partnerId of partnerIds) {
-    stickyMatchedPairs.set(stickyKey(viewerId, partnerId), expiry);
+async function rememberMatched(viewerId: string, partnerIds: Iterable<string>): Promise<void> {
+  const ids = [...partnerIds];
+  if (ids.length === 0) return;
+  const now = new Date().toISOString();
+  const rows = ids.map((partnerId) => ({ viewer_id: viewerId, partner_id: partnerId, confirmed_at: now }));
+  const { error } = await supabase
+    .from("confirmed_matched_pairs")
+    .upsert(rows, { onConflict: "viewer_id,partner_id" });
+  if (error) {
+    console.error(`INVITES DEBUG: failed to write sticky-matched cache for userId=${viewerId}: ${error.message}`);
   }
 }
 
-function getStickyMatched(viewerId: string): Set<string> {
-  const now = Date.now();
-  const result = new Set<string>();
-  for (const [key, expiry] of stickyMatchedPairs) {
-    if (expiry < now) {
-      stickyMatchedPairs.delete(key);
-      continue;
-    }
-    if (key.startsWith(`${viewerId}:`)) {
-      result.add(key.slice(viewerId.length + 1));
-    }
+async function getStickyMatched(viewerId: string): Promise<Set<string>> {
+  const cutoff = new Date(Date.now() - MATCHED_STICKY_TTL_MS).toISOString();
+  const { data, error } = await supabase
+    .from("confirmed_matched_pairs")
+    .select("partner_id")
+    .eq("viewer_id", viewerId)
+    .gte("confirmed_at", cutoff);
+  if (error) {
+    console.error(`INVITES DEBUG: failed to read sticky-matched cache for userId=${viewerId}: ${error.message}`);
+    return new Set();
   }
-  return result;
+  return new Set((data ?? []).map((r) => r.partner_id as string));
 }
 
 // Same mitigation, same reasoning, now for `invite_reveals` — logging on
@@ -139,31 +143,35 @@ function getStickyMatched(viewerId: string): Set<string> {
 // route handlers (both GET /discover/invites and POST
 // /discover/invites/reveal, which both read this same table) can use
 // it; POST also calls rememberRevealed() right after its own successful
-// write, so this instance never has to wait on a lagged read to know
-// about its own just-completed reveal.
+// write, so this doesn't have to wait on a lagged read to know about
+// its own just-completed reveal.
 const REVEALED_STICKY_TTL_MS = 5 * 60 * 1000;
-const stickyRevealedPairs = new Map<string, number>(); // `${viewerId}:${targetId}` -> expiry
 
-export function rememberRevealed(viewerId: string, targetIds: Iterable<string>): void {
-  const expiry = Date.now() + REVEALED_STICKY_TTL_MS;
-  for (const targetId of targetIds) {
-    stickyRevealedPairs.set(stickyKey(viewerId, targetId), expiry);
+export async function rememberRevealed(viewerId: string, targetIds: Iterable<string>): Promise<void> {
+  const ids = [...targetIds];
+  if (ids.length === 0) return;
+  const now = new Date().toISOString();
+  const rows = ids.map((targetId) => ({ viewer_id: viewerId, target_id: targetId, confirmed_at: now }));
+  const { error } = await supabase
+    .from("confirmed_revealed_pairs")
+    .upsert(rows, { onConflict: "viewer_id,target_id" });
+  if (error) {
+    console.error(`INVITES DEBUG: failed to write sticky-revealed cache for userId=${viewerId}: ${error.message}`);
   }
 }
 
-export function getStickyRevealed(viewerId: string): Set<string> {
-  const now = Date.now();
-  const result = new Set<string>();
-  for (const [key, expiry] of stickyRevealedPairs) {
-    if (expiry < now) {
-      stickyRevealedPairs.delete(key);
-      continue;
-    }
-    if (key.startsWith(`${viewerId}:`)) {
-      result.add(key.slice(viewerId.length + 1));
-    }
+export async function getStickyRevealed(viewerId: string): Promise<Set<string>> {
+  const cutoff = new Date(Date.now() - REVEALED_STICKY_TTL_MS).toISOString();
+  const { data, error } = await supabase
+    .from("confirmed_revealed_pairs")
+    .select("target_id")
+    .eq("viewer_id", viewerId)
+    .gte("confirmed_at", cutoff);
+  if (error) {
+    console.error(`INVITES DEBUG: failed to read sticky-revealed cache for userId=${viewerId}: ${error.message}`);
+    return new Set();
   }
-  return result;
+  return new Set((data ?? []).map((r) => r.target_id as string));
 }
 
 /** Returns everyone with a currently-pending (unmatched, not-yet-decided)
@@ -216,12 +224,16 @@ export async function getPendingInviterIds(userId: string): Promise<PendingInvit
 
   // Remember whatever this read genuinely found, then union in anything
   // remembered from a recent prior read — see the comment above
-  // stickyMatchedPairs for why. Logged separately so it's visible
-  // whenever this actually changes the outcome (i.e. this read alone
-  // would have gotten it wrong).
-  rememberMatched(userId, matchedIds);
+  // rememberMatched/getStickyMatched for why. Logged separately so it's
+  // visible whenever this actually changes the outcome (i.e. this read
+  // alone would have gotten it wrong). Both are independent DB calls,
+  // so run them concurrently rather than one after another.
+  const [, stickyMatched] = await Promise.all([
+    rememberMatched(userId, matchedIds),
+    getStickyMatched(userId),
+  ]);
   const stickyAdditions: string[] = [];
-  for (const partnerId of getStickyMatched(userId)) {
+  for (const partnerId of stickyMatched) {
     if (!matchedIds.has(partnerId)) {
       matchedIds.add(partnerId);
       stickyAdditions.push(partnerId);

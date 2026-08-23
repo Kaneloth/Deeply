@@ -50,6 +50,25 @@ registerCacheResetter(() => {
   cachedMatches = null;
 });
 
+// The merge-don't-replace fix in fetchMatches below (see its comment)
+// deliberately keeps a previously-shown match even when a fresh fetch
+// doesn't include it, so a flaky/incomplete read can't make a real
+// match vanish. That's the right call for a fetch that's merely
+// missing something — but it means an ACTUALLY-deleted match has no
+// way to ever get cleared, since every future fetch also just "merges"
+// its continued absence right back in. This export is the other half:
+// an authoritative signal (a specific match ID confirmed 404 by its own
+// GET /api/matches/:id, not just absent from a list) that overrides the
+// merge and removes it for good. Called from MatchDetailPage.tsx (and
+// should be called from anywhere else that gets a definitive
+// not-found for a specific match, e.g. ChatPage) — never from the list
+// fetch itself, which by design can't tell "gone" from "incomplete".
+export function evictMatchFromCache(matchId: string): void {
+  if (cachedMatches === null) return;
+  const next = cachedMatches.filter((m) => m.id !== matchId);
+  if (next.length !== cachedMatches.length) updateMatchesCache(next);
+}
+
 export default function MatchesPage() {
   const { token } = useAuth();
   const { toast } = useToast();

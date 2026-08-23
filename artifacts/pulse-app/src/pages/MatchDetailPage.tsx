@@ -7,6 +7,7 @@ import { ProfileCard, type ProfileCardData } from "@/components/ProfileCard";
 import { ChevronLeft, MessageCircle, UserX, MoreVertical, Flag } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { ReportBlockModal } from "@/components/ReportBlockModal";
+import { evictMatchFromCache } from "./MatchesPage";
 
 interface Match {
   id: string;
@@ -38,6 +39,7 @@ export default function MatchDetailPage() {
       });
 
       if (res.status === 404) {
+        evictMatchFromCache(matchId);
         toast({
           title: "Match no longer available",
           description: "This match has been removed.",
@@ -84,6 +86,7 @@ export default function MatchDetailPage() {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "Failed to unmatch");
       }
+      evictMatchFromCache(matchId);
       toast({ title: "Unmatched", description: "This match has been removed." });
       setLocation("/matches");
     } catch (err) {
@@ -114,6 +117,7 @@ export default function MatchDetailPage() {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "Failed to block");
       }
+      evictMatchFromCache(matchId);
       toast({ title: `${profile.name} has been blocked` });
       setLocation("/matches");
     } catch (err) {
@@ -195,7 +199,10 @@ export default function MatchDetailPage() {
           context="profile"
           matchId={matchId}
           onClose={() => setShowReportModal(false)}
-          onSuccess={() => setLocation("/matches")}
+          onSuccess={() => {
+            evictMatchFromCache(matchId);
+            setLocation("/matches");
+          }}
         />
       )}
 

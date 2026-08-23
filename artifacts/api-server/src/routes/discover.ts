@@ -457,10 +457,13 @@ router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => 
   // production log evidence. Remember whatever this read genuinely
   // found, then union in anything remembered from a recent prior
   // read/write so a lagged read can't make an already-paid-for reveal
-  // look new again.
-  rememberRevealed(userId, revealedIds);
+  // look new again. Both are independent DB calls, run concurrently.
+  const [, stickyRevealed] = await Promise.all([
+    rememberRevealed(userId, revealedIds),
+    getStickyRevealed(userId),
+  ]);
   const stickyRevealedAdditions: string[] = [];
-  for (const targetId of getStickyRevealed(userId)) {
+  for (const targetId of stickyRevealed) {
     if (pendingInviterIds.includes(targetId) && !revealedIds.has(targetId)) {
       revealedIds.add(targetId);
       stickyRevealedAdditions.push(targetId);
@@ -539,9 +542,12 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
   // above rememberRevealed/getStickyRevealed. Without this, a lagged
   // read here can make hasNew wrongly true for someone already
   // revealed, charging Sparks again for nothing new.
-  rememberRevealed(userId, revealedIds);
+  const [, stickyRevealedForReveal] = await Promise.all([
+    rememberRevealed(userId, revealedIds),
+    getStickyRevealed(userId),
+  ]);
   const stickyRevealedAdditionsForReveal: string[] = [];
-  for (const targetId of getStickyRevealed(userId)) {
+  for (const targetId of stickyRevealedForReveal) {
     if (pendingInviterIds.includes(targetId) && !revealedIds.has(targetId)) {
       revealedIds.add(targetId);
       stickyRevealedAdditionsForReveal.push(targetId);
@@ -573,8 +579,10 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
     const rows = pendingInviterIds.map((targetId) => ({ user_id: userId, target_id: targetId }));
     await supabase.from("invite_reveals").upsert(rows, { onConflict: "user_id,target_id" });
     // Don't wait on a subsequent read to confirm what this request just
-    // wrote itself — see the sticky-revealed comment above.
-    rememberRevealed(userId, pendingInviterIds);
+    // wrote itself — see the sticky-revealed comment above. Awaited so
+    // it's guaranteed to land before this function (and the underlying
+    // serverless instance) finishes handling the response.
+    await rememberRevealed(userId, pendingInviterIds);
   }
 
   const { data: inviters } = await supabase

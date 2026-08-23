@@ -12,6 +12,7 @@ import { EmojiPicker } from "@/components/EmojiPicker";
 import ReactionPicker from "emoji-picker-react";
 import { ReportBlockModal } from "@/components/ReportBlockModal";
 import { MediaPicker } from "@/components/MediaPicker";
+import { evictMatchFromCache } from "./MatchesPage";
 
 interface MatchedUser {
   id: string;
@@ -325,6 +326,25 @@ export default function ChatPage() {
       const res = await fetch(`/api/matches/${matchId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
+
+      if (res.status === 404) {
+        // Authoritative signal that this specific match is gone — same
+        // fix as MatchDetailPage.tsx's 404 handling. Previously this
+        // just fell through to the generic catch below, which showed a
+        // toast but never told MatchesPage's cache the match was
+        // actually deleted (as opposed to merely missing from one
+        // fetch) — so it kept reappearing there. Also navigates back to
+        // Matches rather than stranding the person on this dead-end
+        // "Match not found." screen with no way forward.
+        evictMatchFromCache(matchId);
+        toast({
+          title: "Match no longer available",
+          description: "This match has been removed.",
+        });
+        setLocation("/matches");
+        return;
+      }
+
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Match not found");
       setMatch(body);
@@ -337,7 +357,7 @@ export default function ChatPage() {
     } finally {
       setMatchLoading(false);
     }
-  }, [matchId, token, toast]);
+  }, [matchId, token, toast, setLocation]);
 
   // Counts sends currently in flight (optimistic bubble shown, POST not
   // yet resolved). While non-zero, fetchMessages skips entirely — a full
