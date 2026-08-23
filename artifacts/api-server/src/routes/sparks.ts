@@ -43,10 +43,17 @@ async function getBundlesWithPrices() {
   }));
 }
 
-/** GET /api/sparks — current balance and next monthly grant date */
+/** GET /api/sparks — current balance, next monthly grant date, and the
+ *  live admin-configured grant amount (sparks_monthly_grant) — the
+ *  frontend previously hardcoded this number in its own copy instead of
+ *  reading it from here, so an admin changing it in the dashboard never
+ *  actually reached the Sparks modal. */
 router.get("/sparks", requireAuth, async (req, res): Promise<void> => {
-  const summary = await getSparksSummary(req.user!.id);
-  res.json(summary);
+  const [summary, { sparks_monthly_grant }] = await Promise.all([
+    getSparksSummary(req.user!.id),
+    getEconomyConfig(),
+  ]);
+  res.json({ ...summary, monthly_grant_amount: sparks_monthly_grant });
 });
 
 /** GET /api/sparks/history */

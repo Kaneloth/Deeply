@@ -18,6 +18,7 @@ interface SparksSummary {
   balance: number;
   next_grant_at?: string | null;
   next_spark_grant_at?: string | null;
+  monthly_grant_amount?: number;
 }
 
 interface NativeProduct {
@@ -254,9 +255,9 @@ export function SparksModal({ onClose }: { onClose: () => void }) {
                 <SparkIcon size={32} className="text-primary drop-shadow-[0_0_12px_rgba(192,38,211,0.5)]" />
                 <span className="text-5xl font-['Syne'] font-extrabold tracking-tighter">{summary?.balance ?? 0}</span>
               </div>
-              {nextGrantLabel && (
+              {nextGrantLabel && summary?.monthly_grant_amount != null && (
                 <p className="text-xs text-muted-foreground mt-2">
-                  Your next free 300 Sparks arrive on <span className="text-foreground font-medium">{nextGrantLabel}</span>
+                  Your next free {summary.monthly_grant_amount} Sparks arrive on <span className="text-foreground font-medium">{nextGrantLabel}</span>
                 </p>
               )}
             </div>
