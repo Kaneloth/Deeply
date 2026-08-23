@@ -109,8 +109,25 @@ export default function MatchesPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to load matches");
       const fresh = body ?? [];
-      updateMatchesCache(fresh);
-      setMatches(fresh);
+      // Merge, don't replace — same pattern used for ChatPage's message
+      // list, for the same reason. Diagnostic logging on 2026-08-23
+      // proved the underlying `matches` table read is genuinely
+      // inconsistent between calls (a confirmed match with an active
+      // conversation flapped in and out of a *different* endpoint's
+      // results with no unmatch happening), and this page showed the
+      // same symptom directly — an existing match with real messages
+      // disappearing from this list, then reappearing on its own. A
+      // fetch that's missing a match we already confirmed real should
+      // never make it vanish; only an explicit action (block, report,
+      // unmatch) should remove one. Fresh data still wins for anything
+      // both lists agree exists (e.g. updated message_count/has_unread).
+      setMatches((prev) => {
+        const freshIds = new Set(fresh.map((m: Match) => m.id));
+        const stillMissingFromFresh = prev.filter((m) => !freshIds.has(m.id));
+        const merged = [...fresh, ...stillMissingFromFresh];
+        updateMatchesCache(merged);
+        return merged;
+      });
     } catch (err) {
       toast({
         title: "Error",

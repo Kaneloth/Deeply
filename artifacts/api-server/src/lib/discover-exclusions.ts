@@ -82,6 +82,54 @@ export interface PendingInviter {
   message_content: string | null;
 }
 
+// Diagnostic logging on 2026-08-23 proved that the `matches` table read
+// inside getPendingInviterIds is genuinely inconsistent between calls —
+// not just the invite_reveals join originally suspected. The SAME
+// viewer/target pair was observed flipping between "excluded — already
+// matched" and "INCLUDED as pending" four times within five minutes,
+// with no unmatch or any real action happening in between (see
+// production log excerpt from 08:12–08:16 UTC that day). That
+// inconsistency let an already-matched person spuriously reappear as a
+// pending invite, complete with Accept/Decline buttons.
+//
+// This is a best-effort, same-instance-only mitigation (this runs as a
+// stateless serverless function — there's no guarantee this module
+// stays warm or is shared across invocations), following the same
+// "merge, don't replace" principle used elsewhere in this app for the
+// same class of read-after-write lag: once a match is genuinely
+// observed for a viewer/partner pair, remember it for a bounded window
+// so a subsequent lagged read that misses it can't un-match them. The
+// TTL bounds the downside — a genuine unmatch is still reflected within
+// a few minutes rather than the pair being stuck matched forever.
+const MATCHED_STICKY_TTL_MS = 5 * 60 * 1000;
+const stickyMatchedPairs = new Map<string, number>(); // `${viewerId}:${partnerId}` -> expiry
+
+function stickyKey(viewerId: string, partnerId: string): string {
+  return `${viewerId}:${partnerId}`;
+}
+
+function rememberMatched(viewerId: string, partnerIds: Iterable<string>): void {
+  const expiry = Date.now() + MATCHED_STICKY_TTL_MS;
+  for (const partnerId of partnerIds) {
+    stickyMatchedPairs.set(stickyKey(viewerId, partnerId), expiry);
+  }
+}
+
+function getStickyMatched(viewerId: string): Set<string> {
+  const now = Date.now();
+  const result = new Set<string>();
+  for (const [key, expiry] of stickyMatchedPairs) {
+    if (expiry < now) {
+      stickyMatchedPairs.delete(key);
+      continue;
+    }
+    if (key.startsWith(`${viewerId}:`)) {
+      result.add(key.slice(viewerId.length + 1));
+    }
+  }
+  return result;
+}
+
 /** Returns everyone with a currently-pending (unmatched, not-yet-decided)
  *  invite toward this user — i.e. who should show up in their "received
  *  invites" list right now — along with the direction of their most
@@ -111,6 +159,25 @@ export async function getPendingInviterIds(userId: string): Promise<PendingInvit
   const matchedIds = new Set(
     (existingMatches ?? []).map((m) => (m.user1_id === userId ? m.user2_id : m.user1_id)),
   );
+
+  // Remember whatever this read genuinely found, then union in anything
+  // remembered from a recent prior read — see the comment above
+  // stickyMatchedPairs for why. Logged separately so it's visible
+  // whenever this actually changes the outcome (i.e. this read alone
+  // would have gotten it wrong).
+  rememberMatched(userId, matchedIds);
+  const stickyAdditions: string[] = [];
+  for (const partnerId of getStickyMatched(userId)) {
+    if (!matchedIds.has(partnerId)) {
+      matchedIds.add(partnerId);
+      stickyAdditions.push(partnerId);
+    }
+  }
+  if (stickyAdditions.length > 0) {
+    console.error(
+      `INVITES DEBUG: sticky-matched cache added [${stickyAdditions.join(",")}] for userId=${userId} — this read's own matches query missed them`,
+    );
+  }
 
   const blockedIds = new Set(await getBlockedUserIds(userId));
 
