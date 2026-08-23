@@ -159,6 +159,7 @@ function AppShellInner({ children }: AppShellProps) {
           </div>
         )}
         <div
+          className="h-full"
           style={
             indicatorHeight > 0
               ? { transform: `translateY(${indicatorHeight}px)`, transition: isRefreshing ? "transform 0.2s ease-out" : undefined }
