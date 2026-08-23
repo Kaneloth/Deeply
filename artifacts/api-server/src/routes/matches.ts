@@ -5,8 +5,36 @@ import { attachPhotoGalleries } from "../lib/photo-galleries";
 import { attachAudioPrompts } from "../lib/audio-prompts-helper";
 import { getBlockedUserIds } from "../lib/blocks-helper";
 import { withComputedAge } from "../lib/age";
+import { rememberMatched, getStickyMatched, forgetMatched } from "../lib/discover-exclusions";
 
 const router: IRouter = Router();
+
+// Production logs on 2026-08-23 proved the `matches` table read is
+// unreliable specifically from THIS file's own routes too, not just
+// from getPendingInviterIds (already mitigated with a sticky cache —
+// see discover-exclusions.ts). One account's own GET /discover/invites
+// needed that cache to rescue a specific match on every single call
+// across a 5-minute window — not occasional, persistent — and directly
+// opening that same match via GET /matches/:matchId (a lookup by
+// primary key, about as simple as a read gets) returned 404 despite the
+// row demonstrably existing in the table. That's a stronger signal than
+// simple eventual-consistency lag.
+//
+// Unlike getPendingInviterIds, these routes need the actual match ROW
+// (photos, message count, etc.), not just a yes/no — so a boolean cache
+// alone can't fix a genuinely missing read here the way it could there.
+// This retries the read once, after a short delay, whenever it looks
+// like it came back wrong. rememberMatched/getStickyMatched (the same
+// shared cache from discover-exclusions.ts) is used both as the signal
+// for "this looks wrong" for the list endpoint, and is reinforced by
+// every route here that gets a genuine successful read — so a match
+// confirmed by ANY of these routes protects all of them, not just the
+// one that happened to see it.
+const MATCHES_RETRY_DELAY_MS = 400;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 const MATCH_SELECT = `
   *,
@@ -83,11 +111,38 @@ router.get("/matches", requireAuth, async (req, res): Promise<void> => {
     ? new Date(viewerProfile.matches_last_viewed_at)
     : new Date(0);
 
-  const { data: rawMatches } = await supabase
-    .from("matches")
-    .select(MATCH_SELECT)
-    .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
-    .order("created_at", { ascending: false });
+  const fetchRawMatches = () =>
+    supabase
+      .from("matches")
+      .select(MATCH_SELECT)
+      .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
+      .order("created_at", { ascending: false });
+
+  let { data: rawMatches } = await fetchRawMatches();
+
+  // Cross-check against the shared sticky-matched cache — if a partner
+  // this cache confirms should be matched isn't in this read's results,
+  // that's a strong signal this particular read came back wrong (see
+  // the comment above MATCHES_RETRY_DELAY_MS), so retry once rather
+  // than trusting it immediately.
+  const partnerIdOf = (m: Record<string, any>) => (m.user1_id === userId ? m.user2_id : m.user1_id);
+  const presentPartnerIds = new Set((rawMatches ?? []).map(partnerIdOf));
+  const stickyMatched = await getStickyMatched(userId);
+  const missingFromSticky = [...stickyMatched].filter((id) => !presentPartnerIds.has(id));
+
+  if (missingFromSticky.length > 0) {
+    console.error(
+      `MATCHES DEBUG: userId=${userId} list read missing sticky-confirmed partner(s) [${missingFromSticky.join(",")}] — retrying after ${MATCHES_RETRY_DELAY_MS}ms`,
+    );
+    await delay(MATCHES_RETRY_DELAY_MS);
+    ({ data: rawMatches } = await fetchRawMatches());
+  }
+
+  // Reinforce the shared cache with whatever this read genuinely found
+  // — same cache getPendingInviterIds reads from, so a match confirmed
+  // here also protects the Invites page from showing this person as a
+  // spurious pending invite.
+  await rememberMatched(userId, (rawMatches ?? []).map(partnerIdOf));
 
   const blockedIds = new Set(await getBlockedUserIds(userId));
   const matches = (rawMatches ?? []).filter((m) => {
@@ -133,13 +188,27 @@ router.get("/matches", requireAuth, async (req, res): Promise<void> => {
 router.get("/matches/indicator-status", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
-  const [{ data: viewerProfile }, { data: myMatches }] = await Promise.all([
-    supabase.from("profiles").select("matches_last_viewed_at").eq("id", userId).single(),
+  const fetchMyMatches = () =>
     supabase
       .from("matches")
-      .select("id, created_at")
-      .or(`user1_id.eq.${userId},user2_id.eq.${userId}`),
+      .select("id, created_at, user1_id, user2_id")
+      .or(`user1_id.eq.${userId},user2_id.eq.${userId}`);
+
+  const [{ data: viewerProfile }, { data: firstMatches }] = await Promise.all([
+    supabase.from("profiles").select("matches_last_viewed_at").eq("id", userId).single(),
+    fetchMyMatches(),
   ]);
+
+  let myMatches = firstMatches;
+  const partnerIdOf = (m: Record<string, any>) => (m.user1_id === userId ? m.user2_id : m.user1_id);
+  const presentPartnerIds = new Set((myMatches ?? []).map(partnerIdOf));
+  const stickyMatched = await getStickyMatched(userId);
+  const missingFromSticky = [...stickyMatched].filter((id) => !presentPartnerIds.has(id));
+
+  if (missingFromSticky.length > 0) {
+    await delay(MATCHES_RETRY_DELAY_MS);
+    ({ data: myMatches } = await fetchMyMatches());
+  }
 
   const lastViewedAt = viewerProfile?.matches_last_viewed_at
     ? new Date(viewerProfile.matches_last_viewed_at)
@@ -168,17 +237,40 @@ router.get("/matches/:matchId", requireAuth, async (req, res): Promise<void> => 
     : req.params.matchId;
   const userId = req.user!.id;
 
-  const { data: match, error } = await supabase
-    .from("matches")
-    .select(MATCH_SELECT)
-    .eq("id", matchId)
-    .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
-    .single();
+  const fetchMatch = () =>
+    supabase
+      .from("matches")
+      .select(MATCH_SELECT)
+      .eq("id", matchId)
+      .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
+      .single();
+
+  let { data: match, error } = await fetchMatch();
+
+  // A single lookup by primary key wrongly returning "not found" is
+  // exactly what production logs showed for this Alex/Monica case —
+  // opening the match directly 404'd despite the row demonstrably
+  // existing. Retry once before actually treating it as gone.
+  if (error || !match) {
+    console.error(
+      `MATCHES DEBUG: userId=${userId} matchId=${matchId} lookup came back empty/errored on first attempt — retrying after ${MATCHES_RETRY_DELAY_MS}ms`,
+    );
+    await delay(MATCHES_RETRY_DELAY_MS);
+    ({ data: match, error } = await fetchMatch());
+  }
 
   if (error || !match) {
     res.status(404).json({ error: "Match not found" });
     return;
   }
+
+  // A genuine hit here is exactly the kind of confirmation the shared
+  // sticky-matched cache is meant to remember, protecting the Invites
+  // page and the matches list from the same read issue.
+  const partnerId = (match as Record<string, any>).user1_id === userId
+    ? (match as Record<string, any>).user2_id
+    : (match as Record<string, any>).user1_id;
+  await rememberMatched(userId, [partnerId]);
 
   res.json(await formatMatch(match as Record<string, any>, userId));
 });
@@ -193,12 +285,22 @@ router.delete("/matches/:matchId", requireAuth, async (req, res): Promise<void> 
     : req.params.matchId;
   const userId = req.user!.id;
 
-  const { data: match } = await supabase
-    .from("matches")
-    .select("id")
-    .eq("id", matchId)
-    .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
-    .single();
+  const fetchMatchId = () =>
+    supabase
+      .from("matches")
+      .select("id, user1_id, user2_id")
+      .eq("id", matchId)
+      .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
+      .single();
+
+  let { data: match } = await fetchMatchId();
+
+  // Same retry as the GET routes above — a false "not found" here would
+  // wrongly block someone from unmatching a match that genuinely exists.
+  if (!match) {
+    await delay(MATCHES_RETRY_DELAY_MS);
+    ({ data: match } = await fetchMatchId());
+  }
 
   if (!match) {
     res.status(404).json({ error: "Match not found" });
@@ -211,6 +313,13 @@ router.delete("/matches/:matchId", requireAuth, async (req, res): Promise<void> 
     res.status(500).json({ error: `Failed to unmatch: ${error.message}` });
     return;
   }
+
+  // Proactively clear the shared sticky-matched cache for this pair —
+  // see the comment above forgetMatched in discover-exclusions.ts for
+  // why this is what lets that cache's TTL be long rather than short.
+  const matchRow = match as Record<string, any>;
+  const partnerId = matchRow.user1_id === userId ? matchRow.user2_id : matchRow.user1_id;
+  await forgetMatched(userId, partnerId);
 
   res.sendStatus(204);
 });

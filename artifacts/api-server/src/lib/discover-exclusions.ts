@@ -105,9 +105,32 @@ export interface PendingInviter {
 // un-match them. The TTL bounds the downside — a genuine unmatch is
 // still reflected within a few minutes rather than the pair being stuck
 // matched forever.
-const MATCHED_STICKY_TTL_MS = 5 * 60 * 1000;
+// TTL was originally 5 minutes, on the theory that a genuine unmatch
+// should eventually be reflected even if this cache doesn't know about
+// it. Production logs on 2026-08-23 proved this backfires: a gap of
+// just 9.4 minutes between Monica's own invites checks (entirely
+// plausible — backgrounding the app, switching screens) let the cache
+// expire before her next read, which then landed wrong again with
+// nothing left to rescue it. A short TTL trades a small amount of
+// "unmatch reflected faster" for a real, recurring correctness bug.
+//
+// The better fix: matches.ts's DELETE /matches/:matchId now proactively
+// clears this cache the moment a real unmatch happens (see
+// forgetMatched below) — so correctness for real unmatches no longer
+// depends on the TTL being short at all. That frees this TTL to be
+// generous; it now exists purely as a safety bound for the rare case
+// a match gets deleted some other way (e.g. directly in the database),
+// not as the primary mechanism for reflecting unmatches.
+const MATCHED_STICKY_TTL_MS = 24 * 60 * 60 * 1000;
 
-async function rememberMatched(viewerId: string, partnerIds: Iterable<string>): Promise<void> {
+// Exported so matches.ts can reinforce this same cache from its own
+// successful reads — see that file's comment for why this needed to
+// become a two-way relationship: this cache used to be populated only
+// from getPendingInviterIds below, but the Alex/Monica case proved the
+// `matches` table read itself is unreliable in matches.ts's own routes
+// too (GET /matches and GET /matches/:matchId), independent of
+// anything happening here.
+export async function rememberMatched(viewerId: string, partnerIds: Iterable<string>): Promise<void> {
   const ids = [...partnerIds];
   if (ids.length === 0) return;
   const now = new Date().toISOString();
@@ -120,7 +143,7 @@ async function rememberMatched(viewerId: string, partnerIds: Iterable<string>): 
   }
 }
 
-async function getStickyMatched(viewerId: string): Promise<Set<string>> {
+export async function getStickyMatched(viewerId: string): Promise<Set<string>> {
   const cutoff = new Date(Date.now() - MATCHED_STICKY_TTL_MS).toISOString();
   const { data, error } = await supabase
     .from("confirmed_matched_pairs")
@@ -134,6 +157,25 @@ async function getStickyMatched(viewerId: string): Promise<Set<string>> {
   return new Set((data ?? []).map((r) => r.partner_id as string));
 }
 
+/** Called from matches.ts's DELETE /matches/:matchId right after a real
+ *  unmatch succeeds — this is what lets MATCHED_STICKY_TTL_MS above be
+ *  generous rather than short: a genuine unmatch no longer needs to
+ *  wait on TTL expiry to stop being incorrectly protected, since it's
+ *  cleared immediately here instead. Clears both directions of the
+ *  pair, since either person's own cache could independently be
+ *  holding onto the stale "still matched" fact. */
+export async function forgetMatched(userA: string, userB: string): Promise<void> {
+  const { error } = await supabase
+    .from("confirmed_matched_pairs")
+    .delete()
+    .or(
+      `and(viewer_id.eq.${userA},partner_id.eq.${userB}),and(viewer_id.eq.${userB},partner_id.eq.${userA})`,
+    );
+  if (error) {
+    console.error(`INVITES DEBUG: failed to clear sticky-matched cache for [${userA},${userB}]: ${error.message}`);
+  }
+}
+
 // Same mitigation, same reasoning, now for `invite_reveals` — logging on
 // 2026-08-23 showed the identical flapping pattern on this table too:
 // the same viewer/target pair's revealed status vanishing and
@@ -145,7 +187,15 @@ async function getStickyMatched(viewerId: string): Promise<Set<string>> {
 // it; POST also calls rememberRevealed() right after its own successful
 // write, so this doesn't have to wait on a lagged read to know about
 // its own just-completed reveal.
-const REVEALED_STICKY_TTL_MS = 5 * 60 * 1000;
+// A reveal is permanent — there's no "un-reveal" action anywhere in
+// this app, so unlike the matched cache above, there's no real fact
+// this TTL is meant to eventually catch up to. The 5-minute version of
+// this was the direct cause of the exact same failure described above
+// (Monica's revealed invites sliding back to "new" after a ~9-minute
+// gap in polling). Kept as a long-but-finite bound rather than infinite
+// purely as cheap insurance against this cache accumulating forever for
+// accounts that stop being used.
+const REVEALED_STICKY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 export async function rememberRevealed(viewerId: string, targetIds: Iterable<string>): Promise<void> {
   const ids = [...targetIds];
