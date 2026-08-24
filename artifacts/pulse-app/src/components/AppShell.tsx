@@ -160,7 +160,17 @@ function AppShellInner({ children }: AppShellProps) {
       <TopBar />
       <AnnouncementBanner />
 
-      <main ref={mainRef} className="flex-1 overflow-y-auto pb-20 no-scrollbar relative">
+      {/* overscroll-y-none is the fix for a real glitch: without it, the
+          browser/WebView's OWN native pull-to-refresh/rubber-band effect
+          can fire alongside our custom gesture on this exact element —
+          visually a second, plain (non-branded) spinner competing with
+          ours, and functionally the cause of needing two pulls before
+          it "took": the first gesture was partly consumed by the
+          native behavior before our handlers could cleanly own it. This
+          explicitly tells the browser this element handles its own
+          overscroll, so it stops trying to layer its own gesture on
+          top. */}
+      <main ref={mainRef} className="flex-1 overflow-y-auto overscroll-y-none pb-20 no-scrollbar relative">
         {indicatorHeight > 0 && (
           <div
             className="absolute left-0 right-0 top-0 flex items-center justify-center overflow-hidden pointer-events-none z-10"
