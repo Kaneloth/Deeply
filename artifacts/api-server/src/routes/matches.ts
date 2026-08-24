@@ -20,20 +20,52 @@ const router: IRouter = Router();
 // row demonstrably existing in the table. That's a stronger signal than
 // simple eventual-consistency lag.
 //
+// Follow-up logs on 2026-08-24 escalated this further: a single 400ms
+// retry (the original version of this fix) was observed firing
+// repeatedly — same match, same "missing" result — across roughly 37
+// SECONDS of consecutive polls, meaning the underlying inconsistency
+// window can badly outlast one short retry. This isn't a full fix for
+// that (a single HTTP request can't reasonably wait 37 seconds), but a
+// short backoff schedule meaningfully improves the odds over a single
+// fixed-delay retry, at a still-reasonable added latency. The more
+// robust fix is proactive: discover.ts's createMatchWithAnyPendingMessages
+// now seeds the sticky-matched cache the instant a match is created,
+// rather than waiting for some later read to happen to succeed and
+// remember it — see that function's comment. This backoff schedule is
+// the remaining stopgap for whatever that doesn't already cover.
+//
 // Unlike getPendingInviterIds, these routes need the actual match ROW
 // (photos, message count, etc.), not just a yes/no — so a boolean cache
 // alone can't fix a genuinely missing read here the way it could there.
-// This retries the read once, after a short delay, whenever it looks
-// like it came back wrong. rememberMatched/getStickyMatched (the same
-// shared cache from discover-exclusions.ts) is used both as the signal
-// for "this looks wrong" for the list endpoint, and is reinforced by
-// every route here that gets a genuine successful read — so a match
-// confirmed by ANY of these routes protects all of them, not just the
-// one that happened to see it.
-const MATCHES_RETRY_DELAY_MS = 400;
+// rememberMatched/getStickyMatched (the same shared cache from
+// discover-exclusions.ts) is used both as the signal for "this looks
+// wrong" for the list endpoint, and is reinforced by every route here
+// that gets a genuine successful read — so a match confirmed by ANY of
+// these routes protects all of them, not just the one that happened to
+// see it.
+const MATCHES_RETRY_DELAY_MS = 400; // kept for the list/indicator retries below, unchanged
+const MATCH_LOOKUP_RETRY_SCHEDULE_MS = [400, 800, 1500]; // single-match lookup gets more chances specifically
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Retries `fetchOnce` against MATCH_LOOKUP_RETRY_SCHEDULE_MS until it
+ *  returns a non-empty, error-free result or the schedule is exhausted.
+ *  See the file-level comment above for why a single fixed retry proved
+ *  insufficient. */
+async function fetchMatchWithBackoff<T>(
+  fetchOnce: () => Promise<{ data: T | null; error: unknown }>,
+  logLabel: string,
+): Promise<{ data: T | null; error: unknown }> {
+  let result = await fetchOnce();
+  for (const delayMs of MATCH_LOOKUP_RETRY_SCHEDULE_MS) {
+    if (!result.error && result.data) break;
+    console.error(`MATCHES DEBUG: ${logLabel} came back empty/errored — retrying after ${delayMs}ms`);
+    await delay(delayMs);
+    result = await fetchOnce();
+  }
+  return result;
 }
 
 const MATCH_SELECT = `
@@ -245,19 +277,7 @@ router.get("/matches/:matchId", requireAuth, async (req, res): Promise<void> => 
       .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
       .single();
 
-  let { data: match, error } = await fetchMatch();
-
-  // A single lookup by primary key wrongly returning "not found" is
-  // exactly what production logs showed for this Alex/Monica case —
-  // opening the match directly 404'd despite the row demonstrably
-  // existing. Retry once before actually treating it as gone.
-  if (error || !match) {
-    console.error(
-      `MATCHES DEBUG: userId=${userId} matchId=${matchId} lookup came back empty/errored on first attempt — retrying after ${MATCHES_RETRY_DELAY_MS}ms`,
-    );
-    await delay(MATCHES_RETRY_DELAY_MS);
-    ({ data: match, error } = await fetchMatch());
-  }
+  const { data: match, error } = await fetchMatchWithBackoff(fetchMatch, `userId=${userId} matchId=${matchId} lookup`);
 
   if (error || !match) {
     res.status(404).json({ error: "Match not found" });
