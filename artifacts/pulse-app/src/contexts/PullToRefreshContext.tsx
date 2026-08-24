@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, MutableRefObject, ReactNode } from "react";
+import { createContext, useContext, useLayoutEffect, useRef, MutableRefObject, ReactNode } from "react";
 
 type RefreshHandler = () => Promise<void> | void;
 
@@ -40,10 +40,27 @@ export function usePullToRefreshRef() {
  *  render is fine and in fact intentional, since it keeps AppShell
  *  always calling the CURRENT closure (current token, current state)
  *  rather than one captured on first mount. Registration is cleared on
- *  unmount so navigating away correctly disables the gesture. */
+ *  unmount so navigating away correctly disables the gesture.
+ *
+ *  useLayoutEffect, not useEffect — this was the actual cause of the
+ *  "needs two pulls" bug that three separate rounds of overscroll-CSS
+ *  and native-WebView-glow fixes failed to touch, because none of them
+ *  were addressing the real mechanism. useEffect callbacks are deferred
+ *  until after the browser paints — so on a fresh navigation, there's a
+ *  real window where the new page is already visible and touchable, but
+ *  this effect (which is what actually points the shared ref at THIS
+ *  page's onRefresh) hasn't run yet. A pull attempted in that window
+ *  hits AppShell's onTouchStart with a stale ref — either null, or
+ *  still the PREVIOUS page's handler — and either silently does nothing
+ *  or refreshes the wrong page. The very next pull works cleanly simply
+ *  because, by then, plenty of time has passed for the deferred effect
+ *  to have run. useLayoutEffect runs synchronously right after the DOM
+ *  is updated but strictly before the browser paints, so the ref is
+ *  guaranteed correct by the time the page is actually visible/
+ *  touchable at all — there's no window left for a pull to land in. */
 export function usePullToRefresh(onRefresh: RefreshHandler): void {
   const ref = usePullToRefreshRef();
-  useEffect(() => {
+  useLayoutEffect(() => {
     ref.current = onRefresh;
     return () => {
       if (ref.current === onRefresh) ref.current = null;
