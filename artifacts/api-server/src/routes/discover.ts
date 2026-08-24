@@ -6,7 +6,7 @@ import { attachPhotoGalleries } from "../lib/photo-galleries";
 import { attachAudioPrompts } from "../lib/audio-prompts-helper";
 import { withComputedAge, withComputedAges, calculateAge } from "../lib/age";
 import { consumeFreeInviteOrCharge } from "../lib/invites-quota";
-import { getExcludedCandidateIds, getPendingInviterIds, getCandidateExclusionSets, rememberRevealed, getStickyRevealed, rememberReshuffleTimestamp, getStickyReshuffleTimestamp } from "../lib/discover-exclusions";
+import { getExcludedCandidateIds, getPendingInviterIds, getCandidateExclusionSets, rememberRevealed, getStickyRevealed, rememberReshuffleTimestamp, getStickyReshuffleTimestamp, rememberMatched } from "../lib/discover-exclusions";
 import { haversineDistanceKm } from "../lib/geo";
 import { genderSatisfiesPreference, passesDealbreakers, passesAgeRange, computeCompatibilityScore } from "../lib/matching";
 import { getEconomyConfig } from "../lib/economy-config";
@@ -280,6 +280,21 @@ async function createMatchWithAnyPendingMessages(
     match = raceMatch ?? null;
   }
   if (!match) return null;
+
+  // Seed the shared sticky-matched cache for both directions IMMEDIATELY
+  // — not reactively, waiting for some future read to happen to
+  // succeed and remember it. Production logs on 2026-08-24 showed this
+  // gap concretely: a brand-new match had no prior successful read to
+  // fall back on, so its very first checks (badge vs page, "match no
+  // longer exists" on open) were fully exposed to the underlying read
+  // inconsistency with zero protection — the cache could only ever
+  // help *after* something had already gone right once. Since this
+  // function is the one place that has definitive, first-hand
+  // knowledge a match now exists (it just inserted the row, or
+  // confirmed one already exists via the 23505 race-fallback above),
+  // seeding here means even the very first read anyone does afterward
+  // — for either party — already has ground truth to fall back on.
+  await Promise.all([rememberMatched(userId, [targetId]), rememberMatched(targetId, [userId])]);
 
   const [{ data: mySwipe }, { data: theirSwipe }] = await Promise.all([
     supabase.from("swipes").select("message_content, created_at").eq("swiper_id", userId).eq("target_id", targetId).maybeSingle(),
