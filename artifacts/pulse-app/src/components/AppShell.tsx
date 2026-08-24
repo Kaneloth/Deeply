@@ -131,6 +131,24 @@ function AppShellInner({ children }: AppShellProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mainShouldExist]);
 
+  // The inner <main> is the app scroller, but Android Chrome/WebView can
+  // still hand a top-edge gesture to the document when that scroller is at
+  // scrollTop 0. Disable overscroll chaining on the document for app pages
+  // so the browser's native pull-to-refresh cannot consume the first pull.
+  useEffect(() => {
+    if (!mainShouldExist) return;
+    const html = document.documentElement;
+    const body = document.body;
+    const previousHtml = html.style.overscrollBehaviorY;
+    const previousBody = body.style.overscrollBehaviorY;
+    html.style.overscrollBehaviorY = "none";
+    body.style.overscrollBehaviorY = "none";
+    return () => {
+      html.style.overscrollBehaviorY = previousHtml;
+      body.style.overscrollBehaviorY = previousBody;
+    };
+  }, [mainShouldExist]);
+
   // A ban/suspension can be detected mid-session, on any route — this
   // takes over the entire screen regardless of what would otherwise
   // render, since continuing to show the underlying page while a "you've
@@ -156,7 +174,7 @@ function AppShellInner({ children }: AppShellProps) {
   const indicatorHeight = isRefreshing ? 50 : pullDistance;
 
   return (
-    <div className="w-full max-w-[430px] mx-auto h-[100dvh] bg-background relative flex flex-col overflow-hidden">
+    <div className="w-full max-w-[430px] mx-auto h-[100dvh] bg-background relative flex flex-col overflow-hidden overscroll-y-none">
       <TopBar />
       <AnnouncementBanner />
 
@@ -170,7 +188,7 @@ function AppShellInner({ children }: AppShellProps) {
           explicitly tells the browser this element handles its own
           overscroll, so it stops trying to layer its own gesture on
           top. */}
-      <main ref={mainRef} className="flex-1 overflow-y-auto overscroll-y-none pb-20 no-scrollbar relative">
+      <main ref={mainRef} className="flex-1 overflow-y-auto overscroll-y-none pb-20 no-scrollbar relative" style={{ overscrollBehaviorY: "none" }}>
         {indicatorHeight > 0 && (
           <div
             className="absolute left-0 right-0 top-0 flex items-center justify-center overflow-hidden pointer-events-none z-10"
