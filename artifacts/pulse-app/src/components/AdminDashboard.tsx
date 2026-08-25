@@ -22,10 +22,6 @@ const SECTIONS: { key: Section; label: string; icon: any; scope: AdminScope }[] 
   { key: "announcements", label: "Announcements", icon: Megaphone, scope: "manage_users" },
 ];
 
-// Desktop sidebar groups sections by what an admin is actually trying to
-// do in the moment, same reasoning as Skootlink's admin nav — matched
-// against SECTIONS by key, so a group only shows the items this admin
-// actually has scope for.
 const NAV_GROUPS: { label: string; keys: Section[] }[] = [
   { label: "Overview", keys: ["overview"] },
   { label: "People & Safety", keys: ["reports", "users", "verification"] },
@@ -77,8 +73,6 @@ export function AdminDashboard({ access, onClose }: { access: AdminAccess; onClo
 
   return (
     <div className="fixed inset-0 z-[200] bg-background flex flex-col lg:flex-row">
-      {/* Desktop sidebar — hidden below the lg breakpoint entirely, not
-          just visually, so it never mounts/fetches on mobile. */}
       <aside className="hidden lg:flex lg:flex-col w-64 shrink-0 border-r border-card-border bg-card">
         <div className="px-5 py-5 border-b border-card-border flex items-center gap-2.5">
           <ShieldCheck size={22} className="text-primary shrink-0" />
@@ -124,11 +118,7 @@ export function AdminDashboard({ access, onClose }: { access: AdminAccess; onClo
         </div>
       </aside>
 
-      {/* Main column — nav differs (pill tabs vs. sidebar header), but the
-          content area below is rendered exactly once regardless of
-          breakpoint. */}
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-        {/* Mobile header + pill tabs — hidden on desktop */}
         <div className="lg:hidden flex flex-col">
           <header className="flex-none flex items-center justify-between px-4 pt-12 pb-4 border-b border-card-border bg-card/90 backdrop-blur-xl">
             <h1 className="font-['Syne'] font-bold text-xl">Admin Dashboard</h1>
@@ -152,7 +142,6 @@ export function AdminDashboard({ access, onClose }: { access: AdminAccess; onClo
           </div>
         </div>
 
-        {/* Desktop header — hidden on mobile */}
         <header className="hidden lg:flex items-center justify-between px-6 py-4 border-b border-card-border bg-card shrink-0">
           <h1 className="font-['Syne'] font-bold text-xl">{currentSection?.label ?? "Admin"}</h1>
           <button onClick={onClose} className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center hover:bg-secondary/70 transition-colors">
@@ -160,8 +149,6 @@ export function AdminDashboard({ access, onClose }: { access: AdminAccess; onClo
           </button>
         </header>
 
-        {/* Shared content area — container width adapts by breakpoint,
-            the section components themselves render only once. */}
         <div className="flex-1 overflow-y-auto">
           <div className="max-w-[430px] mx-auto lg:max-w-4xl w-full p-4 lg:p-6">{renderContent()}</div>
         </div>
@@ -801,7 +788,6 @@ function UsersSection({ token, toast, isSuperAdmin }: { token: string | null; to
         <EmptyNote text="No users found." />
       ) : (
         <>
-          {/* Mobile — card list */}
           <div className="lg:hidden space-y-2">
             {users.map((u) => (
               <button
@@ -826,7 +812,6 @@ function UsersSection({ token, toast, isSuperAdmin }: { token: string | null; to
             ))}
           </div>
 
-          {/* Desktop — table */}
           <div className="hidden lg:block border border-card-border rounded-xl overflow-hidden bg-card">
             <table className="w-full text-sm">
               <thead className="bg-secondary/60">
@@ -1086,7 +1071,6 @@ function UserDetailSheet({
           />
         ) : (
         <div className="space-y-4">
-          {/* Ban */}
           <div className="space-y-2">
             {!user.banned && (
               <select
@@ -1113,7 +1097,6 @@ function UserDetailSheet({
             </button>
           </div>
 
-          {/* Suspend */}
           {!user.banned && (
             <div className="space-y-2 border-t border-border pt-4">
               {isSuspended ? (
@@ -1150,7 +1133,6 @@ function UserDetailSheet({
             </div>
           )}
 
-          {/* Sparks */}
           <div className="space-y-2 border-t border-border pt-4">
             <p className="text-xs font-medium text-muted-foreground">Adjust Sparks</p>
             <div className="flex gap-2">
@@ -1169,7 +1151,6 @@ function UserDetailSheet({
             </div>
           </div>
 
-          {/* Admin scopes — super-admin only */}
           {isSuperAdmin && (
             <div className="space-y-2 border-t border-border pt-4">
               <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
@@ -1211,14 +1192,58 @@ function Row({ label, value }: { label: string; value: any }) {
   );
 }
 
-// Text inputs (not <select>) are used deliberately for enum-like fields
-// below (gender, relationship_type, education, etc.) rather than
-// dropdowns — several of these columns have Postgres CHECK constraints
-// with specific allowed values that aren't fully documented here, and a
-// guessed-wrong dropdown option would submit an invalid value and fail.
-// A pre-filled text field showing the user's CURRENT value is always
-// safe, and an admin editing "on behalf of" a stuck user will usually
-// only need to fix one or two fields, not pick from scratch.
+// Plain <input>/<textarea> (not <select>) are used deliberately for
+// enum-like fields below (gender, relationship_type, education, etc.)
+// rather than dropdowns — several of these columns have Postgres CHECK
+// constraints with specific allowed values that aren't fully documented
+// here, and a guessed-wrong dropdown option would submit an invalid
+// value and fail. A pre-filled text field showing the user's CURRENT
+// value is always safe, and an admin editing "on behalf of" a stuck
+// user will usually only need to fix one or two fields, not pick from
+// scratch.
+//
+// Defined at MODULE scope, not inside EditProfileForm — this used to be
+// declared as a const inside EditProfileForm's function body, which
+// meant a brand new Field function/component type was created on every
+// single render. React reconciles by comparing element types at each
+// position in the tree; a genuinely different component type there
+// forces React to unmount the previous instance (including its actual
+// <input> DOM node) and mount a fresh one, rather than just updating
+// the existing node's value. Since every keystroke calls setForm (which
+// re-renders EditProfileForm, which redefined Field yet again), this
+// happened on EVERY character typed — destroying and recreating the
+// input's DOM node each time, which drops focus, which is exactly what
+// dismisses a mobile on-screen keyboard mid-word. Moving Field out to
+// module scope means it's defined once, so React sees the same
+// component type across renders and simply updates the existing node's
+// value in place — focus (and the keyboard) now stays put across
+// keystrokes. Takes value/onChange as explicit props instead of closing
+// over EditProfileForm's local form/set, since a module-level component
+// can't reach into another function's local variables.
+function Field({
+  label,
+  type = "text",
+  value,
+  onChange,
+}: {
+  label: string;
+  type?: string;
+  value: string | number;
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+}) {
+  return (
+    <div>
+      <label className="text-[10px] font-medium text-muted-foreground">{label}</label>
+      <input
+        type={type}
+        value={value}
+        onChange={onChange}
+        className="w-full h-9 mt-0.5 rounded-lg bg-background border border-card-border text-xs px-2.5 outline-none"
+      />
+    </div>
+  );
+}
+
 function EditProfileForm({
   user,
   token,
@@ -1233,55 +1258,96 @@ function EditProfileForm({
   onSaved: (patch: any) => void;
 }) {
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({
-    name: user.name ?? "",
-    bio: user.bio ?? "",
-    city: user.city ?? "",
-    birthday: user.birthday ?? "",
-    personality_tags: (user.personality_tags ?? []).join(", "),
-    gender: user.gender ?? "",
-    looking_for_gender: user.looking_for_gender ?? "",
-    distance_km: user.distance_km ?? "",
-    relationship_type: user.relationship_type ?? "",
-    dating_intentions: (user.dating_intentions ?? []).join(", "),
-    num_kids: user.num_kids ?? "",
-    family_plans: user.family_plans ?? "",
-    smoking_status: user.smoking_status ?? "",
-    drinking_status: user.drinking_status ?? "",
-    vaping_status: user.vaping_status ?? "",
-    has_tattoos: user.has_tattoos ?? "",
-    pets: user.pets ?? "",
-    height_cm: user.height_cm ?? "",
-    activity_level: user.activity_level ?? "",
-    nightlife_frequency: user.nightlife_frequency ?? "",
-    languages_spoken: (user.languages_spoken ?? []).join(", "),
-    languages_other: user.languages_other ?? "",
-    love_language: user.love_language ?? "",
-    education: user.education ?? "",
-    pref_num_kids: user.pref_num_kids ?? "",
-    pref_family_plans: user.pref_family_plans ?? "",
-    pref_smoking_status: user.pref_smoking_status ?? "",
-    pref_drinking_status: user.pref_drinking_status ?? "",
-    pref_vaping_status: user.pref_vaping_status ?? "",
-    pref_has_tattoos: user.pref_has_tattoos ?? "",
-    pref_pets: user.pref_pets ?? "",
-    pref_activity_level: user.pref_activity_level ?? "",
-    pref_height_min_cm: user.pref_height_min_cm ?? "",
-    pref_height_max_cm: user.pref_height_max_cm ?? "",
-    pref_nightlife_frequency: user.pref_nightlife_frequency ?? "",
-    pref_age_min: user.pref_age_min ?? "",
-    pref_age_max: user.pref_age_max ?? "",
-    dealbreakers: (user.dealbreakers ?? []).join(", "),
-  });
+  // Starts null (not pre-filled from the `user` prop) — that prop comes
+  // from the paginated admin user LIST, which only ever fetches a
+  // handful of summary fields (name, age, city, photo, ban/suspend
+  // status, Sparks balance...) for performance, since it renders for
+  // every row on every page. It never included bio, gender, any
+  // lifestyle field, or any of the pref_* fields at all — so every one
+  // of those was always undefined on `user`, making every field in this
+  // form appear blank regardless of what the person had actually filled
+  // in. Fetching the full profile fresh, specifically now that the
+  // admin has opened this form for one specific person, is the correct
+  // scope for that cost — the list itself stays fast for every row.
+  const [form, setForm] = useState<Record<string, any> | null>(null);
+  const [loadingProfile, setLoadingProfile] = useState(true);
 
-  const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-    setForm((f) => ({ ...f, [key]: e.target.value }));
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingProfile(true);
+    fetch(`/api/profile/${user.id}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error ?? "Failed to load full profile");
+        if (cancelled) return;
+        setForm({
+          name: body.name ?? "",
+          bio: body.bio ?? "",
+          city: body.city ?? "",
+          birthday: body.birthday ?? "",
+          personality_tags: (body.personality_tags ?? []).join(", "),
+          gender: body.gender ?? "",
+          looking_for_gender: body.looking_for_gender ?? "",
+          distance_km: body.distance_km ?? "",
+          relationship_type: body.relationship_type ?? "",
+          dating_intentions: (body.dating_intentions ?? []).join(", "),
+          num_kids: body.num_kids ?? "",
+          family_plans: body.family_plans ?? "",
+          smoking_status: body.smoking_status ?? "",
+          drinking_status: body.drinking_status ?? "",
+          vaping_status: body.vaping_status ?? "",
+          has_tattoos: body.has_tattoos ?? "",
+          pets: body.pets ?? "",
+          height_cm: body.height_cm ?? "",
+          activity_level: body.activity_level ?? "",
+          nightlife_frequency: body.nightlife_frequency ?? "",
+          languages_spoken: (body.languages_spoken ?? []).join(", "),
+          languages_other: body.languages_other ?? "",
+          love_language: body.love_language ?? "",
+          education: body.education ?? "",
+          pref_num_kids: body.pref_num_kids ?? "",
+          pref_family_plans: body.pref_family_plans ?? "",
+          pref_smoking_status: body.pref_smoking_status ?? "",
+          pref_drinking_status: body.pref_drinking_status ?? "",
+          pref_vaping_status: body.pref_vaping_status ?? "",
+          pref_has_tattoos: body.pref_has_tattoos ?? "",
+          pref_pets: body.pref_pets ?? "",
+          pref_activity_level: body.pref_activity_level ?? "",
+          pref_height_min_cm: body.pref_height_min_cm ?? "",
+          pref_height_max_cm: body.pref_height_max_cm ?? "",
+          pref_nightlife_frequency: body.pref_nightlife_frequency ?? "",
+          pref_age_min: body.pref_age_min ?? "",
+          pref_age_max: body.pref_age_max ?? "",
+          dealbreakers: (body.dealbreakers ?? []).join(", "),
+        });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        toast({
+          title: "Error",
+          description: err instanceof Error ? err.message : "Failed to load this user's full profile.",
+          variant: "destructive",
+        });
+        onCancel();
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingProfile(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user.id, token]);
+
+  const set = (key: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+    setForm((f) => (f ? { ...f, [key]: e.target.value } : f));
 
   const toArray = (s: string) =>
     s.trim() === "" ? [] : s.split(",").map((x) => x.trim()).filter(Boolean);
   const toNumOrUndefined = (s: string) => (s === "" ? undefined : Number(s));
 
   const handleSave = async () => {
+    if (!form) return;
     setSaving(true);
     try {
       const payload = {
@@ -1292,7 +1358,7 @@ function EditProfileForm({
         personality_tags: toArray(form.personality_tags),
         gender: form.gender,
         looking_for_gender: form.looking_for_gender,
-        distance_km: toNumOrUndefined(form.distance_km as any),
+        distance_km: toNumOrUndefined(form.distance_km),
         relationship_type: form.relationship_type,
         dating_intentions: toArray(form.dating_intentions),
         num_kids: form.num_kids,
@@ -1302,7 +1368,7 @@ function EditProfileForm({
         vaping_status: form.vaping_status,
         has_tattoos: form.has_tattoos,
         pets: form.pets,
-        height_cm: toNumOrUndefined(form.height_cm as any),
+        height_cm: toNumOrUndefined(form.height_cm),
         activity_level: form.activity_level,
         nightlife_frequency: form.nightlife_frequency,
         languages_spoken: toArray(form.languages_spoken),
@@ -1317,11 +1383,11 @@ function EditProfileForm({
         pref_has_tattoos: form.pref_has_tattoos,
         pref_pets: form.pref_pets,
         pref_activity_level: form.pref_activity_level,
-        pref_height_min_cm: toNumOrUndefined(form.pref_height_min_cm as any),
-        pref_height_max_cm: toNumOrUndefined(form.pref_height_max_cm as any),
+        pref_height_min_cm: toNumOrUndefined(form.pref_height_min_cm),
+        pref_height_max_cm: toNumOrUndefined(form.pref_height_max_cm),
         pref_nightlife_frequency: form.pref_nightlife_frequency,
-        pref_age_min: toNumOrUndefined(form.pref_age_min as any),
-        pref_age_max: toNumOrUndefined(form.pref_age_max as any),
+        pref_age_min: toNumOrUndefined(form.pref_age_min),
+        pref_age_max: toNumOrUndefined(form.pref_age_max),
         dealbreakers: toArray(form.dealbreakers),
       };
 
@@ -1348,17 +1414,13 @@ function EditProfileForm({
     }
   };
 
-  const Field = ({ label, keyName, type = "text" }: { label: string; keyName: keyof typeof form; type?: string }) => (
-    <div>
-      <label className="text-[10px] font-medium text-muted-foreground">{label}</label>
-      <input
-        type={type}
-        value={form[keyName] as any}
-        onChange={set(keyName)}
-        className="w-full h-9 mt-0.5 rounded-lg bg-background border border-card-border text-xs px-2.5 outline-none"
-      />
-    </div>
-  );
+  if (loadingProfile || !form) {
+    return (
+      <div className="flex items-center justify-center py-10">
+        <Loader2 size={20} className="animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -1371,9 +1433,9 @@ function EditProfileForm({
 
       <div className="space-y-2">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">About</p>
-        <Field label="Name" keyName="name" />
-        <Field label="Birthday" keyName="birthday" type="date" />
-        <Field label="City" keyName="city" />
+        <Field label="Name" value={form.name} onChange={set("name")} />
+        <Field label="Birthday" type="date" value={form.birthday} onChange={set("birthday")} />
+        <Field label="City" value={form.city} onChange={set("city")} />
         <div>
           <label className="text-[10px] font-medium text-muted-foreground">Bio</label>
           <textarea
@@ -1392,10 +1454,10 @@ function EditProfileForm({
       <div className="space-y-2 border-t border-border pt-3">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Dating</p>
         <div className="grid grid-cols-2 gap-2">
-          <Field label="Gender" keyName="gender" />
-          <Field label="Looking for" keyName="looking_for_gender" />
-          <Field label="Max distance (km)" keyName="distance_km" type="number" />
-          <Field label="Relationship type" keyName="relationship_type" />
+          <Field label="Gender" value={form.gender} onChange={set("gender")} />
+          <Field label="Looking for" value={form.looking_for_gender} onChange={set("looking_for_gender")} />
+          <Field label="Max distance (km)" type="number" value={form.distance_km} onChange={set("distance_km")} />
+          <Field label="Relationship type" value={form.relationship_type} onChange={set("relationship_type")} />
         </div>
         <div>
           <label className="text-[10px] font-medium text-muted-foreground">Dating intentions (comma-separated)</label>
@@ -1406,16 +1468,16 @@ function EditProfileForm({
       <div className="space-y-2 border-t border-border pt-3">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Lifestyle</p>
         <div className="grid grid-cols-2 gap-2">
-          <Field label="Kids" keyName="num_kids" />
-          <Field label="Family plans" keyName="family_plans" />
-          <Field label="Smoking" keyName="smoking_status" />
-          <Field label="Drinking" keyName="drinking_status" />
-          <Field label="Vaping" keyName="vaping_status" />
-          <Field label="Tattoos" keyName="has_tattoos" />
-          <Field label="Pets" keyName="pets" />
-          <Field label="Height (cm)" keyName="height_cm" type="number" />
-          <Field label="Activity level" keyName="activity_level" />
-          <Field label="Nightlife" keyName="nightlife_frequency" />
+          <Field label="Kids" value={form.num_kids} onChange={set("num_kids")} />
+          <Field label="Family plans" value={form.family_plans} onChange={set("family_plans")} />
+          <Field label="Smoking" value={form.smoking_status} onChange={set("smoking_status")} />
+          <Field label="Drinking" value={form.drinking_status} onChange={set("drinking_status")} />
+          <Field label="Vaping" value={form.vaping_status} onChange={set("vaping_status")} />
+          <Field label="Tattoos" value={form.has_tattoos} onChange={set("has_tattoos")} />
+          <Field label="Pets" value={form.pets} onChange={set("pets")} />
+          <Field label="Height (cm)" type="number" value={form.height_cm} onChange={set("height_cm")} />
+          <Field label="Activity level" value={form.activity_level} onChange={set("activity_level")} />
+          <Field label="Nightlife" value={form.nightlife_frequency} onChange={set("nightlife_frequency")} />
         </div>
       </div>
 
@@ -1426,28 +1488,28 @@ function EditProfileForm({
           <input value={form.languages_spoken} onChange={set("languages_spoken")} className="w-full h-9 mt-0.5 rounded-lg bg-background border border-card-border text-xs px-2.5 outline-none" />
         </div>
         <div className="grid grid-cols-2 gap-2">
-          <Field label="Other language" keyName="languages_other" />
-          <Field label="Love language" keyName="love_language" />
-          <Field label="Education" keyName="education" />
+          <Field label="Other language" value={form.languages_other} onChange={set("languages_other")} />
+          <Field label="Love language" value={form.love_language} onChange={set("love_language")} />
+          <Field label="Education" value={form.education} onChange={set("education")} />
         </div>
       </div>
 
       <div className="space-y-2 border-t border-border pt-3">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Partner Preferences</p>
         <div className="grid grid-cols-2 gap-2">
-          <Field label="Pref. kids" keyName="pref_num_kids" />
-          <Field label="Pref. family plans" keyName="pref_family_plans" />
-          <Field label="Pref. smoking" keyName="pref_smoking_status" />
-          <Field label="Pref. drinking" keyName="pref_drinking_status" />
-          <Field label="Pref. vaping" keyName="pref_vaping_status" />
-          <Field label="Pref. tattoos" keyName="pref_has_tattoos" />
-          <Field label="Pref. pets" keyName="pref_pets" />
-          <Field label="Pref. activity level" keyName="pref_activity_level" />
-          <Field label="Pref. nightlife" keyName="pref_nightlife_frequency" />
-          <Field label="Min height (cm)" keyName="pref_height_min_cm" type="number" />
-          <Field label="Max height (cm)" keyName="pref_height_max_cm" type="number" />
-          <Field label="Min age" keyName="pref_age_min" type="number" />
-          <Field label="Max age" keyName="pref_age_max" type="number" />
+          <Field label="Pref. kids" value={form.pref_num_kids} onChange={set("pref_num_kids")} />
+          <Field label="Pref. family plans" value={form.pref_family_plans} onChange={set("pref_family_plans")} />
+          <Field label="Pref. smoking" value={form.pref_smoking_status} onChange={set("pref_smoking_status")} />
+          <Field label="Pref. drinking" value={form.pref_drinking_status} onChange={set("pref_drinking_status")} />
+          <Field label="Pref. vaping" value={form.pref_vaping_status} onChange={set("pref_vaping_status")} />
+          <Field label="Pref. tattoos" value={form.pref_has_tattoos} onChange={set("pref_has_tattoos")} />
+          <Field label="Pref. pets" value={form.pref_pets} onChange={set("pref_pets")} />
+          <Field label="Pref. activity level" value={form.pref_activity_level} onChange={set("pref_activity_level")} />
+          <Field label="Pref. nightlife" value={form.pref_nightlife_frequency} onChange={set("pref_nightlife_frequency")} />
+          <Field label="Min height (cm)" type="number" value={form.pref_height_min_cm} onChange={set("pref_height_min_cm")} />
+          <Field label="Max height (cm)" type="number" value={form.pref_height_max_cm} onChange={set("pref_height_max_cm")} />
+          <Field label="Min age" type="number" value={form.pref_age_min} onChange={set("pref_age_min")} />
+          <Field label="Max age" type="number" value={form.pref_age_max} onChange={set("pref_age_max")} />
         </div>
       </div>
 
