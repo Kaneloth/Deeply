@@ -69,7 +69,7 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
     .select(
       "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, boosted_until, " +
         "gender, looking_for_gender, relationship_type, dating_intentions, num_kids, family_plans, smoking_status, vaping_status, drinking_status, " +
-        "nightlife_frequency, has_tattoos, pets, activity_level, height_cm, latitude, longitude",
+        "nightlife_frequency, has_tattoos, pets, activity_level, height_cm, education, languages_spoken, languages_other, latitude, longitude",
     )
     .not("id", "in", `(${excludedIds.join(",")})`)
     .eq("is_incognito", false)
@@ -130,9 +130,23 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
 
   const prioritized = [...weightedShuffle(boosted), ...weightedShuffle(rest)].slice(0, 20);
 
+  // Previously this stripped `gender` and `relationship_type` out
+  // entirely before sending to the frontend, along with the genuinely
+  // internal-only fields below (looking_for_gender/dating_intentions,
+  // which only ever existed to power the hard-filter checks above, and
+  // boosted_until/latitude/longitude, which are consumed earlier in
+  // this function). That meant ProfileCard.tsx's existing gender
+  // display code never received any data on the main Discover feed at
+  // all, and the "Looking For" row had nothing to show, ever — not a
+  // frontend bug, the data was simply never being sent. relationship_type
+  // is renamed to looking_for here to match ProfileCardData's existing
+  // prop name (which other pages, e.g. Search/Invites, may already
+  // populate this way from their own separate queries).
   const strippedCandidates = prioritized.map(
-    ({ boosted_until, latitude, longitude, gender, looking_for_gender, relationship_type, dating_intentions, ...profileFields }) =>
-      profileFields,
+    ({ boosted_until, latitude, longitude, looking_for_gender, relationship_type, dating_intentions, ...profileFields }) => ({
+      ...profileFields,
+      looking_for: relationship_type ?? null,
+    }),
   );
 
   const withPhotosAndAudio = await attachPhotosAndAudio(strippedCandidates);

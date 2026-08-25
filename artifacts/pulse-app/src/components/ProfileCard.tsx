@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { MapPin, Baby, Users, Cigarette, Wine, Mic, Play, Pause, BadgeCheck, Camera, Wind, PenTool, PawPrint, Dumbbell, PartyPopper, Ruler, Crown } from "lucide-react";
+import { MapPin, Baby, Users, Cigarette, Wine, Mic, Play, Pause, BadgeCheck, Camera, Wind, PenTool, PawPrint, Dumbbell, PartyPopper, Ruler, Crown, Search, Sparkles, GraduationCap, Languages } from "lucide-react";
 import { PhotoCarousel, type CarouselPhoto } from "@/components/PhotoCarousel";
 import { TATTOO_OPTIONS, VAPING_OPTIONS, PETS_OPTIONS, ACTIVITY_LEVEL_OPTIONS, NIGHTLIFE_OPTIONS, cmToDisplay } from "@/lib/lifestylePreferenceOptions";
 
@@ -36,6 +36,9 @@ export interface ProfileCardData {
   nightlife_frequency?: string | null;
   height_cm?: number | null;
   gender?: string | null;
+  education?: string | null;
+  languages_spoken?: string[];
+  languages_other?: string | null;
   audio_prompts?: AudioPromptData[];
 }
 
@@ -66,6 +69,18 @@ const DRINKING_LABELS: Record<string, string> = {
   regularly: "Drinks regularly",
 };
 
+// NOT sourced from a shared options file (no RELATIONSHIP_TYPE_OPTIONS
+// was available alongside the lifestyle ones) — worth confirming these
+// match the actual values stored in profiles.relationship_type if this
+// ever displays incorrectly or shows nothing for a value not listed
+// here.
+const RELATIONSHIP_TYPE_LABELS: Record<string, string> = {
+  long_term: "Long-term relationship",
+  short_term: "Something casual",
+  friendship: "New friends",
+  not_sure: "Still figuring it out",
+};
+
 // Converted from the imported options arrays (single source of truth
 // with the edit form on ProfilePage) rather than redefined by hand here,
 // so these can never drift out of sync with the actual stored values.
@@ -78,17 +93,30 @@ const PETS_LABELS = toLabelMap(PETS_OPTIONS);
 const ACTIVITY_LEVEL_LABELS = toLabelMap(ACTIVITY_LEVEL_OPTIONS);
 const NIGHTLIFE_LABELS = toLabelMap(NIGHTLIFE_OPTIONS);
 
-// NOT sourced from a shared options file (GENDER_OPTIONS wasn't
-// available) — inferred from the value strings genderSatisfiesPreference
-// uses elsewhere in this app ("man"/"woman"/"non_binary"/
-// "prefer_not_to_say"). Worth confirming these match your actual
-// GENDER_OPTIONS values if this ever displays incorrectly.
-const GENDER_LABELS: Record<string, string> = {
-  man: "Man",
-  woman: "Woman",
-  non_binary: "Non-binary",
-  prefer_not_to_say: "Prefer not to say",
-};
+/** A single small "fact" pill — used throughout the Lifestyle & Habits
+ *  section below. Pulled out once rather than repeated inline for each
+ *  of the ~10 possible facts, since they all share identical markup. */
+function FactPill({ icon: Icon, children }: { icon: React.ComponentType<{ size?: number; className?: string }>; children: React.ReactNode }) {
+  return (
+    <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
+      <Icon size={13} className="shrink-0" /> {children}
+    </span>
+  );
+}
+
+/** Small uppercase label + icon, used to head every category section
+ *  below the photo. Same visual language as section headers already
+ *  used elsewhere in the app (e.g. AdminDashboard's edit-profile form),
+ *  applied here so the categories read as clearly distinct groups
+ *  rather than one long undifferentiated block. */
+function SectionHeader({ icon: Icon, label }: { icon: React.ComponentType<{ size?: number; className?: string }>; label: string }) {
+  return (
+    <div className="flex items-center gap-1.5 mb-2.5">
+      <Icon size={14} className="text-primary shrink-0" />
+      <h3 className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">{label}</h3>
+    </div>
+  );
+}
 
 export function ProfileCard({
   profile,
@@ -171,9 +199,11 @@ export function ProfileCard({
     setPlayingPromptId(prompt.id);
   };
 
-  const hasDetails =
-    profile.personality_tags?.length > 0 ||
-    !!profile.bio ||
+  // Grouped the same way the sections below are grouped, so this stays
+  // easy to keep in sync with what's actually rendered — each boolean
+  // corresponds to one section further down.
+  const hasLifestyle =
+    !!profile.height_cm ||
     !!profile.num_kids ||
     !!profile.family_plans ||
     !!profile.smoking_status ||
@@ -182,10 +212,13 @@ export function ProfileCard({
     !!profile.has_tattoos ||
     !!profile.pets ||
     !!profile.activity_level ||
-    !!profile.nightlife_frequency ||
-    !!profile.height_cm ||
-    !!profile.gender ||
-    (profile.audio_prompts?.length ?? 0) > 0;
+    !!profile.nightlife_frequency;
+  const hasInterests = profile.personality_tags?.length > 0;
+  const hasBackground = !!profile.education || (profile.languages_spoken?.length ?? 0) > 0 || !!profile.languages_other;
+  const hasAudio = (profile.audio_prompts?.length ?? 0) > 0;
+  const hasDetails = !!profile.bio || hasAudio || hasLifestyle || hasInterests || hasBackground;
+
+  const relationshipLabel = profile.looking_for ? RELATIONSHIP_TYPE_LABELS[profile.looking_for] ?? profile.looking_for : null;
 
   return (
     <div
@@ -204,8 +237,9 @@ export function ProfileCard({
       >
         {/* Photo — fills the entire card by default (edge to edge), so
             it's the only thing visible until the user scrolls down.
-            Name/age/location sit in a compact overlay strictly at the
-            bottom edge, never in the middle of the image. */}
+            Name/age/location/looking-for sit in a compact overlay
+            strictly at the bottom edge, never in the middle of the
+            image. */}
         <div className="relative w-full h-full min-h-full bg-muted">
           <PhotoCarousel photos={photos} name={profile.name} active={active} />
 
@@ -253,21 +287,40 @@ export function ProfileCard({
                 {profile.distance_km != null && `${profile.distance_km} km away`}
               </div>
             )}
-            {profile.looking_for && (
-              <div className="text-white/70 text-xs mt-0.5">
-                Looking for: <span className="text-white/90 font-medium">{profile.looking_for}</span>
+            {/* Looking-for row — icon instead of the words "Looking
+                for" to save space, per design direction. Search (a
+                magnifying glass in a circle) reads as "what they're
+                looking for" without needing a text label of its own. */}
+            {relationshipLabel && (
+              <div className="flex items-center gap-1 text-white/70 text-xs mt-0.5">
+                <Search size={12} />
+                <span className="text-white/90 font-medium">{relationshipLabel}</span>
               </div>
             )}
           </div>
         </div>
 
         {/* Details — below the fold, only reached by scrolling down past
-            the photo. */}
+            the photo. Bio comes first (the single most personal, most
+            "them" detail), then everything else is grouped into
+            clearly labeled, visually separated categories rather than
+            one dense undifferentiated block of pills — each category
+            gets its own icon + uppercase label and a light background
+            tint so it reads as a distinct card even without a full
+            border/shadow treatment, which would feel heavy stacked
+            this many times in a row. */}
         {hasDetails && (
-          <div className="w-full bg-card px-5 py-4">
-            {profile.audio_prompts && profile.audio_prompts.length > 0 && (
-              <div className="space-y-2 mb-3">
-                {profile.audio_prompts.map((prompt) => (
+          <div className="w-full bg-card px-5 py-4 space-y-3">
+            {profile.bio && (
+              <div className="bg-secondary/40 rounded-2xl p-4">
+                <SectionHeader icon={Users} label={`About ${profile.name}`} />
+                <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">{profile.bio}</p>
+              </div>
+            )}
+
+            {hasAudio && (
+              <div className="space-y-2">
+                {profile.audio_prompts!.map((prompt) => (
                   <button
                     key={prompt.id}
                     onClick={() => togglePlayPrompt(prompt)}
@@ -286,75 +339,50 @@ export function ProfileCard({
                 ))}
               </div>
             )}
-            {(profile.num_kids || profile.family_plans || profile.smoking_status || profile.drinking_status || profile.vaping_status || profile.has_tattoos || profile.pets || profile.activity_level || profile.nightlife_frequency || profile.height_cm || profile.gender) && (
-              <div className="flex flex-wrap gap-2 mb-3">
-                {profile.gender && GENDER_LABELS[profile.gender] && (
-                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
-                    {GENDER_LABELS[profile.gender]}
-                  </span>
-                )}
-                {profile.height_cm && (
-                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
-                    <Ruler size={13} className="shrink-0" /> {cmToDisplay(profile.height_cm, "cm")} cm
-                  </span>
-                )}
-                {profile.num_kids && NUM_KIDS_LABELS[profile.num_kids] && (
-                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
-                    <Baby size={13} className="shrink-0" /> {NUM_KIDS_LABELS[profile.num_kids]}
-                  </span>
-                )}
-                {profile.family_plans && FAMILY_PLANS_LABELS[profile.family_plans] && (
-                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
-                    <Users size={13} className="shrink-0" /> {FAMILY_PLANS_LABELS[profile.family_plans]}
-                  </span>
-                )}
-                {profile.smoking_status && SMOKING_LABELS[profile.smoking_status] && (
-                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
-                    <Cigarette size={13} className="shrink-0" /> {SMOKING_LABELS[profile.smoking_status]}
-                  </span>
-                )}
-                {profile.vaping_status && VAPING_LABELS[profile.vaping_status] && (
-                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
-                    <Wind size={13} className="shrink-0" /> {VAPING_LABELS[profile.vaping_status]}
-                  </span>
-                )}
-                {profile.drinking_status && DRINKING_LABELS[profile.drinking_status] && (
-                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
-                    <Wine size={13} className="shrink-0" /> {DRINKING_LABELS[profile.drinking_status]}
-                  </span>
-                )}
-                {profile.has_tattoos && TATTOO_LABELS[profile.has_tattoos] && (
-                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
-                    <PenTool size={13} className="shrink-0" /> {TATTOO_LABELS[profile.has_tattoos]}
-                  </span>
-                )}
-                {profile.pets && PETS_LABELS[profile.pets] && (
-                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
-                    <PawPrint size={13} className="shrink-0" /> {PETS_LABELS[profile.pets]}
-                  </span>
-                )}
-                {profile.activity_level && ACTIVITY_LEVEL_LABELS[profile.activity_level] && (
-                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
-                    <Dumbbell size={13} className="shrink-0" /> {ACTIVITY_LEVEL_LABELS[profile.activity_level]}
-                  </span>
-                )}
-                {profile.nightlife_frequency && NIGHTLIFE_LABELS[profile.nightlife_frequency] && (
-                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
-                    <PartyPopper size={13} className="shrink-0" /> {NIGHTLIFE_LABELS[profile.nightlife_frequency]}
-                  </span>
-                )}
+
+            {hasLifestyle && (
+              <div className="bg-secondary/40 rounded-2xl p-4">
+                <SectionHeader icon={Dumbbell} label="Lifestyle & Habits" />
+                <div className="flex flex-wrap gap-2">
+                  {profile.height_cm && <FactPill icon={Ruler}>{cmToDisplay(profile.height_cm, "cm")} cm</FactPill>}
+                  {profile.num_kids && NUM_KIDS_LABELS[profile.num_kids] && <FactPill icon={Baby}>{NUM_KIDS_LABELS[profile.num_kids]}</FactPill>}
+                  {profile.family_plans && FAMILY_PLANS_LABELS[profile.family_plans] && <FactPill icon={Users}>{FAMILY_PLANS_LABELS[profile.family_plans]}</FactPill>}
+                  {profile.smoking_status && SMOKING_LABELS[profile.smoking_status] && <FactPill icon={Cigarette}>{SMOKING_LABELS[profile.smoking_status]}</FactPill>}
+                  {profile.vaping_status && VAPING_LABELS[profile.vaping_status] && <FactPill icon={Wind}>{VAPING_LABELS[profile.vaping_status]}</FactPill>}
+                  {profile.drinking_status && DRINKING_LABELS[profile.drinking_status] && <FactPill icon={Wine}>{DRINKING_LABELS[profile.drinking_status]}</FactPill>}
+                  {profile.has_tattoos && TATTOO_LABELS[profile.has_tattoos] && <FactPill icon={PenTool}>{TATTOO_LABELS[profile.has_tattoos]}</FactPill>}
+                  {profile.pets && PETS_LABELS[profile.pets] && <FactPill icon={PawPrint}>{PETS_LABELS[profile.pets]}</FactPill>}
+                  {profile.activity_level && ACTIVITY_LEVEL_LABELS[profile.activity_level] && <FactPill icon={Dumbbell}>{ACTIVITY_LEVEL_LABELS[profile.activity_level]}</FactPill>}
+                  {profile.nightlife_frequency && NIGHTLIFE_LABELS[profile.nightlife_frequency] && <FactPill icon={PartyPopper}>{NIGHTLIFE_LABELS[profile.nightlife_frequency]}</FactPill>}
+                </div>
               </div>
             )}
-            {profile.personality_tags?.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-2">
-                {profile.personality_tags.map((tag) => (
-                  <span key={tag} className="px-3 py-1 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
-                    {tag}
-                  </span>
-                ))}
+
+            {hasInterests && (
+              <div className="bg-secondary/40 rounded-2xl p-4">
+                <SectionHeader icon={Sparkles} label="Interests" />
+                <div className="flex flex-wrap gap-2">
+                  {profile.personality_tags.map((tag) => (
+                    <span key={tag} className="px-3 py-1.5 rounded-full bg-secondary text-secondary-foreground text-xs font-medium">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
-            {profile.bio && <p className="text-sm text-muted-foreground leading-relaxed">{profile.bio}</p>}
+
+            {hasBackground && (
+              <div className="bg-secondary/40 rounded-2xl p-4">
+                <SectionHeader icon={GraduationCap} label={`More About ${profile.name}`} />
+                <div className="flex flex-wrap gap-2">
+                  {profile.education && <FactPill icon={GraduationCap}>{profile.education}</FactPill>}
+                  {profile.languages_spoken && profile.languages_spoken.length > 0 && (
+                    <FactPill icon={Languages}>{profile.languages_spoken.join(", ")}</FactPill>
+                  )}
+                  {profile.languages_other && <FactPill icon={Languages}>{profile.languages_other}</FactPill>}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
