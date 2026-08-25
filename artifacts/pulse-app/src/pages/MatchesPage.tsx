@@ -141,9 +141,30 @@ export default function MatchesPage() {
       // never make it vanish; only an explicit action (block, report,
       // unmatch) should remove one. Fresh data still wins for anything
       // both lists agree exists (e.g. updated message_count/has_unread).
+      //
+      // De-duplicated by matched_user.id, not just match id — a real
+      // production case proved this matters: this cache is persisted to
+      // localStorage PER DEVICE, and evictMatchFromCache only ever runs
+      // on whichever device actually performed an unmatch. A second
+      // device (e.g. the web app, when the unmatch happened in the
+      // native app, or vice versa) keeps the stale match indefinitely in
+      // its own localStorage, since by design nothing here ever
+      // proactively clears a merely-absent entry. If that same person is
+      // later matched with again — a new match row, genuinely a
+      // different id — the stale entry and the fresh one both survive
+      // this merge, since they don't share an id. But the matches table
+      // has a UNIQUE constraint on (user1_id, user2_id): the database
+      // itself guarantees at most one real match with any given person
+      // at a time, so two cards for the same person is never a valid
+      // state regardless of which id caused it. When a stale retained
+      // entry and a fresh entry point at the same person, the fresh one
+      // always wins — the retained one is dropped instead of kept.
       setMatches((prev) => {
         const freshIds = new Set(fresh.map((m: Match) => m.id));
-        const stillMissingFromFresh = prev.filter((m) => !freshIds.has(m.id));
+        const freshUserIds = new Set(fresh.map((m: Match) => m.matched_user?.id).filter(Boolean));
+        const stillMissingFromFresh = prev.filter(
+          (m) => !freshIds.has(m.id) && !(m.matched_user?.id && freshUserIds.has(m.matched_user.id)),
+        );
         const merged = [...fresh, ...stillMissingFromFresh];
         updateMatchesCache(merged);
         return merged;
