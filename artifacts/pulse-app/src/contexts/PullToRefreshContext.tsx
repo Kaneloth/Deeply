@@ -1,4 +1,5 @@
 import { createContext, useContext, useLayoutEffect, useRef, MutableRefObject, ReactNode } from "react";
+import { pullDebugLog } from "@/lib/pullDebugLog";
 
 type RefreshHandler = () => Promise<void> | void;
 
@@ -42,28 +43,27 @@ export function usePullToRefreshRef() {
  *  rather than one captured on first mount. Registration is cleared on
  *  unmount so navigating away correctly disables the gesture.
  *
- *  useLayoutEffect, not useEffect — this was the actual cause of the
- *  "needs two pulls" bug that three separate rounds of overscroll-CSS
- *  and native-WebView-glow fixes failed to touch, because none of them
- *  were addressing the real mechanism. useEffect callbacks are deferred
- *  until after the browser paints — so on a fresh navigation, there's a
- *  real window where the new page is already visible and touchable, but
- *  this effect (which is what actually points the shared ref at THIS
- *  page's onRefresh) hasn't run yet. A pull attempted in that window
- *  hits AppShell's onTouchStart with a stale ref — either null, or
- *  still the PREVIOUS page's handler — and either silently does nothing
- *  or refreshes the wrong page. The very next pull works cleanly simply
- *  because, by then, plenty of time has passed for the deferred effect
- *  to have run. useLayoutEffect runs synchronously right after the DOM
- *  is updated but strictly before the browser paints, so the ref is
- *  guaranteed correct by the time the page is actually visible/
- *  touchable at all — there's no window left for a pull to land in. */
+ *  useLayoutEffect, not useEffect — useEffect callbacks are deferred
+ *  until after the browser paints, so on a fresh navigation there was a
+ *  real window where the new page was already visible/touchable but
+ *  this effect (which points the shared ref at THIS page's onRefresh)
+ *  hadn't run yet. useLayoutEffect runs synchronously right after the
+ *  DOM updates but strictly before paint, closing that window. This
+ *  alone did not resolve the reported "needs two pulls" bug in testing
+ *  — see the pullDebugLog calls below and in AppShell.tsx, added to
+ *  find out why directly rather than theorize further. */
 export function usePullToRefresh(onRefresh: RefreshHandler): void {
   const ref = usePullToRefreshRef();
   useLayoutEffect(() => {
+    pullDebugLog(`REGISTER handler (path=${window.location.pathname})`);
     ref.current = onRefresh;
     return () => {
-      if (ref.current === onRefresh) ref.current = null;
+      if (ref.current === onRefresh) {
+        pullDebugLog(`UNREGISTER handler (path=${window.location.pathname})`);
+        ref.current = null;
+      } else {
+        pullDebugLog(`UNREGISTER skipped — ref already points elsewhere (path=${window.location.pathname})`);
+      }
     };
   });
 }

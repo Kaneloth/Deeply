@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useLocation } from "wouter";
 import { Loader2 } from "lucide-react";
 import { TopBar } from "@/components/TopBar";
@@ -10,6 +10,7 @@ import { DiscoverControlsProvider } from "@/contexts/DiscoverControlsContext";
 import { PullToRefreshProvider, usePullToRefreshRef } from "@/contexts/PullToRefreshContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { BlockedAccountScreen } from "@/components/BlockedAccountScreen";
+import { pullDebugLog, getPullDebugLines, subscribePullDebugLog, clearPullDebugLog } from "@/lib/pullDebugLog";
 
 interface AppShellProps {
   children: ReactNode;
@@ -27,6 +28,51 @@ const MAX_PULL_PX = 100;
 // pull distance — makes the gesture feel like it has resistance, same
 // as the native version, rather than tracking 1:1 with the finger.
 const PULL_DAMPING = 0.5;
+
+// TEMPORARY — on-screen panel showing pullDebugLog's live output, so
+// the gesture can be diagnosed on a real device with no USB debugging
+// set up. Safe to delete (along with pullDebugLog.ts and the log calls
+// in this file and PullToRefreshContext.tsx) once resolved. Collapsed
+// to a small tab by default so it doesn't get in the way of actually
+// testing the gesture; tap to expand.
+function PullDebugOverlay() {
+  const [expanded, setExpanded] = useState(false);
+  const lines = useSyncExternalStore(subscribePullDebugLog, getPullDebugLines);
+
+  if (!expanded) {
+    return (
+      <button
+        onClick={() => setExpanded(true)}
+        className="fixed bottom-24 right-2 z-[200] bg-black/80 text-white text-[10px] px-2 py-1 rounded-md font-mono"
+      >
+        pull log ({lines.length})
+      </button>
+    );
+  }
+
+  return (
+    <div className="fixed inset-x-2 bottom-24 z-[200] max-h-[50vh] bg-black/90 text-white rounded-lg p-2 flex flex-col">
+      <div className="flex items-center justify-between mb-1 shrink-0">
+        <span className="text-[10px] font-mono opacity-70">pull-to-refresh debug log</span>
+        <div className="flex gap-2">
+          <button onClick={() => clearPullDebugLog()} className="text-[10px] font-mono underline">
+            clear
+          </button>
+          <button onClick={() => setExpanded(false)} className="text-[10px] font-mono underline">
+            close
+          </button>
+        </div>
+      </div>
+      <div className="overflow-y-auto flex-1 text-[10px] font-mono leading-tight space-y-0.5">
+        {lines.length === 0 ? (
+          <p className="opacity-50">No events yet — try navigating or pulling.</p>
+        ) : (
+          lines.map((line, i) => <div key={i}>{line}</div>)
+        )}
+      </div>
+    </div>
+  );
+}
 
 function AppShellInner({ children }: AppShellProps) {
   const [location] = useLocation();
@@ -48,6 +94,12 @@ function AppShellInner({ children }: AppShellProps) {
   const [pullDistance, setPullDistance] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  // TEMPORARY — logs every render of this component along with which
+  // route it's for, so the debug log can show gesture-listener
+  // attachment/detachment relative to actual navigations, not just
+  // relative to handler registration.
+  pullDebugLog(`AppShellInner render (location=${location})`);
+
   // Depends on mainShouldExist — NOT empty deps. <main> (and mainRef)
   // only exists in the non-hideChrome, non-blocked branch below; a
   // fresh login routinely renders the hideChrome branch first (the auth
@@ -67,14 +119,29 @@ function AppShellInner({ children }: AppShellProps) {
   // every render — only when <main>'s presence actually changes.
   useEffect(() => {
     const el = mainRef.current;
-    if (!el) return;
+    if (!el) {
+      pullDebugLog("gesture-attach effect ran but mainRef.current is null — listeners NOT attached");
+      return;
+    }
+    pullDebugLog("gesture-attach effect ran — listeners attached to <main>");
 
     const onTouchStart = (e: TouchEvent) => {
-      if (isRefreshingRef.current || !refreshHandlerRef.current) return;
+      if (isRefreshingRef.current) {
+        pullDebugLog("touchstart: bailed — a refresh is already in progress");
+        return;
+      }
+      if (!refreshHandlerRef.current) {
+        pullDebugLog(`touchstart: bailed — refreshHandlerRef.current is NULL (path=${window.location.pathname})`);
+        return;
+      }
       // Only engage right at the top of the scroll area, same as the
       // native gesture — otherwise this would fight normal scrolling
       // anywhere else in a long list.
-      if (el.scrollTop > 0) return;
+      if (el.scrollTop > 0) {
+        pullDebugLog(`touchstart: bailed — scrollTop=${el.scrollTop} (not at top)`);
+        return;
+      }
+      pullDebugLog(`touchstart: OK, gesture engaged (path=${window.location.pathname})`);
       touchStartYRef.current = e.touches[0].clientY;
       isPullingRef.current = true;
     };
@@ -105,15 +172,25 @@ function AppShellInner({ children }: AppShellProps) {
       pullDistanceRef.current = 0;
       setPullDistance(0);
 
+      pullDebugLog(
+        `touchend: finalDistance=${finalDistance.toFixed(0)}px threshold=${PULL_THRESHOLD_PX}px hasHandler=${!!refreshHandlerRef.current}`,
+      );
+
       if (finalDistance >= PULL_THRESHOLD_PX && refreshHandlerRef.current) {
+        pullDebugLog("touchend: triggering refresh handler");
         isRefreshingRef.current = true;
         setIsRefreshing(true);
         try {
           await refreshHandlerRef.current();
+          pullDebugLog("touchend: refresh handler resolved successfully");
+        } catch (err) {
+          pullDebugLog(`touchend: refresh handler THREW: ${err instanceof Error ? err.message : String(err)}`);
         } finally {
           isRefreshingRef.current = false;
           setIsRefreshing(false);
         }
+      } else {
+        pullDebugLog("touchend: below threshold or no handler — no refresh triggered");
       }
     };
 
@@ -123,6 +200,7 @@ function AppShellInner({ children }: AppShellProps) {
     el.addEventListener("touchcancel", onTouchEnd);
 
     return () => {
+      pullDebugLog("gesture-attach effect cleanup — listeners removed from <main>");
       el.removeEventListener("touchstart", onTouchStart);
       el.removeEventListener("touchmove", onTouchMove);
       el.removeEventListener("touchend", onTouchEnd);
@@ -230,6 +308,7 @@ function AppShellInner({ children }: AppShellProps) {
       </main>
 
       <BottomNav />
+      <PullDebugOverlay />
     </div>
   );
 }
