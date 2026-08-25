@@ -1,5 +1,4 @@
 import { createContext, useContext, useLayoutEffect, useRef, MutableRefObject, ReactNode } from "react";
-import { pullDebugLog } from "@/lib/pullDebugLog";
 
 type RefreshHandler = () => Promise<void> | void;
 
@@ -68,16 +67,10 @@ export function usePullToRefresh(onRefresh: RefreshHandler): void {
   latestOnRefresh.current = onRefresh;
 
   useLayoutEffect(() => {
-    pullDebugLog(`REGISTER stable wrapper (path=${window.location.pathname})`);
     const wrapper: RefreshHandler = () => latestOnRefresh.current();
     ref.current = wrapper;
     return () => {
-      if (ref.current === wrapper) {
-        pullDebugLog(`UNREGISTER stable wrapper (path=${window.location.pathname})`);
-        ref.current = null;
-      } else {
-        pullDebugLog(`UNREGISTER skipped — ref already points elsewhere (path=${window.location.pathname})`);
-      }
+      if (ref.current === wrapper) ref.current = null;
     };
     // Intentionally empty deps — this now runs ONLY on mount/unmount,
     // never on every render, since the wrapper it registers never needs
