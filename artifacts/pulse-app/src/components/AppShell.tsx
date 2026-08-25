@@ -279,32 +279,42 @@ function AppShellInner({ children }: AppShellProps) {
             />
           </div>
         )}
-        {indicatorHeight > 0 ? (
-          // Only exists while actively pulling/refreshing — the h-full
-          // here clamps this wrapper to exactly <main>'s visible height
-          // rather than the page's true (often taller, scrollable)
-          // content height. That's fine for the brief moment a pull is
-          // in progress, but making this permanent (as an earlier
-          // version of this file did, to fix Discover's card stack
-          // needing a definite height to fill) broke every other
-          // page's own position: sticky bottom-anchored elements (e.g.
-          // Save buttons on Profile/Preferences) the rest of the time —
-          // sticky positioning needs its container sized to the real
-          // content, not artificially clamped to viewport height.
-          // Discover itself never registers a pull-to-refresh handler
-          // (see PullToRefreshContext's comment on why), so it never
-          // hits this branch at all — its children are always direct
-          // children of <main>, exactly as before, with no wrapper
-          // interference ever.
-          <div
-            className="h-full"
-            style={{ transform: `translateY(${indicatorHeight}px)`, transition: isRefreshing ? "transform 0.2s ease-out" : undefined }}
-          >
-            {children}
-          </div>
-        ) : (
-          children
-        )}
+        {/* Always the SAME div, every render — only its className/style
+            toggle based on indicatorHeight, never whether the div
+            itself exists. This is the fix for the actual root cause of
+            "needs two pulls": the previous version switched between
+            {children} being a direct child of <main> and {children}
+            being wrapped in a div, depending on indicatorHeight. React
+            reconciles by element type at each position in the tree —
+            switching between "no wrapper" and "div wrapper" at the same
+            position meant the div itself was a genuinely different
+            element type appearing where {children} used to be directly,
+            which made React unmount the entire previous subtree
+            (including the whole page component, all its state, and its
+            own usePullToRefresh registration) and mount a fresh one —
+            confirmed directly via debug logs showing the page's pull
+            handler unregister+reregister firing the instant the first
+            touchmove made indicatorHeight go from 0 to positive, on
+            every single page tested. The DOM node the finger was
+            physically touching was being destroyed mid-gesture. Keeping
+            the div itself permanent, and only conditionally applying
+            h-full (still ONLY while indicatorHeight > 0, preserving the
+            original reasoning below about not breaking sticky
+            positioning at rest) means the div's underlying DOM node
+            never gets removed and recreated — React just updates its
+            attributes in place, leaving {children}'s entire component
+            tree, state, and effects completely undisturbed throughout
+            the gesture. */}
+        <div
+          className={indicatorHeight > 0 ? "h-full" : undefined}
+          style={
+            indicatorHeight > 0
+              ? { transform: `translateY(${indicatorHeight}px)`, transition: isRefreshing ? "transform 0.2s ease-out" : undefined }
+              : undefined
+          }
+        >
+          {children}
+        </div>
       </main>
 
       <BottomNav />
