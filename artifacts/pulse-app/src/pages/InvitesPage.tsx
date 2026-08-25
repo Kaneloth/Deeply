@@ -14,6 +14,16 @@ import { ChevronLeft, Star, Lock, Heart, X, MessageCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
 
+// Expanded to match everything ProfileCard.tsx's redesigned, categorized
+// sections can display (Lifestyle & Habits, Interests, More About Me) —
+// previously only carried a handful of summary fields, so an invite
+// opened via InviteDetailOverlay below showed almost none of what
+// Discover/Search/Match Detail now show for the same person. The
+// backend (discover.ts's /discover/invites, /discover/invites/reveal,
+// and /discover/invites/sent all share one underlying select) was
+// updated alongside this to actually select and return these fields,
+// including renaming relationship_type to looking_for to match
+// ProfileCardData's existing prop name.
 interface Invite {
   id: string;
   name: string;
@@ -29,6 +39,23 @@ interface Invite {
   // as the other person's opening message; sent invites show it as a
   // reminder of what was sent.
   message_content: string | null;
+  is_verified?: boolean;
+  is_founder?: boolean;
+  photo_verified?: boolean;
+  looking_for?: string | null;
+  num_kids?: string | null;
+  family_plans?: string | null;
+  smoking_status?: string | null;
+  drinking_status?: string | null;
+  vaping_status?: string | null;
+  has_tattoos?: string | null;
+  pets?: string | null;
+  activity_level?: string | null;
+  nightlife_frequency?: string | null;
+  height_cm?: number | null;
+  education?: string | null;
+  languages_spoken?: string[];
+  languages_other?: string | null;
 }
 
 function InviteDetailOverlay({

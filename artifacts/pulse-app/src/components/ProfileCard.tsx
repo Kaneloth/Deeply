@@ -313,7 +313,7 @@ export function ProfileCard({
           <div className="w-full bg-card px-5 py-4 space-y-3">
             {profile.bio && (
               <div className="bg-secondary/40 rounded-2xl p-4">
-                <SectionHeader icon={Users} label={`About ${profile.name}`} />
+                <SectionHeader icon={Users} label="About Me" />
                 <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">{profile.bio}</p>
               </div>
             )}
@@ -373,7 +373,7 @@ export function ProfileCard({
 
             {hasBackground && (
               <div className="bg-secondary/40 rounded-2xl p-4">
-                <SectionHeader icon={GraduationCap} label={`More About ${profile.name}`} />
+                <SectionHeader icon={GraduationCap} label="More About Me" />
                 <div className="flex flex-wrap gap-2">
                   {profile.education && <FactPill icon={GraduationCap}>{profile.education}</FactPill>}
                   {profile.languages_spoken && profile.languages_spoken.length > 0 && (

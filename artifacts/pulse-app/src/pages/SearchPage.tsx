@@ -22,6 +22,15 @@ const PERSONALITY_TAGS = [
   "Introvert", "Empath", "Creative", "Ambitious",
 ];
 
+// Expanded to match everything ProfileCard.tsx's redesigned, categorized
+// sections can display (Lifestyle & Habits, Interests, More About Me) —
+// previously only carried a handful of summary fields, so a search
+// result opened via ProfileDetailOverlay below showed almost none of
+// what Discover/Invites/Match Detail now show for the same person. The
+// backend (discover.ts's /discover/search and /discover/categories/:key)
+// was updated alongside this to actually select and return these
+// fields, including renaming relationship_type to looking_for to match
+// ProfileCardData's existing prop name.
 interface Result {
   id: string;
   name: string;
@@ -34,6 +43,23 @@ interface Result {
   personality_tags: string[];
   integrity_score: number;
   invite_pending?: boolean;
+  is_verified?: boolean;
+  is_founder?: boolean;
+  photo_verified?: boolean;
+  looking_for?: string | null;
+  num_kids?: string | null;
+  family_plans?: string | null;
+  smoking_status?: string | null;
+  drinking_status?: string | null;
+  vaping_status?: string | null;
+  has_tattoos?: string | null;
+  pets?: string | null;
+  activity_level?: string | null;
+  nightlife_frequency?: string | null;
+  height_cm?: number | null;
+  education?: string | null;
+  languages_spoken?: string[];
+  languages_other?: string | null;
 }
 
 interface Category {

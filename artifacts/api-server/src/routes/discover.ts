@@ -452,11 +452,17 @@ router.post("/discover/undo", requireAuth, async (req, res): Promise<void> => {
 
   await supabase.from("swipes").delete().eq("id", lastSwipe.id);
 
-  const { data: restoredProfile } = await supabase
+  const { data: restoredProfileRaw } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, num_kids, family_plans, smoking_status, drinking_status")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, num_kids, family_plans, smoking_status, drinking_status, vaping_status, has_tattoos, pets, activity_level, nightlife_frequency, height_cm, education, languages_spoken, languages_other, relationship_type")
     .eq("id", lastSwipe.target_id)
     .single();
+
+  // Same rename as buildDiscoverQueue — ProfileCardData only recognizes
+  // `looking_for`, not the raw `relationship_type` column name.
+  const restoredProfile = restoredProfileRaw
+    ? (({ relationship_type, ...rest }) => ({ ...rest, looking_for: relationship_type ?? null }))(restoredProfileRaw)
+    : null;
 
   const [restoredWithPhotos] = restoredProfile ? await attachPhotoGalleries([restoredProfile]) : [null];
   const [restoredWithAudio] = restoredWithPhotos ? await attachAudioPrompts([restoredWithPhotos]) : [null];
@@ -534,15 +540,18 @@ router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => 
 
   const { data: revealedProfiles } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, num_kids, family_plans, smoking_status, drinking_status, latitude, longitude")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, num_kids, family_plans, smoking_status, drinking_status, vaping_status, has_tattoos, pets, activity_level, nightlife_frequency, height_cm, education, languages_spoken, languages_other, relationship_type, latitude, longitude")
     .in("id", revealedPendingIds);
 
   const superLikerIds = new Set(
     pendingInviters.filter((p) => p.direction === "super_like").map((p) => p.id),
   );
   const messageById = new Map(pendingInviters.map((p) => [p.id, p.message_content]));
-  const enriched = (revealedProfiles ?? []).map((p) => ({
+  // relationship_type renamed to looking_for — see the comment above
+  // buildDiscoverQueue's own stripping step for why this rename exists.
+  const enriched = (revealedProfiles ?? []).map(({ relationship_type, ...p }) => ({
     ...p,
+    looking_for: relationship_type ?? null,
     super_liked: superLikerIds.has(p.id),
     message_content: messageById.get(p.id) ?? null,
   }));
@@ -632,7 +641,7 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
 
   const { data: inviters } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, num_kids, family_plans, smoking_status, drinking_status, latitude, longitude")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, num_kids, family_plans, smoking_status, drinking_status, vaping_status, has_tattoos, pets, activity_level, nightlife_frequency, height_cm, education, languages_spoken, languages_other, relationship_type, latitude, longitude")
     .in("id", pendingInviterIds);
 
   const superLikerIds = new Set(
@@ -640,8 +649,9 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
   );
   const messageById = new Map(pendingInviters.map((p) => [p.id, p.message_content]));
 
-  const enriched = (inviters ?? []).map((l) => ({
+  const enriched = (inviters ?? []).map(({ relationship_type, ...l }) => ({
     ...l,
+    looking_for: relationship_type ?? null,
     super_liked: superLikerIds.has(l.id),
     message_content: messageById.get(l.id) ?? null,
   }));
@@ -686,8 +696,8 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
     .from("profiles")
     .select(
       "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, " +
-        "gender, looking_for_gender, num_kids, family_plans, smoking_status, vaping_status, drinking_status, nightlife_frequency, has_tattoos, pets, activity_level, height_cm, " +
-        "latitude, longitude",
+        "gender, looking_for_gender, relationship_type, num_kids, family_plans, smoking_status, vaping_status, drinking_status, nightlife_frequency, has_tattoos, pets, activity_level, height_cm, " +
+        "education, languages_spoken, languages_other, latitude, longitude",
     )
     .not("id", "in", `(${excludedIds.join(",")})`)
     .eq("is_incognito", false);
@@ -732,8 +742,9 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
     ? withDistance.filter((c) => c.distance_km === null || c.distance_km <= radiusKm)
     : withDistance;
 
-  const stripped = withinRadius.slice(0, 30).map(({ latitude, longitude, ...rest }) => ({
+  const stripped = withinRadius.slice(0, 30).map(({ latitude, longitude, relationship_type, ...rest }) => ({
     ...rest,
+    looking_for: relationship_type ?? null,
     invite_pending: pendingInvitedSet.has(rest.id),
   }));
 
@@ -877,7 +888,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
     "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, " +
     "gender, looking_for_gender, relationship_type, dating_intentions, " +
     "num_kids, family_plans, smoking_status, vaping_status, drinking_status, nightlife_frequency, has_tattoos, pets, activity_level, height_cm, " +
-    "latitude, longitude";
+    "education, languages_spoken, languages_other, latitude, longitude";
 
   const { data: viewerProfile } = await supabase
     .from("profiles")
@@ -997,7 +1008,15 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
     });
   }
 
-  const withDistance = await attachDistances(userId, results);
+  // Rename relationship_type -> looking_for — same reason as
+  // buildDiscoverQueue's stripping step: ProfileCardData only
+  // recognizes `looking_for`, so this endpoint's results previously had
+  // the correct data fetched but under a field name the card never
+  // reads, making "Looking For" silently show nothing for anyone
+  // browsed via Search's Explore categories.
+  const renamed = results.map(({ relationship_type, ...rest }) => ({ ...rest, looking_for: relationship_type ?? null }));
+
+  const withDistance = await attachDistances(userId, renamed);
   const withPhotosAndAudio = await attachPhotosAndAudio(withDistance);
 
   res.json({ results: withComputedAges(withPhotosAndAudio) });
@@ -1131,15 +1150,16 @@ router.get("/discover/invites/sent", requireAuth, async (req, res): Promise<void
 
   const { data: sentProfiles } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, num_kids, family_plans, smoking_status, drinking_status, latitude, longitude")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, num_kids, family_plans, smoking_status, drinking_status, vaping_status, has_tattoos, pets, activity_level, nightlife_frequency, height_cm, education, languages_spoken, languages_other, relationship_type, latitude, longitude")
     .in("id", pendingSentIds);
 
   const superSentIds = new Set(
     (outgoingLikes ?? []).filter((l) => l.direction === "super_like").map((l) => l.target_id),
   );
   const messageByTargetId = new Map((outgoingLikes ?? []).map((l) => [l.target_id, l.message_content ?? null]));
-  const enriched = (sentProfiles ?? []).map((p) => ({
+  const enriched = (sentProfiles ?? []).map(({ relationship_type, ...p }) => ({
     ...p,
+    looking_for: relationship_type ?? null,
     super_liked: superSentIds.has(p.id),
     message_content: messageByTargetId.get(p.id) ?? null,
   }));

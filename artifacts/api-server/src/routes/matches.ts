@@ -72,15 +72,29 @@ const MATCH_SELECT = `
   *,
   user1:profiles!matches_user1_id_fkey(
     id, name, age, birthday, bio, city, photo_url,
-    integrity_score, personality_tags, is_verified, photo_verified, created_at,
-    num_kids, family_plans, smoking_status, drinking_status
+    integrity_score, personality_tags, is_verified, photo_verified, is_founder, created_at,
+    num_kids, family_plans, smoking_status, drinking_status, vaping_status, has_tattoos, pets,
+    activity_level, nightlife_frequency, height_cm, education, languages_spoken, languages_other,
+    relationship_type
   ),
   user2:profiles!matches_user2_id_fkey(
     id, name, age, birthday, bio, city, photo_url,
-    integrity_score, personality_tags, is_verified, photo_verified, created_at,
-    num_kids, family_plans, smoking_status, drinking_status
+    integrity_score, personality_tags, is_verified, photo_verified, is_founder, created_at,
+    num_kids, family_plans, smoking_status, drinking_status, vaping_status, has_tattoos, pets,
+    activity_level, nightlife_frequency, height_cm, education, languages_spoken, languages_other,
+    relationship_type
   )
 `;
+
+// ProfileCardData only recognizes `looking_for`, not the raw
+// relationship_type column name — same rename applied consistently
+// across discover.ts's endpoints. Without this, Match Detail's card
+// would have the right data fetched but under a field name it never
+// reads, so "Looking For" would silently show nothing.
+function renameLookingFor<T extends Record<string, any>>(profile: T): Omit<T, "relationship_type"> & { looking_for: string | null } {
+  const { relationship_type, ...rest } = profile;
+  return { ...rest, looking_for: relationship_type ?? null };
+}
 
 async function formatMatch(m: Record<string, any>, viewerId: string) {
   const matchedUser = m.user1_id === viewerId ? m.user2 : m.user1;
@@ -88,7 +102,7 @@ async function formatMatch(m: Record<string, any>, viewerId: string) {
   const [withAudio] = withPhotos ? await attachAudioPrompts([withPhotos]) : [null];
   return {
     id: m.id,
-    matched_user: withAudio ? withComputedAge(withAudio) : null,
+    matched_user: withAudio ? renameLookingFor(withComputedAge(withAudio)) : null,
     message_count: m.message_count,
     created_at: m.created_at,
   };
@@ -118,7 +132,7 @@ async function formatMatchesBatch(rawMatches: Record<string, any>[], viewerId: s
     const hydrated = matchedUser ? hydratedById.get(matchedUser.id) : undefined;
     return {
       id: m.id,
-      matched_user: hydrated ? withComputedAge(hydrated) : null,
+      matched_user: hydrated ? renameLookingFor(withComputedAge(hydrated)) : null,
       message_count: m.message_count,
       created_at: m.created_at,
     };
