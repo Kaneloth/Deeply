@@ -296,21 +296,35 @@ function AppShellInner({ children }: AppShellProps) {
             handler unregister+reregister firing the instant the first
             touchmove made indicatorHeight go from 0 to positive, on
             every single page tested. The DOM node the finger was
-            physically touching was being destroyed mid-gesture. Keeping
-            the div itself permanent, and only conditionally applying
-            h-full (still ONLY while indicatorHeight > 0, preserving the
-            original reasoning below about not breaking sticky
-            positioning at rest) means the div's underlying DOM node
-            never gets removed and recreated — React just updates its
-            attributes in place, leaving {children}'s entire component
-            tree, state, and effects completely undisturbed throughout
-            the gesture. */}
+            physically touching was being destroyed mid-gesture.
+
+            display: contents at rest, not just "no className" — an
+            UNSTYLED div still generates a real box, defaulting to
+            height: auto (collapses to content height) rather than
+            inheriting <main>'s own flex-computed height. That broke
+            Discover specifically: its card stack positions cards
+            absolute relative to a height-bearing ancestor, which used
+            to be <main> itself when children were direct children of
+            it — wrapped in even a plain div, that ancestor's height
+            collapsed to zero, blanking the card and collapsing
+            everything below it (the decision buttons) up to just under
+            the header. display: contents makes the div itself produce
+            NO box at all and disappear from layout entirely — its
+            children render exactly as if they were direct children of
+            <main>, identical to the original no-wrapper behavior —
+            while the div still fully exists as a real, permanent DOM/
+            React node throughout, which is what actually prevents the
+            remount. Switched to a real, transformable box (h-full +
+            translateY) only while actively pulling, exactly matching
+            the original temporary-wrapper behavior during a pull —
+            transforms don't apply to display:contents elements, so it
+            has to become a real box for that brief window regardless. */}
         <div
           className={indicatorHeight > 0 ? "h-full" : undefined}
           style={
             indicatorHeight > 0
               ? { transform: `translateY(${indicatorHeight}px)`, transition: isRefreshing ? "transform 0.2s ease-out" : undefined }
-              : undefined
+              : { display: "contents" }
           }
         >
           {children}
