@@ -56,6 +56,29 @@ const COST_ITEM_DEFS: { labelTemplate: string; configKey: string; unitSuffix?: s
   { labelTemplate: "Incognito Mode", configKey: "cost_incognito_per_day", unitSuffix: "/day" },
 ];
 
+// Display names for each bundle — matched against the fixed `id` values
+// in the backend's BUNDLE_DEFINITIONS (sparks.ts), which never change.
+// This used to be shown directly in the bundle card (Starter, Popular,
+// Date Night, ...) but was lost when bundle pricing became admin-
+// configurable: the old static frontend BUNDLES array (which carried
+// its own name alongside id/sparks/price) was replaced by a live fetch
+// from GET /api/sparks/bundles, and the backend's getBundlesWithPrices()
+// was never given a name field to return — Bundle only ever had
+// id/sparks/price_zar/google_product_id, with nothing to display. Kept
+// here on the frontend rather than added to the backend response, since
+// this is purely presentational and the `id` already uniquely and
+// stably identifies each bundle. Falls back to the raw id for any
+// bundle this map doesn't recognize, rather than showing nothing, in
+// case a new bundle is ever added to BUNDLE_DEFINITIONS without this
+// map being updated to match.
+const BUNDLE_NAMES: Record<string, string> = {
+  starter: "Starter",
+  popular: "Popular",
+  date_night: "Date Night",
+  power_user: "Power User",
+  deep_connection: "Deep Connection",
+};
+
 export function SparksModal({ onClose }: { onClose: () => void }) {
   const { token } = useAuth();
   const { refresh: refreshSparksBadge } = useSparks();
@@ -316,7 +339,10 @@ export function SparksModal({ onClose }: { onClose: () => void }) {
                     >
                       <div className="flex items-center gap-2">
                         <SparkIcon size={16} className="text-primary" />
-                        <span className="font-['Syne'] font-bold text-lg">{bundle.sparks}</span>
+                        <div>
+                          <p className="font-['Syne'] font-bold text-lg leading-tight">{bundle.sparks}</p>
+                          <p className="text-xs text-muted-foreground leading-tight">{BUNDLE_NAMES[bundle.id] ?? bundle.id}</p>
+                        </div>
                       </div>
                       <button
                         onClick={() => handlePurchase(bundle)}
