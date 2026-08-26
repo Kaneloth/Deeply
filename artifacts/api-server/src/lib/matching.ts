@@ -60,15 +60,27 @@ export const LIFESTYLE_FIELD_KEYS: (keyof LifestyleFields)[] = [
  *  Non-dealbreaker preferences are never checked here — they only
  *  influence the soft score below, never exclude. This is deliberate:
  *  with a small user base, hard-filtering on every preference by
- *  default would shrink the pool to almost nothing. */
+ *  default would shrink the pool to almost nothing.
+ *
+ *  `viewerPrefs` must have the viewer's pref_<field> columns selected
+ *  (pref_smoking_status, pref_num_kids, etc.) — this reads
+ *  `pref_${key}`, not `key` directly, since a person's OWN
+ *  smoking_status and their PREFERENCE for a partner's smoking_status
+ *  are two different columns. This previously read `viewerPrefs[key]`
+ *  directly, which is undefined on every viewer object actually passed
+ *  in from discover.ts (those only ever select the pref_-prefixed
+ *  columns for the viewer) — meaning `wanted` was always falsy and this
+ *  function silently never excluded anyone, regardless of dealbreakers
+ *  set or toggle state. computeCompatibilityScore below already used
+ *  the correct `pref_${key}` pattern; this now matches it. */
 export function passesDealbreakers(
   candidate: LifestyleFields,
-  viewerPrefs: LifestyleFields,
+  viewerPrefs: Record<string, string | null | undefined>,
   dealbreakers: string[],
 ): boolean {
   for (const key of LIFESTYLE_FIELD_KEYS) {
     if (!dealbreakers.includes(key)) continue;
-    const wanted = viewerPrefs[key];
+    const wanted = viewerPrefs[`pref_${key}`];
     if (!wanted || wanted === "any") continue;
     if (candidate[key] !== wanted) return false;
   }
@@ -144,16 +156,22 @@ export const HEIGHT_FILTER_SETTINGS_KEY = "filter_height_enabled";
  *  toggle on — that's the entire point: today, a set-but-not-flagged
  *  preference only ever influenced the soft score; once its toggle is
  *  on, it becomes a real requirement, with no code change needed at
- *  that point. */
+ *  that point.
+ *
+ *  `viewerPrefs` must have the viewer's pref_<field> columns selected —
+ *  reads `pref_${key}`, same fix and same reasoning as passesDealbreakers
+ *  above (this was originally copied from that function's now-corrected
+ *  buggy pattern, so it shared the identical "never actually excludes
+ *  anyone" bug). */
 export function passesEnabledPreferenceFilters(
   candidate: LifestyleFields,
-  viewerPrefs: LifestyleFields,
+  viewerPrefs: Record<string, string | null | undefined>,
   enabledFilters: Record<string, boolean>,
 ): boolean {
   for (const key of LIFESTYLE_FIELD_KEYS) {
     const settingsKey = PREFERENCE_FILTER_SETTINGS_KEYS[key];
     if (!enabledFilters[settingsKey]) continue;
-    const wanted = viewerPrefs[key];
+    const wanted = viewerPrefs[`pref_${key}`];
     if (!wanted || wanted === "any") continue;
     if (candidate[key] !== wanted) return false;
   }
