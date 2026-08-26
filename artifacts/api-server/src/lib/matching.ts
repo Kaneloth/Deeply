@@ -93,6 +93,95 @@ export function passesAgeRange(
   return candidateAge >= min && candidateAge <= max;
 }
 
+// Maps each lifestyle field to the admin-configurable app_settings key
+// that controls whether it's ALLOWED to hard-filter at all, platform-
+// wide. This is deliberately separate from — and independent of — the
+// per-user `dealbreakers` mechanism above: passesDealbreakers already
+// lets an individual user opt a field into hard-filtering for
+// themselves specifically. This map is the future-facing, admin-side
+// switch: once the platform has enough users to safely narrow Discover
+// pools, an admin flips ONE of these keys on and EVERY user's own
+// preference for that field (set on their Preferences page, whether or
+// not they ever touched "dealbreakers") starts being enforced as a real
+// hard filter, with zero code changes needed at that point — see
+// passesEnabledPreferenceFilters below. Kept as individual keys, one
+// per field, rather than a single master switch, specifically so an
+// admin can turn these on gradually and observe each one's effect on
+// pool size before enabling the next, rather than committing to all of
+// them simultaneously.
+export const PREFERENCE_FILTER_SETTINGS_KEYS: Record<keyof LifestyleFields, string> = {
+  num_kids: "filter_num_kids_enabled",
+  family_plans: "filter_family_plans_enabled",
+  smoking_status: "filter_smoking_enabled",
+  vaping_status: "filter_vaping_enabled",
+  drinking_status: "filter_drinking_enabled",
+  nightlife_frequency: "filter_nightlife_enabled",
+  has_tattoos: "filter_tattoos_enabled",
+  pets: "filter_pets_enabled",
+  activity_level: "filter_activity_level_enabled",
+};
+
+// Height gets its own settings key rather than reusing the shape above
+// — it's a min/max RANGE preference (pref_height_min_cm/max_cm), not a
+// single-value match like every other lifestyle field, so it needs its
+// own check function (passesHeightRange below) rather than fitting into
+// the generic per-field loop.
+export const HEIGHT_FILTER_SETTINGS_KEY = "filter_height_enabled";
+
+/** True if every lifestyle field the viewer has a specific preference
+ *  set for (not "any"/empty) is satisfied by `candidate` — but ONLY for
+ *  fields whose corresponding admin toggle (PREFERENCE_FILTER_SETTINGS_KEYS)
+ *  is currently on. `enabledFilters` should be the live app_settings
+ *  values, keyed by the SAME settings-key strings this file defines
+ *  above — callers fetch these once per request the same way they
+ *  already fetch dealbreakers_enabled/incognito_enabled elsewhere.
+ *
+ *  This intentionally does NOT check the viewer's `dealbreakers` array
+ *  at all — that's a fully separate, independent hard-filter path
+ *  (passesDealbreakers above), and a candidate must pass BOTH checks to
+ *  stay in the pool. A field a user never dealbreaker'd can still
+ *  exclude someone here, the moment an admin turns its platform-wide
+ *  toggle on — that's the entire point: today, a set-but-not-flagged
+ *  preference only ever influenced the soft score; once its toggle is
+ *  on, it becomes a real requirement, with no code change needed at
+ *  that point. */
+export function passesEnabledPreferenceFilters(
+  candidate: LifestyleFields,
+  viewerPrefs: LifestyleFields,
+  enabledFilters: Record<string, boolean>,
+): boolean {
+  for (const key of LIFESTYLE_FIELD_KEYS) {
+    const settingsKey = PREFERENCE_FILTER_SETTINGS_KEYS[key];
+    if (!enabledFilters[settingsKey]) continue;
+    const wanted = viewerPrefs[key];
+    if (!wanted || wanted === "any") continue;
+    if (candidate[key] !== wanted) return false;
+  }
+  return true;
+}
+
+/** Height counterpart to passesAgeRange — but gated behind its own
+ *  admin toggle (HEIGHT_FILTER_SETTINGS_KEY), unlike age range which is
+ *  always enforced. Height preferences are currently informational/
+ *  soft-scoring only; this is what will make them a real hard filter
+ *  once the platform is ready, purely by an admin flipping one setting.
+ *  Only applies when the viewer has actually set BOTH a min and a max
+ *  — a partially-set range is treated as "no preference yet" rather
+ *  than guessing at the missing bound. A candidate with no recorded
+ *  height is kept rather than excluded, same reasoning as age range:
+ *  excluding for missing data is punitive, not useful. */
+export function passesHeightRange(
+  candidateHeightCm: number | null | undefined,
+  viewerPrefHeightMinCm: number | null | undefined,
+  viewerPrefHeightMaxCm: number | null | undefined,
+  enabledFilters: Record<string, boolean>,
+): boolean {
+  if (!enabledFilters[HEIGHT_FILTER_SETTINGS_KEY]) return true;
+  if (candidateHeightCm == null) return true;
+  if (viewerPrefHeightMinCm == null || viewerPrefHeightMaxCm == null) return true;
+  return candidateHeightCm >= viewerPrefHeightMinCm && candidateHeightCm <= viewerPrefHeightMaxCm;
+}
+
 interface CandidateForScoring extends LifestyleFields {
   relationship_type?: string | null;
   dating_intentions?: string[] | null;

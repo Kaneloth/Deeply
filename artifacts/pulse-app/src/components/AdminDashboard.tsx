@@ -160,6 +160,30 @@ export function AdminDashboard({ access, onClose }: { access: AdminAccess; onClo
 // ============================================================
 // Overview
 // ============================================================
+// Discover hard filters — future-facing, one admin-controlled toggle per
+// preference field, matching matching.ts's PREFERENCE_FILTER_SETTINGS_KEYS
+// and HEIGHT_FILTER_SETTINGS_KEY exactly (key strings must stay in sync
+// with that file). Each starts OFF and does nothing today; a user's own
+// preference for a field only ever influences soft ranking until an
+// admin flips its specific switch here, at which point it becomes a
+// real hard exclusion in Discover/Search/Categories with no further
+// code changes needed. Deliberately individual, not one master switch
+// — the whole point is being able to turn these on gradually, one at a
+// time, and watch each one's effect on pool size before enabling the
+// next, once the user base is large enough to support narrowing it.
+const PREFERENCE_FILTER_DEFS: { key: string; label: string; description: string }[] = [
+  { key: "filter_num_kids_enabled", label: "Kids", description: "Hard-filter by number of kids preference" },
+  { key: "filter_family_plans_enabled", label: "Family Plans", description: "Hard-filter by family plans preference" },
+  { key: "filter_smoking_enabled", label: "Smoking", description: "Hard-filter by smoking preference" },
+  { key: "filter_vaping_enabled", label: "Vaping", description: "Hard-filter by vaping preference" },
+  { key: "filter_drinking_enabled", label: "Drinking", description: "Hard-filter by drinking preference" },
+  { key: "filter_nightlife_enabled", label: "Nightlife", description: "Hard-filter by nightlife frequency preference" },
+  { key: "filter_tattoos_enabled", label: "Tattoos", description: "Hard-filter by tattoos preference" },
+  { key: "filter_pets_enabled", label: "Pets", description: "Hard-filter by pets preference" },
+  { key: "filter_activity_level_enabled", label: "Activity Level", description: "Hard-filter by activity level preference" },
+  { key: "filter_height_enabled", label: "Height Range", description: "Hard-filter by min/max height preference" },
+];
+
 function OverviewSection({ token, toast }: { token: string | null; toast: any }) {
   const [stats, setStats] = useState<Record<string, number> | null>(null);
   const [loading, setLoading] = useState(true);
@@ -167,6 +191,13 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
   const [isTogglingIncognito, setIsTogglingIncognito] = useState(false);
   const [dealbreakersEnabled, setDealbreakersEnabled] = useState(false);
   const [isTogglingDealbreakers, setIsTogglingDealbreakers] = useState(false);
+  // One shared map for all ten preference-filter toggles, rather than
+  // ten separate useState pairs — these are all read/written the exact
+  // same generic way (see togglePreferenceFilter below), so a single
+  // Record keyed by settings-key scales to this many without repeating
+  // boilerplate per field.
+  const [preferenceFilters, setPreferenceFilters] = useState<Record<string, boolean>>({});
+  const [togglingFilterKey, setTogglingFilterKey] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/admin/overview", { headers: { Authorization: `Bearer ${token}` } })
@@ -179,6 +210,12 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
         if (body) {
           setIncognitoEnabled(body.incognito_enabled === true);
           setDealbreakersEnabled(body.dealbreakers_enabled === true);
+          // /api/app-settings already returns every key unfiltered, so
+          // no separate endpoint/request is needed for these ten — just
+          // pick each one out of the same response body.
+          setPreferenceFilters(
+            Object.fromEntries(PREFERENCE_FILTER_DEFS.map((def) => [def.key, body[def.key] === true])),
+          );
         }
       })
       .catch(() => {});
@@ -235,6 +272,34 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
       });
     } finally {
       setIsTogglingDealbreakers(false);
+    }
+  };
+
+  const togglePreferenceFilter = async (key: string, currentValue: boolean) => {
+    const next = !currentValue;
+    setTogglingFilterKey(key);
+    try {
+      const res = await fetch("/api/admin/settings", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ key, value: next }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "Failed to update setting");
+      setPreferenceFilters((prev) => ({ ...prev, [key]: next }));
+      const def = PREFERENCE_FILTER_DEFS.find((d) => d.key === key);
+      toast({ title: next ? `${def?.label} filter enabled` : `${def?.label} filter disabled` });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to update setting.",
+        variant: "destructive",
+      });
+    } finally {
+      setTogglingFilterKey(null);
     }
   };
 
@@ -299,6 +364,36 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
             <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${dealbreakersEnabled ? "right-1" : "left-1"}`} />
           </div>
         </button>
+      </div>
+
+      <div>
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2 pl-1">Discover Hard Filters</p>
+        <p className="text-xs text-muted-foreground mb-2 pl-1">
+          Each field below starts OFF and currently only softly influences ranking. Turning one on makes it a real
+          requirement in Discover, Search, and Categories — any user who's set that preference will only be shown
+          people who match it. Recommended to enable these one at a time and watch pool sizes before adding the next.
+        </p>
+        <div className="bg-card border border-card-border rounded-2xl divide-y divide-border">
+          {PREFERENCE_FILTER_DEFS.map((def) => {
+            const isEnabled = preferenceFilters[def.key] === true;
+            return (
+              <button
+                key={def.key}
+                onClick={() => togglePreferenceFilter(def.key, isEnabled)}
+                disabled={togglingFilterKey === def.key}
+                className="w-full flex items-center justify-between p-3.5 disabled:opacity-60 first:rounded-t-2xl last:rounded-b-2xl"
+              >
+                <div className="text-left">
+                  <p className="text-sm font-medium">{def.label}</p>
+                  <p className="text-xs text-muted-foreground">{def.description}</p>
+                </div>
+                <div className={`h-6 w-10 rounded-full relative transition-colors shrink-0 ${isEnabled ? "bg-primary" : "bg-secondary"}`}>
+                  <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${isEnabled ? "right-1" : "left-1"}`} />
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

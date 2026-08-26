@@ -8,12 +8,41 @@ import { withComputedAge, withComputedAges, calculateAge } from "../lib/age";
 import { consumeFreeInviteOrCharge } from "../lib/invites-quota";
 import { getExcludedCandidateIds, getPendingInviterIds, getCandidateExclusionSets, rememberRevealed, getStickyRevealed, rememberReshuffleTimestamp, getStickyReshuffleTimestamp, rememberMatched } from "../lib/discover-exclusions";
 import { haversineDistanceKm } from "../lib/geo";
-import { genderSatisfiesPreference, passesDealbreakers, passesAgeRange, computeCompatibilityScore } from "../lib/matching";
+import { genderSatisfiesPreference, passesDealbreakers, passesAgeRange, computeCompatibilityScore, passesEnabledPreferenceFilters, passesHeightRange } from "../lib/matching";
 import { getEconomyConfig } from "../lib/economy-config";
 
 const router: IRouter = Router();
 
 const RESHUFFLE_FREE_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Fetches every admin-configurable preference-filter toggle in one
+// query, keyed exactly by the settings-key strings matching.ts's
+// PREFERENCE_FILTER_SETTINGS_KEYS/HEIGHT_FILTER_SETTINGS_KEY define —
+// so passesEnabledPreferenceFilters/passesHeightRange can be handed
+// this object directly with no translation step. Same app_settings
+// table already powering incognito_enabled/dealbreakers_enabled; a
+// missing/unset key correctly reads as `undefined`, which the filter
+// functions already treat as "off", so a brand-new toggle nobody has
+// touched yet defaults safely to disabled rather than needing a
+// migration to seed a default value first.
+async function getEnabledPreferenceFilters(): Promise<Record<string, boolean>> {
+  const { data } = await supabase
+    .from("app_settings")
+    .select("key, value")
+    .in("key", [
+      "filter_num_kids_enabled",
+      "filter_family_plans_enabled",
+      "filter_smoking_enabled",
+      "filter_vaping_enabled",
+      "filter_drinking_enabled",
+      "filter_nightlife_enabled",
+      "filter_tattoos_enabled",
+      "filter_pets_enabled",
+      "filter_activity_level_enabled",
+      "filter_height_enabled",
+    ]);
+  return Object.fromEntries((data ?? []).map((row) => [row.key, row.value === true]));
+}
 
 async function attachPhotosAndAudio<T extends { id: string; photo_url: string | null }>(items: T[]) {
   const [withPhotos, withAudio] = await Promise.all([
@@ -42,17 +71,18 @@ async function attachDistances<T extends { id: string; latitude?: number | null;
 }
 
 async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []) {
-  const [excludedFromHistory, { data: viewer }] = await Promise.all([
+  const [excludedFromHistory, { data: viewer }, enabledFilters] = await Promise.all([
     getExcludedCandidateIds(userId),
     supabase
       .from("profiles")
       .select(
         "latitude, longitude, distance_km, gender, looking_for_gender, relationship_type, dating_intentions, personality_tags, dealbreakers, " +
-          "pref_age_min, pref_age_max, " +
+          "pref_age_min, pref_age_max, pref_height_min_cm, pref_height_max_cm, " +
           "pref_num_kids, pref_family_plans, pref_smoking_status, pref_vaping_status, pref_drinking_status, pref_nightlife_frequency, pref_has_tattoos, pref_pets, pref_activity_level",
       )
       .eq("id", userId)
       .single(),
+    getEnabledPreferenceFilters(),
   ]);
   const excludedIds = [...excludedFromHistory, ...extraExcludeIds];
 
@@ -83,6 +113,8 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
     if (!genderSatisfiesPreference(c.gender, viewer.looking_for_gender)) return false;
     if (!genderSatisfiesPreference(viewer.gender, c.looking_for_gender)) return false;
     if (!passesDealbreakers(c, viewer, dealbreakers)) return false;
+    if (!passesEnabledPreferenceFilters(c, viewer, enabledFilters)) return false;
+    if (!passesHeightRange(c.height_cm, viewer.pref_height_min_cm, viewer.pref_height_max_cm, enabledFilters)) return false;
     if (!passesAgeRange(calculateAge(c.birthday ?? null) ?? c.age, viewer.pref_age_min, viewer.pref_age_max)) return false;
     return true;
   });
@@ -677,14 +709,17 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
   const excludedIds = isExplicitNameSearch ? hardExcluded : [...hardExcluded, ...pendingInvitedIds];
   const pendingInvitedSet = new Set(pendingInvitedIds);
 
-  const { data: viewer } = await supabase
-    .from("profiles")
-    .select(
-      "latitude, longitude, distance_km, gender, looking_for_gender, dealbreakers, pref_age_min, pref_age_max, " +
-        "pref_num_kids, pref_family_plans, pref_smoking_status, pref_vaping_status, pref_drinking_status, pref_nightlife_frequency, pref_has_tattoos, pref_pets, pref_activity_level",
-    )
-    .eq("id", userId)
-    .single();
+  const [{ data: viewer }, enabledFilters] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select(
+        "latitude, longitude, distance_km, gender, looking_for_gender, dealbreakers, pref_age_min, pref_age_max, pref_height_min_cm, pref_height_max_cm, " +
+          "pref_num_kids, pref_family_plans, pref_smoking_status, pref_vaping_status, pref_drinking_status, pref_nightlife_frequency, pref_has_tattoos, pref_pets, pref_activity_level",
+      )
+      .eq("id", userId)
+      .single(),
+    getEnabledPreferenceFilters(),
+  ]);
   const viewerHasLocation = viewer?.latitude != null && viewer?.longitude != null;
   const radiusKm = viewer?.distance_km ?? 25;
   const dealbreakers: string[] = viewer?.dealbreakers ?? [];
@@ -727,6 +762,8 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
     if (!genderSatisfiesPreference(c.gender, viewer?.looking_for_gender)) return false;
     if (!genderSatisfiesPreference(viewer?.gender, c.looking_for_gender)) return false;
     if (viewer && !passesDealbreakers(c, viewer, dealbreakers)) return false;
+    if (viewer && !passesEnabledPreferenceFilters(c, viewer, enabledFilters)) return false;
+    if (viewer && !passesHeightRange(c.height_cm, viewer.pref_height_min_cm, viewer.pref_height_max_cm, enabledFilters)) return false;
     return true;
   });
 
@@ -758,16 +795,19 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
 
   const excludedIds = await getExcludedCandidateIds(userId);
   const excludeClause = `(${excludedIds.join(",")})`;
-  const PREVIEW_FIELDS = "id, photo_url, birthday, age, gender, looking_for_gender, num_kids, family_plans, smoking_status, vaping_status, drinking_status, nightlife_frequency, has_tattoos, pets, activity_level";
+  const PREVIEW_FIELDS = "id, photo_url, birthday, age, gender, looking_for_gender, num_kids, family_plans, smoking_status, vaping_status, drinking_status, nightlife_frequency, has_tattoos, pets, activity_level, height_cm";
 
-  const { data: viewerProfile } = await supabase
-    .from("profiles")
-    .select(
-      "city, personality_tags, gender, looking_for_gender, dealbreakers, pref_age_min, pref_age_max, " +
-        "pref_num_kids, pref_family_plans, pref_smoking_status, pref_vaping_status, pref_drinking_status, pref_nightlife_frequency, pref_has_tattoos, pref_pets, pref_activity_level",
-    )
-    .eq("id", userId)
-    .single();
+  const [{ data: viewerProfile }, enabledFilters] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select(
+        "city, personality_tags, gender, looking_for_gender, dealbreakers, pref_age_min, pref_age_max, pref_height_min_cm, pref_height_max_cm, " +
+          "pref_num_kids, pref_family_plans, pref_smoking_status, pref_vaping_status, pref_drinking_status, pref_nightlife_frequency, pref_has_tattoos, pref_pets, pref_activity_level",
+      )
+      .eq("id", userId)
+      .single(),
+    getEnabledPreferenceFilters(),
+  ]);
 
   const dealbreakers: string[] = viewerProfile?.dealbreakers ?? [];
   const applyHardFilters = (candidates: any[]): { count: number; preview_photos: string[] } => {
@@ -775,6 +815,8 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
       if (!genderSatisfiesPreference(c.gender, viewerProfile?.looking_for_gender)) return false;
       if (!genderSatisfiesPreference(viewerProfile?.gender, c.looking_for_gender)) return false;
       if (viewerProfile && !passesDealbreakers(c, viewerProfile, dealbreakers)) return false;
+      if (viewerProfile && !passesEnabledPreferenceFilters(c, viewerProfile, enabledFilters)) return false;
+      if (viewerProfile && !passesHeightRange(c.height_cm, viewerProfile.pref_height_min_cm, viewerProfile.pref_height_max_cm, enabledFilters)) return false;
       const candidateAge = calculateAge(c.birthday ?? null) ?? c.age;
       if (!passesAgeRange(candidateAge, viewerProfile?.pref_age_min, viewerProfile?.pref_age_max)) return false;
       return true;
@@ -890,15 +932,18 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
     "num_kids, family_plans, smoking_status, vaping_status, drinking_status, nightlife_frequency, has_tattoos, pets, activity_level, height_cm, " +
     "education, languages_spoken, languages_other, latitude, longitude";
 
-  const { data: viewerProfile } = await supabase
-    .from("profiles")
-    .select(
-      "city, personality_tags, gender, looking_for_gender, relationship_type, dating_intentions, dealbreakers, " +
-        "pref_age_min, pref_age_max, " +
-        "pref_num_kids, pref_family_plans, pref_smoking_status, pref_vaping_status, pref_drinking_status, pref_nightlife_frequency, pref_has_tattoos, pref_pets, pref_activity_level",
-    )
-    .eq("id", userId)
-    .single();
+  const [{ data: viewerProfile }, enabledFilters] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select(
+        "city, personality_tags, gender, looking_for_gender, relationship_type, dating_intentions, dealbreakers, " +
+          "pref_age_min, pref_age_max, pref_height_min_cm, pref_height_max_cm, " +
+          "pref_num_kids, pref_family_plans, pref_smoking_status, pref_vaping_status, pref_drinking_status, pref_nightlife_frequency, pref_has_tattoos, pref_pets, pref_activity_level",
+      )
+      .eq("id", userId)
+      .single(),
+    getEnabledPreferenceFilters(),
+  ]);
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -1002,6 +1047,8 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
       if (!genderSatisfiesPreference(c.gender, viewerProfile.looking_for_gender)) return false;
       if (!genderSatisfiesPreference(viewerProfile.gender, c.looking_for_gender)) return false;
       if (!passesDealbreakers(c, viewerProfile, dealbreakers)) return false;
+      if (!passesEnabledPreferenceFilters(c, viewerProfile, enabledFilters)) return false;
+      if (!passesHeightRange(c.height_cm, viewerProfile.pref_height_min_cm, viewerProfile.pref_height_max_cm, enabledFilters)) return false;
       const candidateAge = calculateAge(c.birthday ?? null) ?? c.age;
       if (!passesAgeRange(candidateAge, viewerProfile.pref_age_min, viewerProfile.pref_age_max)) return false;
       return true;
