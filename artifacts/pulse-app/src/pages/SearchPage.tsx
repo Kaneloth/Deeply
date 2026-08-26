@@ -12,7 +12,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
 import { MatchCelebration } from "@/components/MatchCelebration";
-import { Search as SearchIcon, Heart, X, MessageCircle, SlidersHorizontal, Sparkles, ShieldCheck, Mic, MapPin, TrendingUp, ChevronLeft, Star } from "lucide-react";
+import { Search as SearchIcon, Heart, X, MessageCircle, SlidersHorizontal, Sparkles, ShieldCheck, Mic, MapPin, TrendingUp, ChevronLeft, Star, Gem, Flame, Users } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { captureUserLocation } from "@/lib/captureLocation";
 
@@ -78,7 +78,63 @@ const CATEGORY_STYLE: Record<string, { icon: React.ReactNode; gradient: string }
   near_you: { icon: <MapPin size={18} />, gradient: "from-sky-500/30 to-blue-500/30" },
   matches_vibe: { icon: <Heart size={18} />, gradient: "from-primary/30 to-accent/30" },
   popular: { icon: <TrendingUp size={18} />, gradient: "from-rose-500/30 to-pink-500/30" },
+  rel_long_term: { icon: <Gem size={18} />, gradient: "from-indigo-500/30 to-violet-500/30" },
+  rel_short_term: { icon: <Flame size={18} />, gradient: "from-orange-500/30 to-red-500/30" },
+  rel_friendship: { icon: <Users size={18} />, gradient: "from-cyan-500/30 to-sky-500/30" },
 };
+
+// Purely a frontend presentation grouping — the backend returns one flat
+// list of categories (see discover.ts's GET /discover/categories), in a
+// fixed order that happens to already put the 3 relationship-type
+// categories last. Grouping them here into labeled sections rather than
+// one long undifferentiated grid keeps the general-purpose browse
+// categories (New Here, Verified, etc.) visually distinct from the
+// specific-intent ones (what someone is looking for) — same reasoning
+// as AdminDashboard's NAV_GROUPS grouping its own nav sections. Any
+// category key not listed in either group here still renders (via the
+// "Explore" grid remaining the ungrouped fallback below) rather than
+// silently disappearing if the backend ever adds a category this map
+// doesn't know about yet.
+const CATEGORY_GROUPS: { label: string; keys: string[] }[] = [
+  { label: "Discover", keys: ["new_here", "verified", "has_audio", "near_you", "matches_vibe", "popular"] },
+  { label: "Looking For", keys: ["rel_long_term", "rel_short_term", "rel_friendship"] },
+];
+
+/** Extracted from the single flat grid this used to be, so the same
+ *  tile markup can be reused across however many labeled groups
+ *  CATEGORY_GROUPS ends up rendering, without copy-pasting this block
+ *  once per group. */
+function renderCategoryTile(cat: Category, onOpen: (cat: Category) => void) {
+  const style = CATEGORY_STYLE[cat.key] ?? { icon: <Sparkles size={18} />, gradient: "from-primary/20 to-accent/20" };
+  return (
+    <button
+      key={cat.key}
+      onClick={() => onOpen(cat)}
+      disabled={cat.count === 0}
+      className={`relative h-28 rounded-2xl overflow-hidden border border-card-border text-left disabled:opacity-40 disabled:pointer-events-none bg-gradient-to-br ${style.gradient}`}
+    >
+      {cat.preview_photos.length > 0 && (
+        <div className="absolute inset-0 flex">
+          {cat.preview_photos.slice(0, 3).map((url, i) => (
+            <div key={i} className="flex-1 relative">
+              <img src={url} alt="" className="w-full h-full object-cover opacity-30" />
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="absolute inset-0 bg-gradient-to-t from-background/90 via-background/40 to-background/10" />
+      <div className="relative z-10 h-full flex flex-col justify-between p-3">
+        <div className="w-8 h-8 rounded-full bg-background/70 backdrop-blur flex items-center justify-center text-foreground">
+          {style.icon}
+        </div>
+        <div>
+          <p className="font-['Syne'] font-bold text-sm text-foreground leading-tight">{cat.label}</p>
+          <p className="text-xs text-muted-foreground">{cat.count} {cat.count === 1 ? "person" : "people"}</p>
+        </div>
+      </div>
+    </button>
+  );
+}
 
 function ProfileDetailOverlay({
   profile,
@@ -405,48 +461,50 @@ export default function SearchPage() {
       <PageHeader title="Search" />
 
       {results === null && (
-        <div className="mb-6">
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 px-2">Explore</h2>
+        <div className="mb-6 space-y-6">
           {categoriesLoading ? (
-            <div className="grid grid-cols-2 gap-3">
-              {[1, 2, 3, 4].map((i) => (
-                <Skeleton key={i} className="h-28 rounded-2xl" />
-              ))}
+            <div>
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 px-2">Explore</h2>
+              <div className="grid grid-cols-2 gap-3">
+                {[1, 2, 3, 4].map((i) => (
+                  <Skeleton key={i} className="h-28 rounded-2xl" />
+                ))}
+              </div>
             </div>
           ) : categories.length === 0 ? null : (
-            <div className="grid grid-cols-2 gap-3">
-              {categories.map((cat) => {
-                const style = CATEGORY_STYLE[cat.key] ?? { icon: <Sparkles size={18} />, gradient: "from-primary/20 to-accent/20" };
+            <>
+              {CATEGORY_GROUPS.map((group) => {
+                const groupCategories = categories.filter((cat) => group.keys.includes(cat.key));
+                if (groupCategories.length === 0) return null;
                 return (
-                  <button
-                    key={cat.key}
-                    onClick={() => openCategory(cat)}
-                    disabled={cat.count === 0}
-                    className={`relative h-28 rounded-2xl overflow-hidden border border-card-border text-left disabled:opacity-40 disabled:pointer-events-none bg-gradient-to-br ${style.gradient}`}
-                  >
-                    {cat.preview_photos.length > 0 && (
-                      <div className="absolute inset-0 flex">
-                        {cat.preview_photos.slice(0, 3).map((url, i) => (
-                          <div key={i} className="flex-1 relative">
-                            <img src={url} alt="" className="w-full h-full object-cover opacity-30" />
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <div className="absolute inset-0 bg-gradient-to-t from-background/90 via-background/40 to-background/10" />
-                    <div className="relative z-10 h-full flex flex-col justify-between p-3">
-                      <div className="w-8 h-8 rounded-full bg-background/70 backdrop-blur flex items-center justify-center text-foreground">
-                        {style.icon}
-                      </div>
-                      <div>
-                        <p className="font-['Syne'] font-bold text-sm text-foreground leading-tight">{cat.label}</p>
-                        <p className="text-xs text-muted-foreground">{cat.count} {cat.count === 1 ? "person" : "people"}</p>
-                      </div>
+                  <div key={group.label}>
+                    <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 px-2">
+                      {group.label}
+                    </h2>
+                    <div className="grid grid-cols-2 gap-3">
+                      {groupCategories.map((cat) => renderCategoryTile(cat, openCategory))}
                     </div>
-                  </button>
+                  </div>
                 );
               })}
-            </div>
+              {/* Fallback for any category key the backend might ever add
+                  that isn't listed in CATEGORY_GROUPS yet — shown under
+                  the existing "Explore" heading rather than silently
+                  disappearing from the page. */}
+              {(() => {
+                const groupedKeys = new Set(CATEGORY_GROUPS.flatMap((g) => g.keys));
+                const ungrouped = categories.filter((cat) => !groupedKeys.has(cat.key));
+                if (ungrouped.length === 0) return null;
+                return (
+                  <div>
+                    <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 px-2">Explore</h2>
+                    <div className="grid grid-cols-2 gap-3">
+                      {ungrouped.map((cat) => renderCategoryTile(cat, openCategory))}
+                    </div>
+                  </div>
+                );
+              })()}
+            </>
           )}
         </div>
       )}

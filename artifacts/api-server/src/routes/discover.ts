@@ -15,6 +15,12 @@ const router: IRouter = Router();
 
 const RESHUFFLE_FREE_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 
+// Shared between /discover/categories (preview counts) and
+// /discover/categories/:key (actual results) — both must use the exact
+// same radius for "Near You" or the tile's advertised count could
+// disagree with what tapping into it actually shows.
+const NEARBY_RADIUS_KM = 15;
+
 // Fetches every admin-configurable preference-filter toggle in one
 // query, keyed exactly by the settings-key strings matching.ts's
 // PREFERENCE_FILTER_SETTINGS_KEYS/HEIGHT_FILTER_SETTINGS_KEY define —
@@ -803,13 +809,29 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
 
   const excludedIds = await getExcludedCandidateIds(userId);
   const excludeClause = `(${excludedIds.join(",")})`;
-  const PREVIEW_FIELDS = "id, photo_url, birthday, age, gender, looking_for_gender, num_kids, family_plans, smoking_status, vaping_status, drinking_status, nightlife_frequency, has_tattoos, pets, activity_level, height_cm";
+  // Added latitude/longitude (Near You needs real distance, not a city
+  // string match — see below), relationship_type/dating_intentions/
+  // personality_tags (computeCompatibilityScore needs these on the
+  // CANDIDATE side to produce a meaningful score at all — without them,
+  // "Matches Your Vibe" was silently scoring everyone as if they had
+  // none of these set, which is a real but different bug from the
+  // preview-sorting one described below).
+  const PREVIEW_FIELDS =
+    "id, photo_url, birthday, age, gender, looking_for_gender, num_kids, family_plans, smoking_status, vaping_status, drinking_status, " +
+    "nightlife_frequency, has_tattoos, pets, activity_level, height_cm, latitude, longitude, relationship_type, dating_intentions, personality_tags";
+
+  // NEARBY_RADIUS_KM (module-level, above) is deliberately smaller than
+  // the viewer's own overall search radius (distance_km, used everywhere
+  // else) — "Near You" is meant to be a meaningfully tighter subset
+  // ("genuinely close by"), not just a restatement of the same pool the
+  // main Discover feed already searches.
 
   const [{ data: viewerProfile }, enabledFilters] = await Promise.all([
     supabase
       .from("profiles")
       .select(
-        "city, personality_tags, gender, looking_for_gender, dealbreakers, pref_age_min, pref_age_max, pref_height_min_cm, pref_height_max_cm, " +
+        "personality_tags, gender, looking_for_gender, relationship_type, dating_intentions, dealbreakers, " +
+          "latitude, longitude, pref_age_min, pref_age_max, pref_height_min_cm, pref_height_max_cm, " +
           "pref_num_kids, pref_family_plans, pref_smoking_status, pref_vaping_status, pref_drinking_status, pref_nightlife_frequency, pref_has_tattoos, pref_pets, pref_activity_level",
       )
       .eq("id", userId)
@@ -878,25 +900,56 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
     categories.push({ key: "has_audio", label: "Audio Bios", ...result });
   }
 
-  if (viewerProfile?.city) {
+  // Previously used .ilike("city", viewerProfile.city) — an exact
+  // (case-insensitive) match on whatever free-text string each person
+  // typed as their city during onboarding. That's a same-city-name
+  // filter, not a distance filter: someone genuinely 2km away who typed
+  // a different city name for their own suburb would never show up
+  // here, while someone on the opposite side of a large metro area who
+  // happened to type the identical city string would. Now computes real
+  // distance via the same haversineDistanceKm already used for the main
+  // Discover feed's own radius filter, against a fixed, deliberately
+  // tighter NEARBY_RADIUS_KM. Requires the viewer to actually have a
+  // recorded location — same as the old version requiring a non-empty
+  // city string, this category simply doesn't appear for someone
+  // location hasn't been captured for yet.
+  if (viewerProfile?.latitude != null && viewerProfile?.longitude != null) {
     const { data } = await supabase
       .from("profiles")
       .select(PREVIEW_FIELDS)
       .not("id", "in", excludeClause)
       .eq("is_incognito", false)
-      .ilike("city", viewerProfile.city)
-      .limit(300);
-    categories.push({ key: "near_you", label: "Near You", ...applyHardFilters(data ?? []) });
+      .not("latitude", "is", null)
+      .not("longitude", "is", null)
+      .limit(500);
+    const nearby = (data ?? []).filter(
+      (c) =>
+        haversineDistanceKm(viewerProfile.latitude!, viewerProfile.longitude!, c.latitude, c.longitude) <=
+        NEARBY_RADIUS_KM,
+    );
+    categories.push({ key: "near_you", label: "Near You", ...applyHardFilters(nearby) });
   }
 
   {
+    // Sorted by actual compatibility score before hard-filtering, so the
+    // 3 preview photos shown on this category's own tile are genuinely
+    // the top vibe matches — not an arbitrary, unsorted slice of
+    // whichever 300 rows the database happened to return first. This
+    // previously called applyHardFilters directly on the raw unsorted
+    // fetch, meaning the ACTUAL results (opened via /categories/matches_vibe,
+    // which already sorted correctly) could look completely different
+    // from the preview teaser advertising them.
     const { data } = await supabase
       .from("profiles")
       .select(PREVIEW_FIELDS)
       .not("id", "in", excludeClause)
       .eq("is_incognito", false)
       .limit(300);
-    categories.push({ key: "matches_vibe", label: "Matches Your Vibe", ...applyHardFilters(data ?? []) });
+    const sorted = (data ?? [])
+      .map((c) => ({ c, score: viewerProfile ? computeCompatibilityScore(c, { ...viewerProfile, dealbreakers }) : 0 }))
+      .sort((a, b) => b.score - a.score)
+      .map((s) => s.c);
+    categories.push({ key: "matches_vibe", label: "Matches Your Vibe", ...applyHardFilters(sorted) });
   }
 
   {
@@ -925,6 +978,36 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
     categories.push({ key: "popular", label: "Popular", ...result });
   }
 
+  // Relationship-type categories — deliberately only the 3 most
+  // targeted, intentional search categories out of the 5 total
+  // RELATIONSHIP_TYPES values. "Open to anything" and "Figuring it out"
+  // are catch-all/uncertain answers rather than a specific thing
+  // someone would actively filter FOR, so they're left out here (the
+  // values themselves are unaffected — anyone who selected them is
+  // still fully visible everywhere else, including the other
+  // categories and the main Discover feed).
+  {
+    const RELATIONSHIP_CATEGORY_DEFS: { key: string; label: string; value: string }[] = [
+      { key: "rel_long_term", label: "Long-term", value: "long_term" },
+      { key: "rel_short_term", label: "Short-term", value: "short_term" },
+      { key: "rel_friendship", label: "Friendship", value: "friendship" },
+    ];
+    const { data } = await supabase
+      .from("profiles")
+      .select(PREVIEW_FIELDS)
+      .not("id", "in", excludeClause)
+      .eq("is_incognito", false)
+      .in(
+        "relationship_type",
+        RELATIONSHIP_CATEGORY_DEFS.map((d) => d.value),
+      )
+      .limit(500);
+    for (const def of RELATIONSHIP_CATEGORY_DEFS) {
+      const matching = (data ?? []).filter((c) => c.relationship_type === def.value);
+      categories.push({ key: def.key, label: def.label, ...applyHardFilters(matching) });
+    }
+  }
+
   res.json({ categories });
 });
 
@@ -944,7 +1027,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
     supabase
       .from("profiles")
       .select(
-        "city, personality_tags, gender, looking_for_gender, relationship_type, dating_intentions, dealbreakers, " +
+        "city, latitude, longitude, personality_tags, gender, looking_for_gender, relationship_type, dating_intentions, dealbreakers, " +
           "pref_age_min, pref_age_max, pref_height_min_cm, pref_height_max_cm, " +
           "pref_num_kids, pref_family_plans, pref_smoking_status, pref_vaping_status, pref_drinking_status, pref_nightlife_frequency, pref_has_tattoos, pref_pets, pref_activity_level",
       )
@@ -997,15 +1080,28 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
       break;
     }
     case "near_you": {
-      if (viewerProfile?.city) {
+      // Same distance-based fix as the overview endpoint's preview count
+      // above — was .ilike("city", viewerProfile.city), a same-city-name
+      // string match rather than actual proximity. Now uses the same
+      // haversineDistanceKm + NEARBY_RADIUS_KM as the preview count, so
+      // what's advertised on the tile matches what tapping into it
+      // actually shows.
+      if (viewerProfile?.latitude != null && viewerProfile?.longitude != null) {
         const { data } = await supabase
           .from("profiles")
           .select(SELECT_FIELDS)
           .not("id", "in", excludeClause)
           .eq("is_incognito", false)
-          .ilike("city", viewerProfile.city)
-          .limit(30);
-        results = data ?? [];
+          .not("latitude", "is", null)
+          .not("longitude", "is", null)
+          .limit(500);
+        results = (data ?? [])
+          .filter(
+            (c) =>
+              haversineDistanceKm(viewerProfile.latitude!, viewerProfile.longitude!, c.latitude, c.longitude) <=
+              NEARBY_RADIUS_KM,
+          )
+          .slice(0, 30);
       }
       break;
     }
@@ -1041,6 +1137,30 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
         const { data } = await supabase.from("profiles").select(SELECT_FIELDS).in("id", topIds).eq("is_incognito", false);
         results = topIds.map((id) => (data ?? []).find((p) => p.id === id)).filter(Boolean);
       }
+      break;
+    }
+    // Relationship-type categories — same 3-of-5 selection and reasoning
+    // as the overview endpoint above ("Open to anything" and "Figuring
+    // it out" are catch-all answers, not something someone actively
+    // filters FOR). Kept as one case per value rather than a single
+    // parameterized case, since RELATIONSHIP_TYPES' actual value strings
+    // are the simplest, least-error-prone way to keep this in sync with
+    // the category keys the overview endpoint already generates
+    // (rel_long_term/rel_short_term/rel_friendship) — a mismatch here
+    // would mean the tile's preview count and its actual results
+    // silently disagree.
+    case "rel_long_term":
+    case "rel_short_term":
+    case "rel_friendship": {
+      const relationshipValue = key === "rel_long_term" ? "long_term" : key === "rel_short_term" ? "short_term" : "friendship";
+      const { data } = await supabase
+        .from("profiles")
+        .select(SELECT_FIELDS)
+        .not("id", "in", excludeClause)
+        .eq("is_incognito", false)
+        .eq("relationship_type", relationshipValue)
+        .limit(30);
+      results = data ?? [];
       break;
     }
     default: {

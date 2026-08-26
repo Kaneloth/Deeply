@@ -15,7 +15,7 @@ const router: IRouter = Router();
 // what the bundle actually IS, not a price. Only price_zar is admin-
 // configurable — see price_config_key below and economy-config.ts.
 const BUNDLE_DEFINITIONS = [
-  { id: "starter", sparks: 100, google_product_id: "sparks_starter", price_config_key: "sparks_price_starter" as const },
+  { id: "starter", sparks: 120, google_product_id: "sparks_starter", price_config_key: "sparks_price_starter" as const },
   { id: "popular", sparks: 300, google_product_id: "sparks_popular", price_config_key: "sparks_price_popular" as const },
   { id: "date_night", sparks: 600, google_product_id: "sparks_date_night", price_config_key: "sparks_price_date_night" as const },
   { id: "power_user", sparks: 1500, google_product_id: "sparks_power_user", price_config_key: "sparks_price_power_user" as const },
