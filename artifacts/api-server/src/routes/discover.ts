@@ -99,7 +99,7 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
     .select(
       "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, boosted_until, " +
         "gender, looking_for_gender, relationship_type, dating_intentions, num_kids, family_plans, smoking_status, vaping_status, drinking_status, " +
-        "nightlife_frequency, has_tattoos, pets, activity_level, height_cm, education, languages_spoken, languages_other, latitude, longitude",
+        "nightlife_frequency, has_tattoos, pets, activity_level, height_cm, education, languages_spoken, languages_other, love_language, latitude, longitude",
     )
     .not("id", "in", `(${excludedIds.join(",")})`)
     .eq("is_incognito", false)
@@ -164,8 +164,8 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
 
   // Previously this stripped `gender` and `relationship_type` out
   // entirely before sending to the frontend, along with the genuinely
-  // internal-only fields below (looking_for_gender/dating_intentions,
-  // which only ever existed to power the hard-filter checks above, and
+  // internal-only fields below (looking_for_gender, which only ever
+  // existed to power the hard-filter checks above, and
   // boosted_until/latitude/longitude, which are consumed earlier in
   // this function). That meant ProfileCard.tsx's existing gender
   // display code never received any data on the main Discover feed at
@@ -174,8 +174,16 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
   // is renamed to looking_for here to match ProfileCardData's existing
   // prop name (which other pages, e.g. Search/Invites, may already
   // populate this way from their own separate queries).
+  //
+  // dating_intentions was ALSO being destructured away here and never
+  // restored — unlike relationship_type, it wasn't even renamed to
+  // something else, just silently discarded every time. ProfileCard's
+  // "More About Me" section has working display code for this field
+  // (added alongside love_language below), but the main Discover feed
+  // specifically was never actually sending it, the same class of bug
+  // as the gender/relationship_type one above, just missed at the time.
   const strippedCandidates = prioritized.map(
-    ({ boosted_until, latitude, longitude, looking_for_gender, relationship_type, dating_intentions, ...profileFields }) => ({
+    ({ boosted_until, latitude, longitude, looking_for_gender, relationship_type, ...profileFields }) => ({
       ...profileFields,
       looking_for: relationship_type ?? null,
     }),
@@ -486,7 +494,7 @@ router.post("/discover/undo", requireAuth, async (req, res): Promise<void> => {
 
   const { data: restoredProfileRaw } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, num_kids, family_plans, smoking_status, drinking_status, vaping_status, has_tattoos, pets, activity_level, nightlife_frequency, height_cm, education, languages_spoken, languages_other, relationship_type")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, num_kids, family_plans, smoking_status, drinking_status, vaping_status, has_tattoos, pets, activity_level, nightlife_frequency, height_cm, education, languages_spoken, languages_other, love_language, dating_intentions, relationship_type")
     .eq("id", lastSwipe.target_id)
     .single();
 
@@ -572,7 +580,7 @@ router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => 
 
   const { data: revealedProfiles } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, num_kids, family_plans, smoking_status, drinking_status, vaping_status, has_tattoos, pets, activity_level, nightlife_frequency, height_cm, education, languages_spoken, languages_other, relationship_type, latitude, longitude")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, num_kids, family_plans, smoking_status, drinking_status, vaping_status, has_tattoos, pets, activity_level, nightlife_frequency, height_cm, education, languages_spoken, languages_other, love_language, dating_intentions, relationship_type, latitude, longitude")
     .in("id", revealedPendingIds);
 
   const superLikerIds = new Set(
@@ -673,7 +681,7 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
 
   const { data: inviters } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, num_kids, family_plans, smoking_status, drinking_status, vaping_status, has_tattoos, pets, activity_level, nightlife_frequency, height_cm, education, languages_spoken, languages_other, relationship_type, latitude, longitude")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, num_kids, family_plans, smoking_status, drinking_status, vaping_status, has_tattoos, pets, activity_level, nightlife_frequency, height_cm, education, languages_spoken, languages_other, love_language, dating_intentions, relationship_type, latitude, longitude")
     .in("id", pendingInviterIds);
 
   const superLikerIds = new Set(
@@ -731,8 +739,8 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
     .from("profiles")
     .select(
       "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, " +
-        "gender, looking_for_gender, relationship_type, num_kids, family_plans, smoking_status, vaping_status, drinking_status, nightlife_frequency, has_tattoos, pets, activity_level, height_cm, " +
-        "education, languages_spoken, languages_other, latitude, longitude",
+        "gender, looking_for_gender, relationship_type, dating_intentions, num_kids, family_plans, smoking_status, vaping_status, drinking_status, nightlife_frequency, has_tattoos, pets, activity_level, height_cm, " +
+        "education, languages_spoken, languages_other, love_language, latitude, longitude",
     )
     .not("id", "in", `(${excludedIds.join(",")})`)
     .eq("is_incognito", false);
@@ -930,7 +938,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
     "id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, " +
     "gender, looking_for_gender, relationship_type, dating_intentions, " +
     "num_kids, family_plans, smoking_status, vaping_status, drinking_status, nightlife_frequency, has_tattoos, pets, activity_level, height_cm, " +
-    "education, languages_spoken, languages_other, latitude, longitude";
+    "education, languages_spoken, languages_other, love_language, latitude, longitude";
 
   const [{ data: viewerProfile }, enabledFilters] = await Promise.all([
     supabase
@@ -1197,7 +1205,7 @@ router.get("/discover/invites/sent", requireAuth, async (req, res): Promise<void
 
   const { data: sentProfiles } = await supabase
     .from("profiles")
-    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, num_kids, family_plans, smoking_status, drinking_status, vaping_status, has_tattoos, pets, activity_level, nightlife_frequency, height_cm, education, languages_spoken, languages_other, relationship_type, latitude, longitude")
+    .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, num_kids, family_plans, smoking_status, drinking_status, vaping_status, has_tattoos, pets, activity_level, nightlife_frequency, height_cm, education, languages_spoken, languages_other, love_language, dating_intentions, relationship_type, latitude, longitude")
     .in("id", pendingSentIds);
 
   const superSentIds = new Set(

@@ -60,6 +60,8 @@ interface Result {
   education?: string | null;
   languages_spoken?: string[];
   languages_other?: string | null;
+  love_language?: string | null;
+  dating_intentions?: string[];
 }
 
 interface Category {

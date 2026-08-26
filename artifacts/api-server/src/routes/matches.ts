@@ -75,14 +75,14 @@ const MATCH_SELECT = `
     integrity_score, personality_tags, is_verified, photo_verified, is_founder, created_at,
     num_kids, family_plans, smoking_status, drinking_status, vaping_status, has_tattoos, pets,
     activity_level, nightlife_frequency, height_cm, education, languages_spoken, languages_other,
-    relationship_type
+    love_language, dating_intentions, relationship_type
   ),
   user2:profiles!matches_user2_id_fkey(
     id, name, age, birthday, bio, city, photo_url,
     integrity_score, personality_tags, is_verified, photo_verified, is_founder, created_at,
     num_kids, family_plans, smoking_status, drinking_status, vaping_status, has_tattoos, pets,
     activity_level, nightlife_frequency, height_cm, education, languages_spoken, languages_other,
-    relationship_type
+    love_language, dating_intentions, relationship_type
   )
 `;
 

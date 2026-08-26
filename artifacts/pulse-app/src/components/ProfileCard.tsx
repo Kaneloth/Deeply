@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from "react";
-import { MapPin, Baby, Users, Cigarette, Wine, Mic, Play, Pause, BadgeCheck, Camera, Wind, PenTool, PawPrint, Dumbbell, PartyPopper, Ruler, Crown, Search, Sparkles, GraduationCap, Languages } from "lucide-react";
+import { MapPin, Baby, Users, Cigarette, Wine, Mic, Play, Pause, BadgeCheck, Camera, Wind, PenTool, PawPrint, Dumbbell, PartyPopper, Ruler, Crown, Search, Sparkles, GraduationCap, Languages, Heart } from "lucide-react";
 import { PhotoCarousel, type CarouselPhoto } from "@/components/PhotoCarousel";
 import { TATTOO_OPTIONS, VAPING_OPTIONS, PETS_OPTIONS, ACTIVITY_LEVEL_OPTIONS, NIGHTLIFE_OPTIONS, cmToDisplay } from "@/lib/lifestylePreferenceOptions";
+import { RELATIONSHIP_TYPES, LOVE_LANGUAGE_OPTIONS } from "@/lib/preferenceOptions";
 
 const PULL_REVEAL_THRESHOLD_PX = 50;
 
@@ -39,6 +40,8 @@ export interface ProfileCardData {
   education?: string | null;
   languages_spoken?: string[];
   languages_other?: string | null;
+  love_language?: string | null;
+  dating_intentions?: string[];
   audio_prompts?: AudioPromptData[];
 }
 
@@ -69,24 +72,19 @@ const DRINKING_LABELS: Record<string, string> = {
   regularly: "Drinks regularly",
 };
 
-// NOT sourced from a shared options file (no RELATIONSHIP_TYPE_OPTIONS
-// was available alongside the lifestyle ones) — worth confirming these
-// match the actual values stored in profiles.relationship_type if this
-// ever displays incorrectly or shows nothing for a value not listed
-// here.
-const RELATIONSHIP_TYPE_LABELS: Record<string, string> = {
-  long_term: "Long-term relationship",
-  short_term: "Something casual",
-  friendship: "New friends",
-  not_sure: "Still figuring it out",
-};
-
 // Converted from the imported options arrays (single source of truth
-// with the edit form on ProfilePage) rather than redefined by hand here,
-// so these can never drift out of sync with the actual stored values.
+// with the edit form on ProfilePage/PreferencesPage) rather than
+// redefined by hand here, so these can never drift out of sync with
+// the actual stored values. This replaces an earlier, hand-guessed
+// version of RELATIONSHIP_TYPE_LABELS (built without access to the
+// real RELATIONSHIP_TYPES options at the time) that was missing the
+// "open" value entirely — its label, "Open to anything", never showed;
+// the card fell back to displaying the raw stored value "open" as-is.
 const toLabelMap = (options: { value: string; label: string }[]): Record<string, string> =>
   Object.fromEntries(options.map((o) => [o.value, o.label]));
 
+const RELATIONSHIP_TYPE_LABELS = toLabelMap(RELATIONSHIP_TYPES);
+const LOVE_LANGUAGE_LABELS = toLabelMap(LOVE_LANGUAGE_OPTIONS);
 const VAPING_LABELS = toLabelMap(VAPING_OPTIONS);
 const TATTOO_LABELS = toLabelMap(TATTOO_OPTIONS);
 const PETS_LABELS = toLabelMap(PETS_OPTIONS);
@@ -214,7 +212,12 @@ export function ProfileCard({
     !!profile.activity_level ||
     !!profile.nightlife_frequency;
   const hasInterests = profile.personality_tags?.length > 0;
-  const hasBackground = !!profile.education || (profile.languages_spoken?.length ?? 0) > 0 || !!profile.languages_other;
+  const hasBackground =
+    !!profile.education ||
+    (profile.languages_spoken?.length ?? 0) > 0 ||
+    !!profile.languages_other ||
+    !!profile.love_language ||
+    (profile.dating_intentions?.length ?? 0) > 0;
   const hasAudio = (profile.audio_prompts?.length ?? 0) > 0;
   const hasDetails = !!profile.bio || hasAudio || hasLifestyle || hasInterests || hasBackground;
 
@@ -380,6 +383,22 @@ export function ProfileCard({
                     <FactPill icon={Languages}>{profile.languages_spoken.join(", ")}</FactPill>
                   )}
                   {profile.languages_other && <FactPill icon={Languages}>{profile.languages_other}</FactPill>}
+                  {profile.love_language && LOVE_LANGUAGE_LABELS[profile.love_language] && (
+                    <FactPill icon={Heart}>{LOVE_LANGUAGE_LABELS[profile.love_language]}</FactPill>
+                  )}
+                  {/* dating_intentions values ("Shared values", "Sense of
+                      humor", etc.) are stored as already-human-readable
+                      strings, not value/label pairs like every other
+                      field here — DATING_INTENTIONS in preferenceOptions.ts
+                      is a plain string array, so these display directly
+                      with no label lookup needed. Each gets its own pill,
+                      unlike languages_spoken's single joined pill — these
+                      read as distinct, separate qualities (closer in
+                      spirit to Interests above) rather than a short list
+                      that reads fine run together. */}
+                  {profile.dating_intentions?.map((intention) => (
+                    <FactPill key={intention} icon={Heart}>{intention}</FactPill>
+                  ))}
                 </div>
               </div>
             )}
