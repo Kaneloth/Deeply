@@ -261,32 +261,52 @@ function AppShellInner({ children }: AppShellProps) {
             />
           </div>
         )}
-        {indicatorHeight > 0 ? (
-          // Only exists while actively pulling/refreshing — the h-full
-          // here clamps this wrapper to exactly <main>'s visible height
-          // rather than the page's true (often taller, scrollable)
-          // content height. That's fine for the brief moment a pull is
-          // in progress, but making this permanent (as an earlier
-          // version of this file did, to fix Discover's card stack
-          // needing a definite height to fill) broke every other
-          // page's own position: sticky bottom-anchored elements (e.g.
-          // Save buttons on Profile/Preferences) the rest of the time —
-          // sticky positioning needs its container sized to the real
-          // content, not artificially clamped to viewport height.
-          // Discover itself never registers a pull-to-refresh handler
-          // (see PullToRefreshContext's comment on why), so it never
-          // hits this branch at all — its children are always direct
-          // children of <main>, exactly as before, with no wrapper
-          // interference ever.
-          <div
-            className="h-full"
-            style={{ transform: `translateY(${indicatorHeight}px)`, transition: isRefreshing ? "transform 0.2s ease-out" : undefined }}
-          >
-            {children}
-          </div>
-        ) : (
-          children
-        )}
+        {/* Always the SAME <div>, in the SAME position, every single
+            render — only its style toggles between the two states
+            below. This is deliberate and load-bearing: an earlier
+            version of this conditionally rendered EITHER `children`
+            directly OR `children` wrapped in a <div>, switching between
+            the two based on indicatorHeight > 0. React treats that as a
+            structural change (children moving to a different position
+            in the tree), not a style update — the instant the first
+            touchmove made indicatorHeight go from 0 to non-zero, React
+            would unmount and remount the entire page underneath the
+            user's actual finger. Debug logging confirmed the exact
+            symptom this caused: the touchstart under the user's finger
+            never received a matching touchend at all (the DOM node it
+            targeted no longer existed to receive one), so that whole
+            first gesture was silently abandoned — what felt like "the
+            first pull glitches" was actually the user's continuous
+            drag being split into two disconnected gestures internally,
+            with only the second half (a fresh touchstart on the
+            now-remounted content) ever completing.
+            
+            display: "contents" at rest means this div produces NO box
+            at all — children render exactly as if they were direct
+            children of <main>, with zero layout impact, so this can't
+            affect anything's sticky positioning or content height the
+            rest of the time (the specific regression that caused an
+            earlier, different attempt at a permanent wrapper — using a
+            permanently-applied h-full class instead of toggling display
+            like this — to be reverted). Only while actively pulling/
+            refreshing does it become a real, transform-able box
+            (display: "contents" elements can't have transforms
+            applied), sized to <main>'s visible height so the translateY
+            push-down reads correctly. Discover never registers a pull-
+            to-refresh handler at all (see PullToRefreshContext's
+            comment on why) — indicatorHeight is always 0 there, so this
+            div is permanently in its display:contents, zero-impact
+            state for that page regardless. */}
+        <div
+          style={{
+            display: indicatorHeight > 0 ? "block" : "contents",
+            height: indicatorHeight > 0 ? "100%" : undefined,
+            transform: indicatorHeight > 0 ? `translateY(${indicatorHeight}px)` : undefined,
+            transition: isRefreshing ? "transform 0.2s ease-out" : undefined,
+          }}
+        >
+          {children}
+        </div>
       </main>
 
       <BottomNav />
