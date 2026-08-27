@@ -1,5 +1,4 @@
 import { createContext, useContext, useEffect, useRef, MutableRefObject, ReactNode } from "react";
-import { logPullDebug } from "@/lib/pullDebugLog";
 
 type RefreshHandler = () => Promise<void> | void;
 
@@ -60,20 +59,8 @@ export function usePullToRefreshRef() {
  *  outcome as a real unmount, without needing a real route change. */
 export function usePullToRefresh(onRefresh: RefreshHandler, enabled: boolean = true): void {
   const ref = usePullToRefreshRef();
-  // TEMPORARY debug tracking — see pullDebugLog.ts. This effect has no
-  // deps array (intentional, see below), so it re-runs on EVERY render
-  // of the calling page. Logging every run would flood the debug
-  // buffer before a single gesture even completes, so this only logs
-  // when the ACTUAL assigned state changes (null <-> non-null), not
-  // every render.
-  const lastLoggedStateRef = useRef<"set" | "cleared" | null>(null);
   useEffect(() => {
     ref.current = enabled ? onRefresh : null;
-    const currentState = enabled ? "set" : "cleared";
-    if (lastLoggedStateRef.current !== currentState) {
-      logPullDebug(`handler ${currentState} (enabled=${enabled})`);
-      lastLoggedStateRef.current = currentState;
-    }
     return () => {
       if (ref.current === onRefresh) ref.current = null;
     };
