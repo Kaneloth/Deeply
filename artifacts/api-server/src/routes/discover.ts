@@ -482,6 +482,15 @@ router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
     .in("direction", ["like", "super_like"])
     .maybeSingle();
 
+  // TEMPORARY DEBUG — see the "chat unlock never engages" investigation.
+  // Confirms whether this endpoint is even reached for a given test
+  // action, and whether reverseSwipe is truthy (i.e. whether
+  // createMatchWithAnyPendingMessages is about to be called at all).
+  // Safe to remove once resolved.
+  console.error(
+    `CHAT UNLOCK DEBUG: POST /discover/swipe userId=${userId} targetId=${targetId} direction=${direction} reverseSwipeFound=${!!reverseSwipe}`,
+  );
+
   // Handles both a genuinely new match AND the "accepting a message-
   // before-match invite" case — if the target's earlier swipe carried a
   // message_content, createMatchWithAnyPendingMessages inserts it as
@@ -1322,6 +1331,11 @@ router.post("/discover/message-request", requireAuth, async (req, res): Promise<
     .eq("target_id", userId)
     .in("direction", ["like", "super_like"])
     .maybeSingle();
+
+  // TEMPORARY DEBUG — see the "chat unlock never engages" investigation.
+  console.error(
+    `CHAT UNLOCK DEBUG: POST /discover/message-request userId=${userId} targetId=${targetId} reverseSwipeFound=${!!reverseSwipe}`,
+  );
 
   const match = reverseSwipe ? await createMatchWithAnyPendingMessages(userId, targetId) : null;
 
