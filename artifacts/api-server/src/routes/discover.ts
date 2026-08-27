@@ -399,8 +399,19 @@ async function createMatchWithAnyPendingMessages(
   // Only runs for a match THIS call genuinely just inserted — see
   // wasNewlyInserted's own comment above for why re-running this on the
   // race-fallback path would be wrong.
+  //
+  // TEMPORARY DEBUG — see the "chat unlock never engages" investigation.
+  // Safe to remove once resolved.
+  console.error(
+    `CHAT UNLOCK DEBUG: matchId=${match.id} wasNewlyInserted=${wasNewlyInserted} pendingMessages.length=${pendingMessages.length} matchError=${JSON.stringify(matchError)} willSetLocked=${wasNewlyInserted && pendingMessages.length === 0}`,
+  );
   if (wasNewlyInserted && pendingMessages.length === 0) {
-    await supabase.from("matches").update({ chat_unlock_status: "locked" }).eq("id", match.id);
+    const { error: lockUpdateError } = await supabase.from("matches").update({ chat_unlock_status: "locked" }).eq("id", match.id);
+    if (lockUpdateError) {
+      console.error(`CHAT UNLOCK DEBUG: FAILED to set 'locked' for matchId=${match.id}: ${JSON.stringify(lockUpdateError)}`);
+    } else {
+      console.error(`CHAT UNLOCK DEBUG: successfully set chat_unlock_status='locked' for matchId=${match.id}`);
+    }
   }
 
   return match;
