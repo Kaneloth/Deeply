@@ -6,7 +6,7 @@ import { useSparks } from "@/contexts/SparksContext";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, Send, Undo2, Eye, CheckCheck, Smile, ImagePlus, X, MoreVertical, UserX, Flag, Copy, Trash2, Reply, Loader2 } from "lucide-react";
+import { ChevronLeft, Send, Undo2, Eye, CheckCheck, Smile, ImagePlus, X, MoreVertical, UserX, Flag, Copy, Trash2, Reply, Loader2, Lock, Clock, HeartCrack } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { EmojiPicker } from "@/components/EmojiPicker";
 import ReactionPicker from "emoji-picker-react";
@@ -20,11 +20,23 @@ interface MatchedUser {
   photo_url: string | null;
 }
 
+// Chat-unlock status — see the backend's chat-unlock-helper.ts for the
+// full state machine this reflects. "locked": neither side has sent a
+// message yet. "awaiting_reply": one side has paid their half and is
+// waiting on the other, within the 48h window. "unlocked": fully open,
+// free to keep chatting. "missed_connection": the 48h window passed
+// with no reply — the original sender was refunded, and the recipient
+// can still revive it (at full cost) by replying anyway.
+type ChatUnlockStatus = "locked" | "awaiting_reply" | "unlocked" | "missed_connection";
+
 interface Match {
   id: string;
   matched_user: MatchedUser | null;
   message_count: number;
   created_at: string;
+  chat_unlock_status?: ChatUnlockStatus;
+  chat_unlock_initiator_id?: string | null;
+  chat_unlock_initiated_at?: string | null;
 }
 
 interface Reaction {
@@ -66,6 +78,8 @@ interface Message {
 // wasted space).
 const QUICK_REACT_EMOJIS = ["❤️", "😂", "😮", "😢", "👍", "🔥"];
 
+const CHAT_UNLOCK_EXPIRY_MS = 48 * 60 * 60 * 1000;
+
 // 24-hour, no leading zero on the hour (0:05, 9:41, 23:59) — matches
 // what was asked for specifically, rather than a locale-dependent
 // Intl.DateTimeFormat that could zero-pad or use 12-hour time depending
@@ -94,6 +108,33 @@ function formatDateSeparator(iso: string): string {
   if (diffDays === 1) return "Yesterday";
   const sameYear = d.getFullYear() === now.getFullYear();
   return d.toLocaleDateString(undefined, sameYear ? { month: "long", day: "numeric" } : { month: "long", day: "numeric", year: "numeric" });
+}
+
+// Hh:Mm:Ss — a live, functional countdown rather than any kind of
+// repeated reminder. Deliberately always shows all three units (e.g.
+// "0:04:12", not "4:12") so the display doesn't visually restructure
+// itself as time passes.
+function formatCountdown(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${hours}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+}
+
+// One-time-ever (per user, per action type) educational toasts — shown
+// exactly once the first time each specific chat-unlock charge happens,
+// never again after that, per the explicit design direction: no
+// repeated reminders that the user is being charged. Same localStorage-
+// flag pattern already used elsewhere in this app (e.g. SearchPage's
+// invite-quota-cost notice).
+function hasSeenUnlockNotice(userId: string | null, action: string): boolean {
+  if (!userId) return true; // fail toward NOT showing rather than crashing on a null id
+  return !!localStorage.getItem(`deeply_seen_chat_unlock_${action}_${userId}`);
+}
+function markSeenUnlockNotice(userId: string | null, action: string): void {
+  if (!userId) return;
+  localStorage.setItem(`deeply_seen_chat_unlock_${action}_${userId}`, "1");
 }
 
 export default function ChatPage() {
@@ -134,6 +175,14 @@ export default function ChatPage() {
   const [receiptsUnlocked, setReceiptsUnlocked] = useState(false);
   const [isUnlockingReceipts, setIsUnlockingReceipts] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Live hours:minutes:seconds remaining before an 'awaiting_reply'
+  // match's unlock attempt expires and auto-refunds. Recomputed once a
+  // second, purely client-side, from chat_unlock_initiated_at — not
+  // polled from the server, since a ticking clock doesn't need a network
+  // round trip to advance. null whenever the match isn't currently in
+  // 'awaiting_reply' at all.
+  const [countdownMs, setCountdownMs] = useState<number | null>(null);
 
   // Long-press message action menu (React / Copy / Delete for me / Unsend)
   const [selectedMsgId, setSelectedMsgId] = useState<string | null>(null);
@@ -468,6 +517,49 @@ export default function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchId]);
 
+  // Also re-fetches the match itself on the same 3s cadence as messages
+  // — chat_unlock_status can change from an action the OTHER person
+  // takes (they reply, or the 48h window lapses while they're the one
+  // who happens to open the app first), and this page has no other
+  // mechanism that would ever learn about that short of the person
+  // manually leaving and re-opening the chat. Deliberately a separate,
+  // lighter-weight poll rather than folding this into fetchMatch (which
+  // also flips matchLoading, which would re-show the loading skeleton
+  // every 3 seconds).
+  useEffect(() => {
+    if (!matchId) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/matches/${matchId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const body = await res.json();
+        setMatch(body);
+      } catch {
+        // Silent — same reasoning as the messages poll above.
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [matchId, token]);
+
+  // Ticks the live countdown once a second while — and only while — the
+  // match is actually 'awaiting_reply'. Recomputed from scratch each
+  // tick directly against chat_unlock_initiated_at, rather than simply
+  // decrementing a counter, so it can never drift out of sync with the
+  // server's own understanding of when the window actually started.
+  useEffect(() => {
+    if (match?.chat_unlock_status !== "awaiting_reply" || !match.chat_unlock_initiated_at) {
+      setCountdownMs(null);
+      return;
+    }
+    const initiatedAt = new Date(match.chat_unlock_initiated_at).getTime();
+    const tick = () => setCountdownMs(Math.max(0, initiatedAt + CHAT_UNLOCK_EXPIRY_MS - Date.now()));
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [match?.chat_unlock_status, match?.chat_unlock_initiated_at]);
+
   // Always the current fetchMessages (fresh token included) — the
   // gesture effect below intentionally only attaches its listeners
   // once, so it reads this ref rather than closing over fetchMessages
@@ -570,6 +662,34 @@ export default function ChatPage() {
     }
   }, [messages.length]);
 
+  // Fires the one-time (per user, ever) educational toast for a given
+  // chat-unlock action, then immediately marks it seen so it never
+  // fires again for this user regardless of how many more matches they
+  // go on to unlock/revive the same way. Deliberately separate from the
+  // sparks_charged number a specific match session shows in-line
+  // (there isn't one here) — this toast exists purely to teach the
+  // MECHANIC once, not to report every individual transaction.
+  const maybeShowUnlockNotice = (action: string, sparksCharged: number) => {
+    if (hasSeenUnlockNotice(userId, action)) return;
+    markSeenUnlockNotice(userId, action);
+    const copy: Record<string, { title: string; description: string }> = {
+      initiated: {
+        title: `${sparksCharged} Sparks — your half`,
+        description: "Starting a new conversation costs half the unlock fee. Your match pays the other half when they reply — or you're refunded if they don't within 48 hours.",
+      },
+      unlocked: {
+        title: `${sparksCharged} Sparks — your half`,
+        description: "Replying to unlock a new conversation costs half the fee. This chat is now fully open — free to keep talking.",
+      },
+      revived: {
+        title: `${sparksCharged} Sparks — full cost`,
+        description: "Replying after the 48-hour window means covering the full unlock fee alone. The chat is now open either way.",
+      },
+    };
+    const entry = copy[action];
+    if (entry) toast(entry);
+  };
+
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     const content = input.trim();
@@ -648,6 +768,18 @@ export default function ChatPage() {
       setMessages((prev) =>
         prev.map((m) => (m.id === tempId ? { ...(body as Message), renderKey: m.renderKey ?? tempId } : m)),
       );
+
+      // A chat-unlock state transition happened as a side effect of this
+      // send — refresh the match itself so chat_unlock_status (and the
+      // countdown it drives) reflects it immediately, rather than
+      // waiting up to 3s for the next background poll to notice.
+      if (body.chat_unlock_action && body.chat_unlock_action !== "none") {
+        maybeShowUnlockNotice(body.chat_unlock_action, body.sparks_charged ?? 0);
+        fetchMatch();
+      }
+      if (body.sparks_balance !== undefined) {
+        refreshSparksBadge();
+      }
     } catch (err) {
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
       setInput(content); // restore what they typed so they don't lose it
@@ -711,6 +843,13 @@ export default function ChatPage() {
       setMessages((prev) =>
         prev.map((m) => (m.id === tempId ? { ...(body as Message), renderKey: m.renderKey ?? tempId } : m)),
       );
+      if (body.chat_unlock_action && body.chat_unlock_action !== "none") {
+        maybeShowUnlockNotice(body.chat_unlock_action, body.sparks_charged ?? 0);
+        fetchMatch();
+      }
+      if (body.sparks_balance !== undefined) {
+        refreshSparksBadge();
+      }
     } catch (err) {
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
       toast({
@@ -829,6 +968,15 @@ export default function ChatPage() {
       // and come back" was the only thing that reliably fixed it (by
       // then, the lag had cleared).
       setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, is_unsent: true } : m)));
+
+      if (body.chat_unlock_refunded) {
+        toast({
+          title: "Chat unlock cancelled",
+          description: "Your Sparks were refunded since your match hadn't replied yet.",
+        });
+        fetchMatch();
+        refreshSparksBadge();
+      }
     } catch (err) {
       toast({
         title: "Error",
@@ -854,6 +1002,9 @@ export default function ChatPage() {
   }
 
   if (!match) return <div className="p-6 text-center">Match not found.</div>;
+
+  const isInitiator = !!match.chat_unlock_initiator_id && match.chat_unlock_initiator_id === userId;
+  const status = match.chat_unlock_status ?? "unlocked";
 
   return (
     <div className="flex flex-col h-full overflow-hidden w-full max-w-[430px] mx-auto bg-background">
@@ -933,6 +1084,33 @@ export default function ChatPage() {
             )}
           </div>
         </div>
+
+        {/* Chat-unlock status row — live, functional information (a
+            ticking countdown, or the current missed-connection state),
+            never a static repeated reminder. Nothing renders at all for
+            'locked' (no message sent yet by either side) or 'unlocked'
+            (fully open) — there's nothing time-sensitive or actionable
+            to show in either of those states. */}
+        {status === "awaiting_reply" && countdownMs !== null && (
+          <div className="flex items-center gap-1.5 mt-2.5 text-xs text-muted-foreground">
+            <Clock size={13} className="text-primary shrink-0" />
+            <span>
+              {isInitiator
+                ? `Waiting for reply — refunded in ${formatCountdown(countdownMs)} if no response`
+                : `Reply within ${formatCountdown(countdownMs)} to unlock this chat`}
+            </span>
+          </div>
+        )}
+        {status === "missed_connection" && (
+          <div className="flex items-center gap-1.5 mt-2.5 text-xs text-muted-foreground">
+            <HeartCrack size={13} className="text-destructive shrink-0" />
+            <span>
+              {isInitiator
+                ? "Your match didn't reply in time — your Sparks were refunded. Send another message to try again."
+                : "You missed this connection — reply now to revive it (full unlock cost)."}
+            </span>
+          </div>
+        )}
       </header>
 
       {showReportModal && match?.matched_user && (
@@ -968,9 +1146,18 @@ export default function ChatPage() {
             <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-4 text-primary font-bold font-['Syne'] text-2xl">
               {match.matched_user?.name?.[0] || "?"}
             </div>
-            <p className="text-muted-foreground text-sm max-w-[200px]">
-              You matched! Send a message to start the conversation.
-            </p>
+            {status === "locked" ? (
+              <>
+                <Lock size={18} className="text-muted-foreground mb-2" />
+                <p className="text-muted-foreground text-sm max-w-[220px]">
+                  You matched! Send the first message to unlock this chat.
+                </p>
+              </>
+            ) : (
+              <p className="text-muted-foreground text-sm max-w-[200px]">
+                You matched! Send a message to start the conversation.
+              </p>
+            )}
           </div>
         ) : (
           messages.map((msg, i) => {

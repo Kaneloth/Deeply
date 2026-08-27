@@ -6,6 +6,7 @@ import { attachAudioPrompts } from "../lib/audio-prompts-helper";
 import { getBlockedUserIds } from "../lib/blocks-helper";
 import { withComputedAge } from "../lib/age";
 import { rememberMatched, getStickyMatched, forgetMatched } from "../lib/discover-exclusions";
+import { checkChatUnlockExpiry } from "../lib/chat-unlock-helper";
 
 const router: IRouter = Router();
 
@@ -105,6 +106,17 @@ async function formatMatch(m: Record<string, any>, viewerId: string) {
     matched_user: withAudio ? renameLookingFor(withComputedAge(withAudio)) : null,
     message_count: m.message_count,
     created_at: m.created_at,
+    // See chat-unlock-helper.ts for the full state machine. initiator_id
+    // is included so the frontend can tell "am I the one waiting, or the
+    // one who owes a reply" apart — each needs different copy/countdown
+    // framing even though they're looking at the exact same status.
+    // initiated_at is what the countdown itself is computed from
+    // client-side (initiated_at + 48h), rather than sending an
+    // already-computed "time remaining" that would immediately start
+    // drifting stale the moment this response is more than a second old.
+    chat_unlock_status: m.chat_unlock_status,
+    chat_unlock_initiator_id: m.chat_unlock_initiator_id,
+    chat_unlock_initiated_at: m.chat_unlock_initiated_at,
   };
 }
 
@@ -135,16 +147,20 @@ async function formatMatchesBatch(rawMatches: Record<string, any>[], viewerId: s
       matched_user: hydrated ? renameLookingFor(withComputedAge(hydrated)) : null,
       message_count: m.message_count,
       created_at: m.created_at,
+      chat_unlock_status: m.chat_unlock_status,
+      chat_unlock_initiator_id: m.chat_unlock_initiator_id,
+      chat_unlock_initiated_at: m.chat_unlock_initiated_at,
     };
   });
 }
 
-/** GET /api/matches — list all matches (chat is always open, no expiry).
- *  Also computes which matches are "new" (created since this viewer last
- *  loaded this page), then immediately updates their last-viewed
- *  timestamp — so the very next load won't show the same matches as new
- *  again, but this response correctly reflects what was new *before*
- *  this view. */
+/** GET /api/matches — list all matches (chat itself never expires, but
+ *  a still-locked/awaiting-reply one's underlying unlock attempt can —
+ *  see chat-unlock-helper.ts). Also computes which matches are "new"
+ *  (created since this viewer last loaded this page), then immediately
+ *  updates their last-viewed timestamp — so the very next load won't
+ *  show the same matches as new again, but this response correctly
+ *  reflects what was new *before* this view. */
 router.get("/matches", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
@@ -208,7 +224,17 @@ router.get("/matches", requireAuth, async (req, res): Promise<void> => {
     unreadMatchIds = new Set((unreadRows ?? []).map((r) => r.match_id));
   }
 
-  const formatted = await formatMatchesBatch(matches as Record<string, any>[], userId);
+  // Lazily catches any 48h-expired unlock attempts across the WHOLE
+  // list, not just whichever single match someone happens to open — a
+  // match sitting in 'awaiting_reply' past its window gets caught (and
+  // its refund/notifications processed) the moment either party so much
+  // as loads their matches list, not only when they open that specific
+  // chat. See chat-unlock-helper.ts for why this is lazy rather than a
+  // scheduled sweep. Independent per match, so run concurrently rather
+  // than one at a time.
+  const expiryCheckedMatches = await Promise.all(matches.map((m) => checkChatUnlockExpiry(m as Record<string, any>)));
+
+  const formatted = await formatMatchesBatch(expiryCheckedMatches, userId);
 
   const result = formatted.map((m) => ({
     ...m,
@@ -306,7 +332,14 @@ router.get("/matches/:matchId", requireAuth, async (req, res): Promise<void> => 
     : (match as Record<string, any>).user1_id;
   await rememberMatched(userId, [partnerId]);
 
-  res.json(await formatMatch(match as Record<string, any>, userId));
+  // Same lazy expiry check as the list endpoint — opening this specific
+  // chat is itself one of the moments a 48h-expired unlock attempt needs
+  // to be caught, in case the list endpoint hasn't already (e.g. this
+  // was reached via a push notification or direct link, bypassing the
+  // list view entirely).
+  const currentMatch = await checkChatUnlockExpiry(match as Record<string, any>);
+
+  res.json(await formatMatch(currentMatch, userId));
 });
 
 /** DELETE /api/matches/:matchId — unmatch. Removes the match (and, via

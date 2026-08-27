@@ -1,6 +1,17 @@
 import { supabase } from "./supabase";
 
-export type NotificationType = "announcement" | "spark_grant" | "spark_low" | "profile_views";
+// chat_unlock_refunded/chat_missed_connection/chat_unlocked/chat_revived
+// added for the new chat-unlock economy — see chat-unlock-helper.ts and
+// messages.ts's POST /matches/:matchId/messages for where each is fired.
+export type NotificationType =
+  | "announcement"
+  | "spark_grant"
+  | "spark_low"
+  | "profile_views"
+  | "chat_unlock_refunded"
+  | "chat_missed_connection"
+  | "chat_unlocked"
+  | "chat_revived";
 
 /** Creates a standalone notification for one user. Used for one-off
  *  events (Spark grant, low balance) where there's no batching concern. */

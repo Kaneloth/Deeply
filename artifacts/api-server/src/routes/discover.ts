@@ -333,6 +333,14 @@ async function createMatchWithAnyPendingMessages(
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
   }
+  // Tracked BEFORE the 23505 race-fallback below overwrites `match` —
+  // needed to decide whether this call actually created the row (and so
+  // is responsible for setting its INITIAL chat_unlock_status) versus
+  // just falling back to a match a concurrent request already created
+  // (in which case that other request already set it correctly, and
+  // re-setting it here risks clobbering whatever progress has already
+  // happened on it since).
+  const wasNewlyInserted = matchError === null;
   if (matchError?.code === "23505") {
     // A concurrent request beat us to it — fetch what it created rather
     // than treating this as a failure.
@@ -375,6 +383,24 @@ async function createMatchWithAnyPendingMessages(
       .from("messages")
       .insert(pendingMessages.map((m) => ({ match_id: match!.id, sender_id: m.sender_id, content: m.content })));
     await supabase.from("matches").update({ message_count: pendingMessages.length }).eq("id", match.id);
+  }
+
+  // Sets the chat's INITIAL unlock state — see chat-unlock-helper.ts for
+  // the full state machine this feeds into. A pending pre-match message
+  // means someone already paid the full cost_message_before_match fee
+  // (via POST /discover/message-request or the swipe-with-message flow)
+  // — per the new economy, that single payment covers BOTH sides
+  // permanently, so the chat opens fully 'unlocked' immediately (the
+  // matches table's own DEFAULT for this column, so no explicit write
+  // is needed for this branch). A normal mutual match with no message
+  // attached starts 'locked' instead — neither side has paid anything
+  // yet, and the first message either of them sends is what starts the
+  // 50/50 unlock process (see messages.ts's POST /matches/:matchId/messages).
+  // Only runs for a match THIS call genuinely just inserted — see
+  // wasNewlyInserted's own comment above for why re-running this on the
+  // race-fallback path would be wrong.
+  if (wasNewlyInserted && pendingMessages.length === 0) {
+    await supabase.from("matches").update({ chat_unlock_status: "locked" }).eq("id", match.id);
   }
 
   return match;

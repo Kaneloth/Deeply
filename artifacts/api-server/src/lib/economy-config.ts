@@ -6,6 +6,7 @@ export interface EconomyConfig {
   cost_undo_swipe: number;
   cost_reveal_invites: number;
   cost_message_before_match: number;
+  cost_chat_unlock: number;
   cost_reshuffle: number;
   cost_send_message: number;
   cost_unsend_message: number;
@@ -34,6 +35,15 @@ const DEFAULTS: EconomyConfig = {
   cost_undo_swipe: 5,
   cost_reveal_invites: 30,
   cost_message_before_match: 30,
+  // New chat-unlock economy — see chat-unlock-helper.ts for the full
+  // state machine this powers. This is the TOTAL cost to unlock a chat
+  // that started from a normal mutual match (as opposed to a message
+  // sent before matching, which is governed entirely by
+  // cost_message_before_match instead and never touches this value at
+  // all). Each side pays half (rounded up) when unlocking within the
+  // 48-hour window; a late reply after that window pays this full
+  // amount alone to revive the chat.
+  cost_chat_unlock: 20,
   cost_reshuffle: 10,
   cost_send_message: 10,
   cost_unsend_message: 10,
