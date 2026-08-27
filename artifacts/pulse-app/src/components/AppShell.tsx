@@ -58,13 +58,34 @@ const PULL_DAMPING = 0.5;
  *  was nowhere near its own top. Resolving to the REAL scrollable
  *  ancestor of the touch fixes this generally, for any current or
  *  future nested scroll area, rather than special-casing overlays by
- *  page. */
+ *  page.
+ *
+ *  Checks classList for the literal "overflow-y-auto" Tailwind class
+ *  (the exact class both <main> and ProfileCard's own scroll container
+ *  actually use) rather than window.getComputedStyle(node).overflowY.
+ *  An earlier version of this function used getComputedStyle, which
+ *  forces a synchronous style recalculation — for the common case (no
+ *  overlay open), the actual touch target is typically several DOM
+ *  levels below <main> (a tile, a row, an icon), so this loop walks up
+ *  through many intermediate elements before reaching <main> and
+ *  returning it, paying that recalculation cost at EVERY level, on
+ *  EVERY touch. This gesture has already proven, in earlier debugging
+ *  this session, to be extremely sensitive to exactly this kind of
+ *  added latency inside onTouchStart — that version reintroduced a
+ *  "glitches on the first attempt" symptom close to the original bug
+ *  this whole gesture system was built to avoid. classList.contains is
+ *  a cheap set lookup with no style recalculation; scrollHeight/
+ *  clientHeight are still layout-dependent but far cheaper than a full
+ *  computed-style pass, and are now only read for the one or two
+ *  elements that actually have the class, not every ancestor walked.
+ *  Trade-off: a future new scrollable container must use this exact
+ *  class for this function to recognize it — if one's ever added via
+ *  inline style or a differently-named utility instead, add its
+ *  marker here too. */
 function findScrollableAncestor(target: EventTarget | null, boundary: HTMLElement): HTMLElement {
   let node = target instanceof Node ? (target instanceof HTMLElement ? target : target.parentElement) : null;
   while (node && node !== boundary) {
-    const style = window.getComputedStyle(node);
-    const canScroll = (style.overflowY === "auto" || style.overflowY === "scroll") && node.scrollHeight > node.clientHeight;
-    if (canScroll) return node;
+    if (node.classList.contains("overflow-y-auto") && node.scrollHeight > node.clientHeight) return node;
     node = node.parentElement;
   }
   return boundary;
