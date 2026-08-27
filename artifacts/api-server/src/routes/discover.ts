@@ -315,6 +315,53 @@ async function createMatchWithAnyPendingMessages(
     .maybeSingle();
   if (existingMatch) return existingMatch;
 
+  // Checked BEFORE the insert below — this only reads the swipes table,
+  // completely independent of the match row's own id, so there's no
+  // reason it needs to wait until after the match exists. Doing this
+  // first is what makes it possible to set chat_unlock_status directly
+  // as part of the INSERT itself (see below) instead of via a separate,
+  // follow-up UPDATE call.
+  //
+  // That earlier two-step approach (insert first with the column left
+  // at its default, then a second UPDATE to 'locked' once pending
+  // messages were known) had a genuine race window: between those two
+  // calls, a concurrent request's OWN existingMatch check above could
+  // find the row already inserted — still sitting at its 'unlocked'
+  // database default — and return early with that stale value, never
+  // reaching the follow-up UPDATE that would have corrected it. Debug
+  // logging during the "chat unlock never engages" investigation
+  // confirmed this precisely: a genuinely fresh, message-free mutual
+  // match ended up 'unlocked' instead of 'locked', with the request
+  // that logically should have set it never even reaching that code —
+  // exactly what this race would produce. Setting the correct value in
+  // the same INSERT that creates the row removes the window for this
+  // race entirely: there is no longer a moment where the row exists
+  // with a not-yet-correct value for another request to observe.
+  const [{ data: mySwipe }, { data: theirSwipe }] = await Promise.all([
+    supabase.from("swipes").select("message_content, created_at").eq("swiper_id", userId).eq("target_id", targetId).maybeSingle(),
+    supabase.from("swipes").select("message_content, created_at").eq("swiper_id", targetId).eq("target_id", userId).maybeSingle(),
+  ]);
+
+  const pendingMessages: { sender_id: string; content: string; created_at: string }[] = [];
+  if (mySwipe?.message_content) {
+    pendingMessages.push({ sender_id: userId, content: mySwipe.message_content, created_at: mySwipe.created_at });
+  }
+  if (theirSwipe?.message_content) {
+    pendingMessages.push({ sender_id: targetId, content: theirSwipe.message_content, created_at: theirSwipe.created_at });
+  }
+  pendingMessages.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+  // See chat-unlock-helper.ts for the full state machine this feeds
+  // into. A pending pre-match message means someone already paid the
+  // full cost_message_before_match fee (via POST /discover/message-request
+  // or the swipe-with-message flow) — per the new economy, that single
+  // payment covers BOTH sides permanently, so the chat opens fully
+  // 'unlocked' immediately. A normal mutual match with no message
+  // attached starts 'locked' instead — neither side has paid anything
+  // yet, and the first message either of them sends is what starts the
+  // 50/50 unlock process (see messages.ts's POST /matches/:matchId/messages).
+  const initialChatUnlockStatus = pendingMessages.length > 0 ? "unlocked" : "locked";
+
   // Same PGRST116 retry pattern used elsewhere in this file — a match
   // insert immediately followed by a read-back is exactly the kind of
   // operation that's previously hit transient connection-consistency
@@ -322,7 +369,11 @@ async function createMatchWithAnyPendingMessages(
   let match: { id: string } | null = null;
   let matchError: { code?: string } | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const result = await supabase.from("matches").insert({ user1_id: lo, user2_id: hi }).select("id").single();
+    const result = await supabase
+      .from("matches")
+      .insert({ user1_id: lo, user2_id: hi, chat_unlock_status: initialChatUnlockStatus })
+      .select("id")
+      .single();
     if (result.data) {
       match = result.data;
       matchError = null;
@@ -333,17 +384,12 @@ async function createMatchWithAnyPendingMessages(
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
   }
-  // Tracked BEFORE the 23505 race-fallback below overwrites `match` —
-  // needed to decide whether this call actually created the row (and so
-  // is responsible for setting its INITIAL chat_unlock_status) versus
-  // just falling back to a match a concurrent request already created
-  // (in which case that other request already set it correctly, and
-  // re-setting it here risks clobbering whatever progress has already
-  // happened on it since).
-  const wasNewlyInserted = matchError === null;
   if (matchError?.code === "23505") {
     // A concurrent request beat us to it — fetch what it created rather
-    // than treating this as a failure.
+    // than treating this as a failure. That request's own INSERT would
+    // have computed the same pendingMessages result we did (both read
+    // the exact same underlying swipes rows), so its chat_unlock_status
+    // is already correct — nothing further to set here.
     const { data: raceMatch } = await supabase.from("matches").select("id").eq("user1_id", lo).eq("user2_id", hi).maybeSingle();
     match = raceMatch ?? null;
   }
@@ -364,54 +410,11 @@ async function createMatchWithAnyPendingMessages(
   // — for either party — already has ground truth to fall back on.
   await Promise.all([rememberMatched(userId, [targetId]), rememberMatched(targetId, [userId])]);
 
-  const [{ data: mySwipe }, { data: theirSwipe }] = await Promise.all([
-    supabase.from("swipes").select("message_content, created_at").eq("swiper_id", userId).eq("target_id", targetId).maybeSingle(),
-    supabase.from("swipes").select("message_content, created_at").eq("swiper_id", targetId).eq("target_id", userId).maybeSingle(),
-  ]);
-
-  const pendingMessages: { sender_id: string; content: string; created_at: string }[] = [];
-  if (mySwipe?.message_content) {
-    pendingMessages.push({ sender_id: userId, content: mySwipe.message_content, created_at: mySwipe.created_at });
-  }
-  if (theirSwipe?.message_content) {
-    pendingMessages.push({ sender_id: targetId, content: theirSwipe.message_content, created_at: theirSwipe.created_at });
-  }
-  pendingMessages.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-
   if (pendingMessages.length > 0) {
     await supabase
       .from("messages")
       .insert(pendingMessages.map((m) => ({ match_id: match!.id, sender_id: m.sender_id, content: m.content })));
     await supabase.from("matches").update({ message_count: pendingMessages.length }).eq("id", match.id);
-  }
-
-  // Sets the chat's INITIAL unlock state — see chat-unlock-helper.ts for
-  // the full state machine this feeds into. A pending pre-match message
-  // means someone already paid the full cost_message_before_match fee
-  // (via POST /discover/message-request or the swipe-with-message flow)
-  // — per the new economy, that single payment covers BOTH sides
-  // permanently, so the chat opens fully 'unlocked' immediately (the
-  // matches table's own DEFAULT for this column, so no explicit write
-  // is needed for this branch). A normal mutual match with no message
-  // attached starts 'locked' instead — neither side has paid anything
-  // yet, and the first message either of them sends is what starts the
-  // 50/50 unlock process (see messages.ts's POST /matches/:matchId/messages).
-  // Only runs for a match THIS call genuinely just inserted — see
-  // wasNewlyInserted's own comment above for why re-running this on the
-  // race-fallback path would be wrong.
-  //
-  // TEMPORARY DEBUG — see the "chat unlock never engages" investigation.
-  // Safe to remove once resolved.
-  console.error(
-    `CHAT UNLOCK DEBUG: matchId=${match.id} wasNewlyInserted=${wasNewlyInserted} pendingMessages.length=${pendingMessages.length} matchError=${JSON.stringify(matchError)} willSetLocked=${wasNewlyInserted && pendingMessages.length === 0}`,
-  );
-  if (wasNewlyInserted && pendingMessages.length === 0) {
-    const { error: lockUpdateError } = await supabase.from("matches").update({ chat_unlock_status: "locked" }).eq("id", match.id);
-    if (lockUpdateError) {
-      console.error(`CHAT UNLOCK DEBUG: FAILED to set 'locked' for matchId=${match.id}: ${JSON.stringify(lockUpdateError)}`);
-    } else {
-      console.error(`CHAT UNLOCK DEBUG: successfully set chat_unlock_status='locked' for matchId=${match.id}`);
-    }
   }
 
   return match;
@@ -481,15 +484,6 @@ router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
     .eq("target_id", userId)
     .in("direction", ["like", "super_like"])
     .maybeSingle();
-
-  // TEMPORARY DEBUG — see the "chat unlock never engages" investigation.
-  // Confirms whether this endpoint is even reached for a given test
-  // action, and whether reverseSwipe is truthy (i.e. whether
-  // createMatchWithAnyPendingMessages is about to be called at all).
-  // Safe to remove once resolved.
-  console.error(
-    `CHAT UNLOCK DEBUG: POST /discover/swipe userId=${userId} targetId=${targetId} direction=${direction} reverseSwipeFound=${!!reverseSwipe}`,
-  );
 
   // Handles both a genuinely new match AND the "accepting a message-
   // before-match invite" case — if the target's earlier swipe carried a
@@ -1331,11 +1325,6 @@ router.post("/discover/message-request", requireAuth, async (req, res): Promise<
     .eq("target_id", userId)
     .in("direction", ["like", "super_like"])
     .maybeSingle();
-
-  // TEMPORARY DEBUG — see the "chat unlock never engages" investigation.
-  console.error(
-    `CHAT UNLOCK DEBUG: POST /discover/message-request userId=${userId} targetId=${targetId} reverseSwipeFound=${!!reverseSwipe}`,
-  );
 
   const match = reverseSwipe ? await createMatchWithAnyPendingMessages(userId, targetId) : null;
 
