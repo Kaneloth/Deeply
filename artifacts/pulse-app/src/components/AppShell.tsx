@@ -28,6 +28,48 @@ const MAX_PULL_PX = 100;
 // as the native version, rather than tracking 1:1 with the finger.
 const PULL_DAMPING = 0.5;
 
+/** Walks up from the actual touched element to find the nearest node
+ *  that's genuinely scrollable (overflow-y auto/scroll AND has content
+ *  taller than its own box) — stopping at `boundary` (<main> itself) if
+ *  nothing closer qualifies. This is what onTouchStart below checks the
+ *  scrollTop of, instead of always checking <main>'s.
+ *
+ *  Why this matters: <main> is a single, page-wide scroll container
+ *  that every route's content renders inside. For a plain list (a
+ *  page's own search/invite results, no overlay open), <main> IS the
+ *  actual thing that scrolls, so checking its scrollTop is already
+ *  correct — this function just resolves back to `boundary` in that
+ *  case, unchanged from before. But when a page renders an in-page,
+ *  fixed-position detail overlay on top of itself (e.g. SearchPage's
+ *  and InvitesPage's ProfileDetailOverlay/InviteDetailOverlay — as
+ *  opposed to MatchDetailPage, which is a genuinely separate ROUTE, so
+ *  navigating to it unmounts MatchesPage and automatically clears its
+ *  registered handler via usePullToRefresh's own cleanup), that overlay
+ *  is still DOM-wise a child rendered inside <main> — just visually
+ *  `position: fixed` on top of everything. <main> itself never scrolls
+ *  at all while such an overlay is open; the overlay's own inner
+ *  content (e.g. ProfileCard's own scrollable area) is a completely
+ *  separate, nested scroll container with its own independent
+ *  scrollTop. Previously, scrolling that inner area down to reveal
+ *  details and then dragging down again to scroll back up would bubble
+ *  up to <main>'s listener, which always saw <main>'s own scrollTop
+ *  frozen at 0 (since it never moved) and wrongly claimed the gesture
+ *  as a pull-to-refresh — even though the actual element being touched
+ *  was nowhere near its own top. Resolving to the REAL scrollable
+ *  ancestor of the touch fixes this generally, for any current or
+ *  future nested scroll area, rather than special-casing overlays by
+ *  page. */
+function findScrollableAncestor(target: EventTarget | null, boundary: HTMLElement): HTMLElement {
+  let node = target instanceof Node ? (target instanceof HTMLElement ? target : target.parentElement) : null;
+  while (node && node !== boundary) {
+    const style = window.getComputedStyle(node);
+    const canScroll = (style.overflowY === "auto" || style.overflowY === "scroll") && node.scrollHeight > node.clientHeight;
+    if (canScroll) return node;
+    node = node.parentElement;
+  }
+  return boundary;
+}
+
 function AppShellInner({ children }: AppShellProps) {
   const [location] = useLocation();
   const { blockInfo, clearBlockInfo } = useAuth();
@@ -73,8 +115,11 @@ function AppShellInner({ children }: AppShellProps) {
       if (isRefreshingRef.current || !refreshHandlerRef.current) return;
       // Only engage right at the top of the scroll area, same as the
       // native gesture — otherwise this would fight normal scrolling
-      // anywhere else in a long list.
-      if (el.scrollTop > 0) return;
+      // anywhere else in a long list. Checks the scrollTop of whatever
+      // scrollable element the touch actually started within (see
+      // findScrollableAncestor above), not always <main> itself.
+      const scrollTarget = findScrollableAncestor(e.target, el);
+      if (scrollTarget.scrollTop > 0) return;
       touchStartYRef.current = e.touches[0].clientY;
       isPullingRef.current = true;
     };
@@ -201,54 +246,32 @@ function AppShellInner({ children }: AppShellProps) {
             />
           </div>
         )}
-        {/* Always the SAME div, every render — only its className/style
-            toggle based on indicatorHeight, never whether the div
-            itself exists. This is the fix for a real "needs two pulls"
-            bug: an earlier version switched between {children} being a
-            direct child of <main> and {children} being wrapped in a
-            div, depending on indicatorHeight. React reconciles by
-            element type at each position in the tree — switching
-            between "no wrapper" and "div wrapper" at the same position
-            meant the div itself was a genuinely different element type
-            appearing where {children} used to be directly, which made
-            React unmount the entire previous subtree (including the
-            whole page component, all its state, and its own
-            usePullToRefresh registration) and mount a fresh one the
-            instant the first touchmove made indicatorHeight go from 0
-            to positive. The DOM node the finger was physically touching
-            was being destroyed mid-gesture.
-
-            display: contents at rest, not just "no className" — an
-            UNSTYLED div still generates a real box, defaulting to
-            height: auto (collapses to content height) rather than
-            inheriting <main>'s own flex-computed height. That broke
-            Discover specifically: its card stack positions cards
-            absolute relative to a height-bearing ancestor, which used
-            to be <main> itself when children were direct children of
-            it — wrapped in even a plain div, that ancestor's height
-            collapsed to zero, blanking the card and collapsing
-            everything below it (the decision buttons) up to just under
-            the header. display: contents makes the div itself produce
-            NO box at all and disappear from layout entirely — its
-            children render exactly as if they were direct children of
-            <main>, identical to the original no-wrapper behavior —
-            while the div still fully exists as a real, permanent DOM/
-            React node throughout, which is what actually prevents the
-            remount. Switched to a real, transformable box (h-full +
-            translateY) only while actively pulling, exactly matching
-            the original temporary-wrapper behavior during a pull —
-            transforms don't apply to display:contents elements, so it
-            has to become a real box for that brief window regardless. */}
-        <div
-          className={indicatorHeight > 0 ? "h-full" : undefined}
-          style={
-            indicatorHeight > 0
-              ? { transform: `translateY(${indicatorHeight}px)`, transition: isRefreshing ? "transform 0.2s ease-out" : undefined }
-              : { display: "contents" }
-          }
-        >
-          {children}
-        </div>
+        {indicatorHeight > 0 ? (
+          // Only exists while actively pulling/refreshing — the h-full
+          // here clamps this wrapper to exactly <main>'s visible height
+          // rather than the page's true (often taller, scrollable)
+          // content height. That's fine for the brief moment a pull is
+          // in progress, but making this permanent (as an earlier
+          // version of this file did, to fix Discover's card stack
+          // needing a definite height to fill) broke every other
+          // page's own position: sticky bottom-anchored elements (e.g.
+          // Save buttons on Profile/Preferences) the rest of the time —
+          // sticky positioning needs its container sized to the real
+          // content, not artificially clamped to viewport height.
+          // Discover itself never registers a pull-to-refresh handler
+          // (see PullToRefreshContext's comment on why), so it never
+          // hits this branch at all — its children are always direct
+          // children of <main>, exactly as before, with no wrapper
+          // interference ever.
+          <div
+            className="h-full"
+            style={{ transform: `translateY(${indicatorHeight}px)`, transition: isRefreshing ? "transform 0.2s ease-out" : undefined }}
+          >
+            {children}
+          </div>
+        ) : (
+          children
+        )}
       </main>
 
       <BottomNav />
