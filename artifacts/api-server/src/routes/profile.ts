@@ -2677,6 +2677,7 @@ const ECONOMY_CONFIG_LABELS: Record<string, { label: string; description: string
   cost_send_message: { label: "Send Message", description: "Cost to send a message in a match", unit: "Sparks" },
   cost_unsend_message: { label: "Unsend Message", description: "Cost to unsend a sent message", unit: "Sparks" },
   cost_unlock_read_receipts: { label: "Unlock Read Receipts", description: "Cost to unlock read receipts, per match", unit: "Sparks" },
+  cost_chat_unlock: { label: "Chat Unlock", description: "Total cost to unlock a new match's chat — split 50/50 between both people if replied to within 48 hours, or paid in full by whoever revives it after that window passes", unit: "Sparks" },
   cost_extra_invite: { label: "Extra Invite", description: "Cost per invite past the daily free quota", unit: "Sparks" },
   daily_free_invites: { label: "Daily Free Invites", description: "Free invites per day before the extra-invite cost applies", unit: "invites/day" },
   cost_reveal_profile_views: { label: "Reveal Profile Viewers", description: "Cost to see who viewed your profile", unit: "Sparks" },
