@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useRef, MutableRefObject, ReactNode } from "react";
+import { logPullDebug } from "@/lib/pullDebugLog";
 
 type RefreshHandler = () => Promise<void> | void;
 
@@ -56,17 +57,23 @@ export function usePullToRefreshRef() {
  *  it. Passing `enabled={false}` while the overlay is open makes
  *  refreshHandlerRef.current genuinely null for that whole time, so
  *  AppShell's gesture never engages at all — the same effective
- *  outcome as a real unmount, without needing a real route change.
- *  (An earlier attempt solved this by having AppShell itself walk up
- *  from the touched element to find its real scrollable ancestor
- *  instead of always checking <main>'s scrollTop — that approach was
- *  reverted after it reintroduced timing-sensitive gesture glitches
- *  that this simpler, explicit-opt-out approach doesn't risk, since
- *  AppShell's own gesture-detection logic is completely unchanged.) */
+ *  outcome as a real unmount, without needing a real route change. */
 export function usePullToRefresh(onRefresh: RefreshHandler, enabled: boolean = true): void {
   const ref = usePullToRefreshRef();
+  // TEMPORARY debug tracking — see pullDebugLog.ts. This effect has no
+  // deps array (intentional, see below), so it re-runs on EVERY render
+  // of the calling page. Logging every run would flood the debug
+  // buffer before a single gesture even completes, so this only logs
+  // when the ACTUAL assigned state changes (null <-> non-null), not
+  // every render.
+  const lastLoggedStateRef = useRef<"set" | "cleared" | null>(null);
   useEffect(() => {
     ref.current = enabled ? onRefresh : null;
+    const currentState = enabled ? "set" : "cleared";
+    if (lastLoggedStateRef.current !== currentState) {
+      logPullDebug(`handler ${currentState} (enabled=${enabled})`);
+      lastLoggedStateRef.current = currentState;
+    }
     return () => {
       if (ref.current === onRefresh) ref.current = null;
     };

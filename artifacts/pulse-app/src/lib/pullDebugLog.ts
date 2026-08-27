@@ -1,43 +1,40 @@
-// Temporary, on-screen debug logging for the pull-to-refresh
-// investigation — safe to delete entirely once resolved (this file,
-// the overlay in AppShell.tsx, and the log calls in this file and
-// PullToRefreshContext.tsx). A simple module-level store + subscriber
-// pattern rather than React state directly, since the things logging
-// (a plain hook effect, a raw DOM touch handler) aren't always in a
-// convenient place to hold React state themselves — anything can push
-// a line by just calling pullDebugLog(), and the one overlay component
-// subscribes to re-render when new lines arrive.
+// TEMPORARY DEBUG UTILITY for investigating the "pull-to-refresh
+// glitches on the first attempt" report on Search/Invites. Safe to
+// delete entirely (this file, PullDebugOverlay.tsx, and the logging
+// calls added to AppShell.tsx and PullToRefreshContext.tsx) once the
+// investigation concludes — same disposable pattern as the original
+// pullDebugLog.ts used earlier this session for the "needs two pulls"
+// bug, which was deleted after that root cause was confirmed.
 //
-// MAX_LINES raised from 80 to 300 — the first real capture showed
-// register/unregister churn (see PullToRefreshContext.tsx) noisy
-// enough to plausibly push a single gesture's touchend line out of an
-// 80-line buffer before it could be read, which would make a real
-// event look like it never happened at all. 300 gives much more room
-// before that's a risk, even with the churn also being fixed directly.
-type Listener = () => void;
+// In-memory only, no persistence — logs reset on every reload, which is
+// fine since the goal is watching one gesture attempt at a time live,
+// not reviewing history across sessions.
 
-let lines: string[] = [];
-const listeners = new Set<Listener>();
-const MAX_LINES = 300;
+interface PullDebugEntry {
+  time: string;
+  message: string;
+}
 
-export function pullDebugLog(message: string): void {
+const MAX_ENTRIES = 60;
+let entries: PullDebugEntry[] = [];
+const listeners = new Set<() => void>();
+
+export function logPullDebug(message: string) {
   const time = new Date().toISOString().slice(11, 23); // HH:MM:SS.mmm
-  lines = [...lines, `${time}  ${message}`].slice(-MAX_LINES);
+  entries = [...entries, { time, message }].slice(-MAX_ENTRIES);
   listeners.forEach((l) => l());
 }
 
-export function getPullDebugLines(): string[] {
-  return lines;
+export function getPullDebugEntries(): PullDebugEntry[] {
+  return entries;
 }
 
-export function subscribePullDebugLog(listener: Listener): () => void {
+export function subscribePullDebug(listener: () => void): () => void {
   listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
+  return () => listeners.delete(listener);
 }
 
-export function clearPullDebugLog(): void {
-  lines = [];
+export function clearPullDebugEntries() {
+  entries = [];
   listeners.forEach((l) => l());
 }

@@ -8,8 +8,10 @@ import { ThemeProvider } from "@/contexts/ThemeContext";
 import { TextSizeProvider } from "@/contexts/TextSizeContext";
 import { DiscoverControlsProvider } from "@/contexts/DiscoverControlsContext";
 import { PullToRefreshProvider, usePullToRefreshRef } from "@/contexts/PullToRefreshContext";
+import { logPullDebug } from "@/lib/pullDebugLog";
 import { useAuth } from "@/contexts/AuthContext";
 import { BlockedAccountScreen } from "@/components/BlockedAccountScreen";
+import { PullDebugOverlay } from "@/components/PullDebugOverlay";
 
 interface AppShellProps {
   children: ReactNode;
@@ -69,8 +71,19 @@ function AppShellInner({ children }: AppShellProps) {
     const el = mainRef.current;
     if (!el) return;
 
+    // TEMPORARY debug tracking — see pullDebugLog.ts.
+    logPullDebug(`effect ATTACHED listeners to <main> (mainShouldExist=${mainShouldExist})`);
+    let hasLoggedFirstMoveThisGesture = false;
+
     const onTouchStart = (e: TouchEvent) => {
-      if (isRefreshingRef.current || !refreshHandlerRef.current) return;
+      if (isRefreshingRef.current) {
+        logPullDebug("touchstart REJECTED — isRefreshingRef is true");
+        return;
+      }
+      if (!refreshHandlerRef.current) {
+        logPullDebug("touchstart REJECTED — no handler registered");
+        return;
+      }
       // Only engage right at the top of the scroll area, same as the
       // native gesture — otherwise this would fight normal scrolling
       // anywhere else in a long list.
@@ -100,9 +113,14 @@ function AppShellInner({ children }: AppShellProps) {
       // the single thing checked here is correct for every other case,
       // including a long, genuinely scrollable list — <main> IS what
       // scrolls there, so this was never actually wrong for that case.
-      if (el.scrollTop > 0) return;
+      if (el.scrollTop > 0) {
+        logPullDebug(`touchstart REJECTED — el.scrollTop=${el.scrollTop}`);
+        return;
+      }
       touchStartYRef.current = e.touches[0].clientY;
       isPullingRef.current = true;
+      hasLoggedFirstMoveThisGesture = false;
+      logPullDebug(`touchstart CLAIMED — scrollTop=${el.scrollTop}, startY=${touchStartYRef.current}`);
     };
 
     const onTouchMove = (e: TouchEvent) => {
@@ -111,6 +129,10 @@ function AppShellInner({ children }: AppShellProps) {
       if (delta <= 0) {
         // Finger moved back up (or never moved down) — not a pull,
         // leave the browser's own scroll behavior alone.
+        if (!hasLoggedFirstMoveThisGesture) {
+          logPullDebug(`first touchmove — delta=${delta.toFixed(0)} (<=0, not a pull)`);
+          hasLoggedFirstMoveThisGesture = true;
+        }
         pullDistanceRef.current = 0;
         setPullDistance(0);
         return;
@@ -119,6 +141,10 @@ function AppShellInner({ children }: AppShellProps) {
       // bounce from fighting this gesture.
       e.preventDefault();
       const damped = Math.min(delta * PULL_DAMPING, MAX_PULL_PX);
+      if (!hasLoggedFirstMoveThisGesture) {
+        logPullDebug(`first touchmove — delta=${delta.toFixed(0)}, damped=${damped.toFixed(0)}, preventDefault called`);
+        hasLoggedFirstMoveThisGesture = true;
+      }
       pullDistanceRef.current = damped;
       setPullDistance(damped);
     };
@@ -131,11 +157,18 @@ function AppShellInner({ children }: AppShellProps) {
       pullDistanceRef.current = 0;
       setPullDistance(0);
 
+      logPullDebug(
+        `touchend — finalDistance=${finalDistance.toFixed(0)}, threshold=${PULL_THRESHOLD_PX}, willRefresh=${finalDistance >= PULL_THRESHOLD_PX && !!refreshHandlerRef.current}`,
+      );
+
       if (finalDistance >= PULL_THRESHOLD_PX && refreshHandlerRef.current) {
         isRefreshingRef.current = true;
         setIsRefreshing(true);
         try {
           await refreshHandlerRef.current();
+          logPullDebug("refresh handler resolved successfully");
+        } catch (err) {
+          logPullDebug(`refresh handler THREW: ${err instanceof Error ? err.message : String(err)}`);
         } finally {
           isRefreshingRef.current = false;
           setIsRefreshing(false);
@@ -149,6 +182,7 @@ function AppShellInner({ children }: AppShellProps) {
     el.addEventListener("touchcancel", onTouchEnd);
 
     return () => {
+      logPullDebug("effect CLEANUP — removing listeners from <main>");
       el.removeEventListener("touchstart", onTouchStart);
       el.removeEventListener("touchmove", onTouchMove);
       el.removeEventListener("touchend", onTouchEnd);
@@ -256,6 +290,10 @@ function AppShellInner({ children }: AppShellProps) {
       </main>
 
       <BottomNav />
+      {/* TEMPORARY — see pullDebugLog.ts's file-level comment for why
+          this is here and how to remove it once the investigation
+          concludes. */}
+      <PullDebugOverlay />
     </div>
   );
 }
