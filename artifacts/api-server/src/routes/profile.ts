@@ -71,7 +71,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     num_kids, smoking_status, drinking_status, languages_spoken,
     languages_other, love_language, education, family_plans,
     notify_sparks, notify_profile_views,
-    is_incognito,
+    is_incognito, share_read_receipts,
     has_tattoos, vaping_status, pets, height_cm, activity_level, nightlife_frequency,
     latitude, longitude,
     pref_num_kids, pref_family_plans, pref_smoking_status, pref_drinking_status,
@@ -103,6 +103,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     notify_sparks?: boolean;
     notify_profile_views?: boolean;
     is_incognito?: boolean;
+    share_read_receipts?: boolean;
     has_tattoos?: string;
     vaping_status?: string;
     pets?: string;
@@ -208,6 +209,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   }
   if (notify_sparks !== undefined) updates.notify_sparks = notify_sparks;
   if (notify_profile_views !== undefined) updates.notify_profile_views = notify_profile_views;
+  if (share_read_receipts !== undefined) updates.share_read_receipts = share_read_receipts;
   if (is_incognito !== undefined) {
     if (is_incognito) {
       const { data: setting } = await supabase.from("app_settings").select("value").eq("key", "incognito_enabled").single();
