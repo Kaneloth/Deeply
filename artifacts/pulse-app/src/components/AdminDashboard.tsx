@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -199,6 +199,11 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
   const [preferenceFilters, setPreferenceFilters] = useState<Record<string, boolean>>({});
   const [togglingFilterKey, setTogglingFilterKey] = useState<string | null>(null);
 
+  // Run once on mount only — depending on [token] directly meant this
+  // re-ran on every background token refresh, same root cause as
+  // EconomySection's more severe version of this bug above. Less
+  // harmful here (nothing typed in-progress to wipe out), but still a
+  // wasted re-fetch and brief loading flash on every refresh cycle.
   useEffect(() => {
     fetch("/api/admin/overview", { headers: { Authorization: `Bearer ${token}` } })
       .then((res) => (res.ok ? res.json() : null))
@@ -219,7 +224,8 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
         }
       })
       .catch(() => {});
-  }, [token]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggleIncognitoFeature = async () => {
     const next = !incognitoEnabled;
@@ -420,9 +426,13 @@ function ReportsSection({ token, toast }: { token: string | null; toast: any }) 
     }
   }, [token]);
 
+  // Run once on mount only — same root cause as EconomySection's more
+  // severe version of this bug above (fetchReports depends on [token],
+  // which changes reference on every background token refresh).
   useEffect(() => {
     fetchReports();
-  }, [fetchReports]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const finalize = async (report: any, action: "resolve" | "dismiss") => {
     setProcessingId(report.id);
@@ -590,9 +600,12 @@ function AdminVerificationSection({ token, toast }: { token: string | null; toas
     }
   }, [token, toast]);
 
+  // Run once on mount only — same root cause as EconomySection's more
+  // severe version of this bug above.
   useEffect(() => {
     fetchQueue();
-  }, [fetchQueue]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const approve = async (submission: any) => {
     setProcessingId(submission.id);
@@ -802,13 +815,29 @@ function UsersSection({ token, toast, isSuperAdmin }: { token: string | null; to
   const [selected, setSelected] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Read via ref inside fetchUsers below, rather than putting token
+  // directly in that callback's own dependency array — token gets a new
+  // reference every time AuthContext silently refreshes the session in
+  // the background, which happens periodically regardless of anything
+  // the admin does. With token in the deps array, every one of those
+  // background refreshes recreated fetchUsers, which restarted the
+  // effect below's debounce and re-fetched the whole page — the same
+  // root cause as EconomySection's more severe version of this bug
+  // above, just less visible here since there's no in-progress draft
+  // text to wipe out, just an unnecessary reload and lost scroll
+  // position. page/search/filter changing SHOULD still trigger a
+  // refetch (that's the actual point of this callback), so those stay
+  // real dependencies — only token moves to the ref.
+  const tokenRef = useRef(token);
+  tokenRef.current = token;
+
   const fetchUsers = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams({ page: String(page) });
       if (search.trim()) params.set("search", search.trim());
       if (filter !== "all") params.set("filter", filter);
-      const res = await fetch(`/api/admin/users?${params}`, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(`/api/admin/users?${params}`, { headers: { Authorization: `Bearer ${tokenRef.current}` } });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? `Failed to load users (${res.status})`);
       setUsers(body.users ?? []);
@@ -823,7 +852,7 @@ function UsersSection({ token, toast, isSuperAdmin }: { token: string | null; to
     } finally {
       setLoading(false);
     }
-  }, [token, page, search, filter, toast]);
+  }, [page, search, filter, toast]);
 
   useEffect(() => {
     const t = setTimeout(fetchUsers, 300);
@@ -1639,6 +1668,10 @@ function SparksSection({ token, toast }: { token: string | null; toast: any }) {
   const [transactions, setTransactions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Run once on mount only — depending on [token, toast] directly meant
+  // this re-ran (and re-showed the loading spinner) on every background
+  // token refresh, same root cause as EconomySection's more severe
+  // version of this bug above.
   useEffect(() => {
     setLoading(true);
     fetch("/api/admin/sparks/transactions", { headers: { Authorization: `Bearer ${token}` } })
@@ -1656,7 +1689,8 @@ function SparksSection({ token, toast }: { token: string | null; toast: any }) {
         setTransactions([]);
       })
       .finally(() => setLoading(false));
-  }, [token, toast]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (loading) return <CenteredLoader />;
   if (transactions.length === 0) return <EmptyNote text="No transactions yet." />;
@@ -1711,9 +1745,20 @@ function EconomySection({ token, toast }: { token: string | null; toast: any }) 
       .finally(() => setLoading(false));
   }, [token, toast]);
 
+  // Run once on mount only. fetchFigures depends on `token`, which gets
+  // a new reference every time AuthContext silently refreshes the
+  // session in the background — happening periodically regardless of
+  // anything the admin does. Depending on fetchFigures's identity here
+  // meant every one of those background refreshes re-ran this effect,
+  // which calls setDrafts(...) and overwrites whatever the admin is
+  // CURRENTLY TYPING with whatever the server currently has — the exact
+  // "page auto-refreshes every few seconds and I can't complete
+  // actions" symptom. Same root cause and fix already applied elsewhere
+  // in this app (ProfilePage, ChatPage, SearchPage, InvitesPage).
   useEffect(() => {
     fetchFigures();
-  }, [fetchFigures]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const saveFigure = async (key: string) => {
     const raw = drafts[key];
@@ -1847,9 +1892,12 @@ function AnnouncementsSection({ token, toast }: { token: string | null; toast: a
     }
   }, [token]);
 
+  // Run once on mount only — same root cause as EconomySection's more
+  // severe version of this bug above.
   useEffect(() => {
     fetchAnnouncements();
-  }, [fetchAnnouncements]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const create = async () => {
     if (!title.trim() || !body.trim()) {
