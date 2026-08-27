@@ -265,8 +265,15 @@ export default function InvitesPage() {
   // Refreshes whichever tab is actually visible — Sent is fetched
   // lazily (only when the user has switched to it), so pulling to
   // refresh while on Received shouldn't trigger a Sent fetch that
-  // hasn't otherwise happened yet, and vice versa.
-  usePullToRefresh(mode === "sent" ? fetchSent : fetchInvites);
+  // hasn't otherwise happened yet, and vice versa. Disabled while
+  // selectedInvite's InviteDetailOverlay is open — same reasoning as
+  // SearchPage's own usePullToRefresh call: this is an in-page, fixed-
+  // position overlay rendered on top of this page rather than a
+  // separate route, so this page never unmounts while it's showing.
+  // See usePullToRefresh's own comment on the `enabled` param for why
+  // this explicit opt-out replaced an earlier, reverted attempt to make
+  // AppShell's gesture handler itself smarter about nested scroll areas.
+  usePullToRefresh(mode === "sent" ? fetchSent : fetchInvites, !selectedInvite);
 
   const handleSwitchMode = (next: "received" | "sent") => {
     setMode(next);

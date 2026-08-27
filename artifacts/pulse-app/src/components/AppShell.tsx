@@ -28,69 +28,6 @@ const MAX_PULL_PX = 100;
 // as the native version, rather than tracking 1:1 with the finger.
 const PULL_DAMPING = 0.5;
 
-/** Walks up from the actual touched element to find the nearest node
- *  that's genuinely scrollable (overflow-y auto/scroll AND has content
- *  taller than its own box) — stopping at `boundary` (<main> itself) if
- *  nothing closer qualifies. This is what onTouchStart below checks the
- *  scrollTop of, instead of always checking <main>'s.
- *
- *  Why this matters: <main> is a single, page-wide scroll container
- *  that every route's content renders inside. For a plain list (a
- *  page's own search/invite results, no overlay open), <main> IS the
- *  actual thing that scrolls, so checking its scrollTop is already
- *  correct — this function just resolves back to `boundary` in that
- *  case, unchanged from before. But when a page renders an in-page,
- *  fixed-position detail overlay on top of itself (e.g. SearchPage's
- *  and InvitesPage's ProfileDetailOverlay/InviteDetailOverlay — as
- *  opposed to MatchDetailPage, which is a genuinely separate ROUTE, so
- *  navigating to it unmounts MatchesPage and automatically clears its
- *  registered handler via usePullToRefresh's own cleanup), that overlay
- *  is still DOM-wise a child rendered inside <main> — just visually
- *  `position: fixed` on top of everything. <main> itself never scrolls
- *  at all while such an overlay is open; the overlay's own inner
- *  content (e.g. ProfileCard's own scrollable area) is a completely
- *  separate, nested scroll container with its own independent
- *  scrollTop. Previously, scrolling that inner area down to reveal
- *  details and then dragging down again to scroll back up would bubble
- *  up to <main>'s listener, which always saw <main>'s own scrollTop
- *  frozen at 0 (since it never moved) and wrongly claimed the gesture
- *  as a pull-to-refresh — even though the actual element being touched
- *  was nowhere near its own top. Resolving to the REAL scrollable
- *  ancestor of the touch fixes this generally, for any current or
- *  future nested scroll area, rather than special-casing overlays by
- *  page.
- *
- *  Checks classList for the literal "overflow-y-auto" Tailwind class
- *  (the exact class both <main> and ProfileCard's own scroll container
- *  actually use) rather than window.getComputedStyle(node).overflowY.
- *  An earlier version of this function used getComputedStyle, which
- *  forces a synchronous style recalculation — for the common case (no
- *  overlay open), the actual touch target is typically several DOM
- *  levels below <main> (a tile, a row, an icon), so this loop walks up
- *  through many intermediate elements before reaching <main> and
- *  returning it, paying that recalculation cost at EVERY level, on
- *  EVERY touch. This gesture has already proven, in earlier debugging
- *  this session, to be extremely sensitive to exactly this kind of
- *  added latency inside onTouchStart — that version reintroduced a
- *  "glitches on the first attempt" symptom close to the original bug
- *  this whole gesture system was built to avoid. classList.contains is
- *  a cheap set lookup with no style recalculation; scrollHeight/
- *  clientHeight are still layout-dependent but far cheaper than a full
- *  computed-style pass, and are now only read for the one or two
- *  elements that actually have the class, not every ancestor walked.
- *  Trade-off: a future new scrollable container must use this exact
- *  class for this function to recognize it — if one's ever added via
- *  inline style or a differently-named utility instead, add its
- *  marker here too. */
-function findScrollableAncestor(target: EventTarget | null, boundary: HTMLElement): HTMLElement {
-  let node = target instanceof Node ? (target instanceof HTMLElement ? target : target.parentElement) : null;
-  while (node && node !== boundary) {
-    if (node.classList.contains("overflow-y-auto") && node.scrollHeight > node.clientHeight) return node;
-    node = node.parentElement;
-  }
-  return boundary;
-}
-
 function AppShellInner({ children }: AppShellProps) {
   const [location] = useLocation();
   const { blockInfo, clearBlockInfo } = useAuth();
@@ -136,11 +73,34 @@ function AppShellInner({ children }: AppShellProps) {
       if (isRefreshingRef.current || !refreshHandlerRef.current) return;
       // Only engage right at the top of the scroll area, same as the
       // native gesture — otherwise this would fight normal scrolling
-      // anywhere else in a long list. Checks the scrollTop of whatever
-      // scrollable element the touch actually started within (see
-      // findScrollableAncestor above), not always <main> itself.
-      const scrollTarget = findScrollableAncestor(e.target, el);
-      if (scrollTarget.scrollTop > 0) return;
+      // anywhere else in a long list.
+      //
+      // Deliberately checks <main>'s (el's) own scrollTop directly,
+      // NOT whatever nested scrollable element the touch happened to
+      // start within. An earlier version of this file walked up from
+      // the actual touch target to find its nearest genuinely-
+      // scrollable ancestor, specifically to handle in-page overlays
+      // (SearchPage/InvitesPage's ProfileDetailOverlay/
+      // InviteDetailOverlay) whose own inner content scrolls
+      // independently of <main>. That approach was reverted: even
+      // after replacing an expensive getComputedStyle-based check with
+      // a cheaper classList one, it still reintroduced the exact
+      // "glitches on the first attempt" symptom this gesture system
+      // was originally built to eliminate — this system has proven, in
+      // earlier debugging this session, to be unusually sensitive to
+      // ANY added work inside onTouchStart, not just the specific cost
+      // of getComputedStyle. Rather than keep tuning that approach's
+      // performance, the fix moved to where the actual ambiguity lives:
+      // SearchPage/InvitesPage now explicitly disable their own
+      // registered handler (via usePullToRefresh's new `enabled`
+      // param) while their overlay is open, so refreshHandlerRef.current
+      // is genuinely null during that time and this function never
+      // engages at all — the same effective outcome as MatchDetailPage
+      // being a separate route that unmounts MatchesPage. <main> being
+      // the single thing checked here is correct for every other case,
+      // including a long, genuinely scrollable list — <main> IS what
+      // scrolls there, so this was never actually wrong for that case.
+      if (el.scrollTop > 0) return;
       touchStartYRef.current = e.touches[0].clientY;
       isPullingRef.current = true;
     };

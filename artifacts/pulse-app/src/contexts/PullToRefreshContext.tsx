@@ -1,4 +1,4 @@
-import { createContext, useContext, useLayoutEffect, useRef, MutableRefObject, ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, MutableRefObject, ReactNode } from "react";
 
 type RefreshHandler = () => Promise<void> | void;
 
@@ -36,46 +36,39 @@ export function usePullToRefreshRef() {
  *  etc.) simply never register a handler, so AppShell's gesture stays
  *  fully inert there — no route-list or special-casing needed.
  *
- *  Two separate refs, deliberately: `latestOnRefresh` always holds the
- *  most recent closure, updated on every render as a plain assignment
- *  during render — not inside an effect, so it has zero registration
- *  side effects and can't cause any churn no matter how often this
- *  component re-renders. The SHARED context ref (from
- *  usePullToRefreshRef) is set to a stable wrapper function exactly
- *  ONCE per mount, in a mount/unmount-only effect — that wrapper simply
- *  calls whatever's currently in latestOnRefresh at the moment
- *  AppShell's gesture completes, so it's always calling the current
- *  logic despite never itself needing to change.
+ *  `onRefresh` doesn't need to be memoized — a fresh closure every
+ *  render is fine and in fact intentional, since it keeps AppShell
+ *  always calling the CURRENT closure (current token, current state)
+ *  rather than one captured on first mount. Registration is cleared on
+ *  unmount so navigating away correctly disables the gesture.
  *
- *  This replaces an earlier version that set the shared ref directly,
- *  in a no-dependency-array effect re-run on every render. That worked
- *  correctly on paper, but in practice caused a real, measurable amount
- *  of unregister/re-register churn: any state update anywhere in
- *  AppShell (including, notably, the pull gesture's OWN setPullDistance
- *  calls during onTouchMove, which fire continuously while actively
- *  dragging) re-renders the page tree, re-running this effect and
- *  briefly nulling the shared ref before restoring it. First-capture
- *  debug logs showed this happening many times per second during an
- *  active gesture and even between renders with no user interaction at
- *  all. It's not confirmed to be the root cause of the reported "needs
- *  two pulls" bug, but it's a real, needless source of exactly the
- *  kind of brief-ref-is-null window that bug would look like, and is
- *  worth eliminating regardless of whether it's the whole explanation. */
-export function usePullToRefresh(onRefresh: RefreshHandler): void {
+ *  `enabled` (default true) lets a page temporarily suspend the gesture
+ *  without unmounting — needed for pages like SearchPage/InvitesPage
+ *  that show a full-screen profile/invite detail overlay IN PLACE
+ *  (rather than navigating to a separate route the way
+ *  MatchDetailPage does, which unmounts MatchesPage and automatically
+ *  clears ITS handler via the cleanup below). While such an overlay is
+ *  open, its own inner content (e.g. ProfileCard's own scrollable
+ *  photo+details area) scrolls independently of <main> — a downward
+ *  drag to scroll that inner content back up would otherwise still
+ *  reach AppShell's gesture handler and be misread as a pull-to-
+ *  refresh, since <main> itself never moves while the overlay covers
+ *  it. Passing `enabled={false}` while the overlay is open makes
+ *  refreshHandlerRef.current genuinely null for that whole time, so
+ *  AppShell's gesture never engages at all — the same effective
+ *  outcome as a real unmount, without needing a real route change.
+ *  (An earlier attempt solved this by having AppShell itself walk up
+ *  from the touched element to find its real scrollable ancestor
+ *  instead of always checking <main>'s scrollTop — that approach was
+ *  reverted after it reintroduced timing-sensitive gesture glitches
+ *  that this simpler, explicit-opt-out approach doesn't risk, since
+ *  AppShell's own gesture-detection logic is completely unchanged.) */
+export function usePullToRefresh(onRefresh: RefreshHandler, enabled: boolean = true): void {
   const ref = usePullToRefreshRef();
-  const latestOnRefresh = useRef(onRefresh);
-  latestOnRefresh.current = onRefresh;
-
-  useLayoutEffect(() => {
-    const wrapper: RefreshHandler = () => latestOnRefresh.current();
-    ref.current = wrapper;
+  useEffect(() => {
+    ref.current = enabled ? onRefresh : null;
     return () => {
-      if (ref.current === wrapper) ref.current = null;
+      if (ref.current === onRefresh) ref.current = null;
     };
-    // Intentionally empty deps — this now runs ONLY on mount/unmount,
-    // never on every render, since the wrapper it registers never needs
-    // to change; it always reads the current value via latestOnRefresh
-    // regardless of when it's called.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  });
 }

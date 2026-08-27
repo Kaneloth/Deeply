@@ -282,7 +282,18 @@ export default function SearchPage() {
   // Refreshes the passive browse categories (New Here, Popular, etc.)
   // — a name/filter search is a deliberate user action with its own
   // Search button, not something a pull gesture should silently re-run.
-  usePullToRefresh(fetchCategories);
+  // Disabled while selectedProfile's ProfileDetailOverlay or
+  // composeFor's message sheet is open — both are in-page, fixed-
+  // position overlays rendered on top of this same page rather than
+  // separate routes, so this page never actually unmounts while either
+  // is showing (unlike e.g. MatchDetailPage, a real route, which
+  // unmounts MatchesPage and automatically clears its handler this same
+  // way). Without this, a downward drag to scroll ProfileCard's own
+  // inner content back up inside the overlay would still reach
+  // AppShell's gesture handler and be misread as a pull-to-refresh —
+  // see usePullToRefresh's own comment on the `enabled` param for the
+  // full history of why this is the fix, not a smarter gesture handler.
+  usePullToRefresh(fetchCategories, !selectedProfile && !composeFor);
 
   // Capture device location here too, not just on Discover — otherwise
   // anyone who opens Search before ever visiting Discover has no
