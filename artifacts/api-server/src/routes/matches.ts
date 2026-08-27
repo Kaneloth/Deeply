@@ -54,7 +54,16 @@ function delay(ms: number): Promise<void> {
 /** Retries `fetchOnce` against MATCH_LOOKUP_RETRY_SCHEDULE_MS until it
  *  returns a non-empty, error-free result or the schedule is exhausted.
  *  See the file-level comment above for why a single fixed retry proved
- *  insufficient. */
+ *  insufficient.
+ *
+ *  Logs the ACTUAL underlying error object on every retry, not just a
+ *  generic "empty/errored" — a genuinely EMPTY result (transient read-
+ *  after-write lag, the thing this retry schedule was built for) and a
+ *  genuinely ERRORED result (e.g. a real query/schema problem, which no
+ *  amount of retrying fixes) look identical without this, and telling
+ *  them apart is exactly what's needed to diagnose "every single match
+ *  lookup fails, including ones confirmed to exist" rather than
+ *  guessing blindly. */
 async function fetchMatchWithBackoff<T>(
   fetchOnce: () => Promise<{ data: T | null; error: unknown }>,
   logLabel: string,
@@ -62,9 +71,16 @@ async function fetchMatchWithBackoff<T>(
   let result = await fetchOnce();
   for (const delayMs of MATCH_LOOKUP_RETRY_SCHEDULE_MS) {
     if (!result.error && result.data) break;
-    console.error(`MATCHES DEBUG: ${logLabel} came back empty/errored — retrying after ${delayMs}ms`);
+    if (result.error) {
+      console.error(`MATCHES DEBUG: ${logLabel} — GENUINE ERROR (not just empty): ${JSON.stringify(result.error)} — retrying after ${delayMs}ms`);
+    } else {
+      console.error(`MATCHES DEBUG: ${logLabel} came back empty (no error) — retrying after ${delayMs}ms`);
+    }
     await delay(delayMs);
     result = await fetchOnce();
+  }
+  if (result.error) {
+    console.error(`MATCHES DEBUG: ${logLabel} — FINAL GENUINE ERROR after all retries exhausted: ${JSON.stringify(result.error)}`);
   }
   return result;
 }
@@ -207,7 +223,7 @@ router.get("/matches", requireAuth, async (req, res): Promise<void> => {
   await rememberMatched(userId, (rawMatches ?? []).map(partnerIdOf));
 
   const blockedIds = new Set(await getBlockedUserIds(userId));
-  const matches = (rawMatches ?? []).filter((m) => {
+  let matches = (rawMatches ?? []).filter((m) => {
     const partnerId = m.user1_id === userId ? m.user2_id : m.user1_id;
     return !blockedIds.has(partnerId);
   });
@@ -230,11 +246,28 @@ router.get("/matches", requireAuth, async (req, res): Promise<void> => {
   // its refund/notifications processed) the moment either party so much
   // as loads their matches list, not only when they open that specific
   // chat. See chat-unlock-helper.ts for why this is lazy rather than a
-  // scheduled sweep. Independent per match, so run concurrently rather
-  // than one at a time.
-  const expiryCheckedMatches = await Promise.all(matches.map((m) => checkChatUnlockExpiry(m as Record<string, any>)));
+  // scheduled sweep.
+  //
+  // Filtered to ONLY matches actually in 'awaiting_reply' before calling
+  // checkChatUnlockExpiry at all — that function already early-returns
+  // as a no-op for every other status, so behavior here is identical
+  // either way, but for a list of, say, 20 matches where at most one or
+  // two are ever actually 'awaiting_reply', this avoids 18-19
+  // essentially-pointless function calls (each still real Promise/async
+  // overhead) on EVERY single list fetch, which this page polls
+  // frequently. This app has already proven, repeatedly this session,
+  // to be sensitive to exactly this kind of added concurrent load
+  // worsening Supabase's own read-consistency timing on OTHER, unrelated
+  // queries — keeping this list-endpoint work to the minimum actually
+  // necessary matters more here than it would look like in isolation.
+  const awaitingReplyMatches = matches.filter((m) => (m as Record<string, any>).chat_unlock_status === "awaiting_reply");
+  if (awaitingReplyMatches.length > 0) {
+    const expiryResults = await Promise.all(awaitingReplyMatches.map((m) => checkChatUnlockExpiry(m as Record<string, any>)));
+    const expiryResultById = new Map(expiryResults.map((m) => [m.id, m]));
+    matches = matches.map((m) => expiryResultById.get(m.id) ?? m) as typeof matches;
+  }
 
-  const formatted = await formatMatchesBatch(expiryCheckedMatches, userId);
+  const formatted = await formatMatchesBatch(matches as Record<string, any>[], userId);
 
   const result = formatted.map((m) => ({
     ...m,
