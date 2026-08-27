@@ -22,7 +22,7 @@ import {
   LogOut, Moon, Sun, Type, Lock, HelpCircle, LifeBuoy, Trash2,
   ChevronRight, AlertTriangle, Eye, EyeOff, Mail, EyeOff as IncognitoIcon,
   ShieldOff, X as XIcon, ScanEye, Send, FileText, ShieldCheck,
-  Fingerprint, Loader2, Info,
+  Fingerprint, Loader2, Info, CheckCheck,
 } from "lucide-react";
 
 // Registers biometric sign-in on this device. Native: OS-level fingerprint
@@ -172,6 +172,20 @@ export default function SettingsPage() {
   const [profileViewsVisible, setProfileViewsVisible] = useState(true);
   const [isTogglingProfileViews, setIsTogglingProfileViews] = useState(false);
 
+  // Deliberately independent of receiving/paying for read receipts on
+  // OTHER people's messages — this only controls whether THIS user's own
+  // read activity is ever visible to whoever they're talking to. Unlike
+  // WhatsApp (where turning off read receipts also blocks you from
+  // seeing anyone else's), turning this off has zero effect on this
+  // user's own ability to separately pay to unlock read receipts on
+  // their own sent messages — see ChatPage.tsx's Receipts button, which
+  // is governed entirely by this match's own read_receipt_unlocks row,
+  // not by this setting at all. Default true (matches the DB column's
+  // own default) so existing users keep today's behavior until they
+  // actively choose to turn it off.
+  const [shareReadReceipts, setShareReadReceipts] = useState(true);
+  const [isTogglingReadReceipts, setIsTogglingReadReceipts] = useState(false);
+
   interface BlockedEntry {
     id: string;
     blocked_user: { id: string; name: string; photo_url: string | null } | null;
@@ -292,6 +306,38 @@ export default function SettingsPage() {
     }
   };
 
+  const handleToggleReadReceipts = async () => {
+    const next = !shareReadReceipts;
+    setIsTogglingReadReceipts(true);
+    try {
+      const res = await fetch("/api/profile/me", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ share_read_receipts: next }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "Failed to update");
+      setShareReadReceipts(next);
+      toast({
+        title: next ? "Read receipts sharing on" : "Read receipts sharing off",
+        description: next
+          ? "Matches who've paid to unlock receipts can see when you've read their messages."
+          : "No one can see when you've read their messages, even if they've paid to unlock receipts. You can still separately unlock receipts to see when others read yours.",
+      });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to update read receipts setting.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsTogglingReadReceipts(false);
+    }
+  };
+
   useEffect(() => {
     setSignInMethodState(getSignInMethod());
   }, []);
@@ -341,6 +387,7 @@ export default function SettingsPage() {
         if (body) {
           setIsIncognito(!!body.is_incognito);
           setProfileViewsVisible(body.notify_profile_views ?? true);
+          setShareReadReceipts(body.share_read_receipts ?? true);
         }
       })
       .catch(() => {});
@@ -652,6 +699,42 @@ export default function SettingsPage() {
             </div>
             <div className={`h-6 w-10 rounded-full relative transition-colors shrink-0 ${profileViewsVisible ? "bg-primary" : "bg-secondary"}`}>
               <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${profileViewsVisible ? "right-1" : "left-1"}`} />
+            </div>
+          </button>
+
+          {/* Unlike WhatsApp's read-receipts toggle, turning this off does
+              NOT also block this user from separately paying to see when
+              THEIR OWN sent messages are read — that's governed entirely
+              by that specific match's own read-receipts unlock (see
+              ChatPage.tsx), completely independent of this setting. This
+              only ever controls whether THIS user's own read activity is
+              visible to others. A match who's already paid to unlock
+              receipts on this user specifically will simply stop seeing
+              "Read" the moment this is turned off — see messages.ts's
+              GET /matches/:matchId/messages, which checks this setting
+              (not just whether receipts were paid for) before ever
+              reporting a message as read. Anyone trying to newly PAY to
+              unlock receipts on this user while this is off is stopped
+              and told why before spending anything — see POST
+              /matches/:matchId/read-receipts/unlock's own check. */}
+          <button
+            onClick={handleToggleReadReceipts}
+            disabled={isTogglingReadReceipts}
+            className="w-full flex items-center justify-between bg-card border border-card-border rounded-2xl p-4 disabled:opacity-60"
+          >
+            <div className="flex items-center gap-3">
+              <CheckCheck size={18} className="text-muted-foreground" />
+              <div className="text-left">
+                <p className="text-sm font-medium">Share Read Receipts</p>
+                <p className="text-xs text-muted-foreground">
+                  {shareReadReceipts
+                    ? "Matches who unlock receipts can see when you've read their messages"
+                    : "Off — no one can see when you've read their messages"}
+                </p>
+              </div>
+            </div>
+            <div className={`h-6 w-10 rounded-full relative transition-colors shrink-0 ${shareReadReceipts ? "bg-primary" : "bg-secondary"}`}>
+              <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${shareReadReceipts ? "right-1" : "left-1"}`} />
             </div>
           </button>
 
