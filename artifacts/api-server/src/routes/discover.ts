@@ -289,6 +289,23 @@ router.post("/discover/reshuffle", requireAuth, async (req, res): Promise<void> 
   res.json({ candidates, wasFree: isFree, cost: cost_reshuffle });
 });
 
+// TEMPORARY DEBUG — see the "chat unlock still not sticking" investigation.
+// Writes directly to a dedicated table rather than console.error, since
+// log-based debugging in this specific investigation has repeatedly
+// proven unreliable (a confirmed match-creating request showed zero
+// console.error output at all in the Netlify log export, despite the
+// code path that should have produced it). A DB row survives regardless
+// of log export windows, Netlify buffering, or anything else in that
+// pipeline. Safe to remove (along with the chat_unlock_debug_log table)
+// once resolved.
+async function debugLog(step: string, fields: Record<string, unknown>): Promise<void> {
+  try {
+    await supabase.from("chat_unlock_debug_log").insert({ step, ...fields });
+  } catch {
+    // Never let debug logging itself break the real request.
+  }
+}
+
 /** Creates a match between two users — idempotent, returns the existing
  *  match if one's already there (e.g. a race between two near-
  *  simultaneous requests). If either person's swipe toward the other
@@ -306,6 +323,7 @@ async function createMatchWithAnyPendingMessages(
   targetId: string,
 ): Promise<{ id: string } | null> {
   const [lo, hi] = [userId, targetId].sort();
+  await debugLog("function_entered", { user_id: userId, target_id: targetId });
 
   const { data: existingMatch } = await supabase
     .from("matches")
@@ -313,7 +331,10 @@ async function createMatchWithAnyPendingMessages(
     .eq("user1_id", lo)
     .eq("user2_id", hi)
     .maybeSingle();
-  if (existingMatch) return existingMatch;
+  if (existingMatch) {
+    await debugLog("existing_match_early_return", { match_id: existingMatch.id, user_id: userId, target_id: targetId });
+    return existingMatch;
+  }
 
   // Checked BEFORE the insert below — this only reads the swipes table,
   // completely independent of the match row's own id, so there's no
@@ -362,14 +383,16 @@ async function createMatchWithAnyPendingMessages(
   // 50/50 unlock process (see messages.ts's POST /matches/:matchId/messages).
   const initialChatUnlockStatus = pendingMessages.length > 0 ? "unlocked" : "locked";
 
-  // TEMPORARY DEBUG — see the "chat unlock still not sticking" investigation.
-  // Confirms the exact computed value going into the insert, and what
-  // actually got persisted afterward, to isolate application-level vs
-  // database-level (trigger/default override) causes. Safe to remove
-  // once resolved.
-  console.error(
-    `CHAT UNLOCK DEBUG v2: userId=${userId} targetId=${targetId} mySwipeMessageContent=${JSON.stringify(mySwipe?.message_content)} theirSwipeMessageContent=${JSON.stringify(theirSwipe?.message_content)} pendingMessages.length=${pendingMessages.length} initialChatUnlockStatus=${initialChatUnlockStatus} (type=${typeof initialChatUnlockStatus})`,
-  );
+  await debugLog("computed_initial_status", {
+    user_id: userId,
+    target_id: targetId,
+    detail: {
+      mySwipeMessageContent: mySwipe?.message_content ?? null,
+      theirSwipeMessageContent: theirSwipe?.message_content ?? null,
+      pendingMessagesLength: pendingMessages.length,
+      initialChatUnlockStatus,
+    },
+  });
 
   // Same PGRST116 retry pattern used elsewhere in this file — a match
   // insert immediately followed by a read-back is exactly the kind of
@@ -386,13 +409,16 @@ async function createMatchWithAnyPendingMessages(
     if (result.data) {
       match = result.data;
       matchError = null;
-      console.error(
-        `CHAT UNLOCK DEBUG v2: insert succeeded, matchId=${result.data.id} PERSISTED chat_unlock_status=${(result.data as any).chat_unlock_status}`,
-      );
+      await debugLog("insert_succeeded", {
+        match_id: result.data.id,
+        user_id: userId,
+        target_id: targetId,
+        detail: { persistedChatUnlockStatus: (result.data as any).chat_unlock_status },
+      });
       break;
     }
     matchError = result.error;
-    console.error(`CHAT UNLOCK DEBUG v2: insert attempt ${attempt} failed: ${JSON.stringify(result.error)}`);
+    await debugLog("insert_attempt_failed", { user_id: userId, target_id: targetId, detail: { attempt, error: result.error } });
     if (attempt === 0 && result.error?.code === "PGRST116") {
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
@@ -405,7 +431,7 @@ async function createMatchWithAnyPendingMessages(
     // is already correct — nothing further to set here.
     const { data: raceMatch } = await supabase.from("matches").select("id").eq("user1_id", lo).eq("user2_id", hi).maybeSingle();
     match = raceMatch ?? null;
-    console.error(`CHAT UNLOCK DEBUG v2: 23505 race fallback, found matchId=${raceMatch?.id}`);
+    await debugLog("race_23505_fallback", { match_id: raceMatch?.id, user_id: userId, target_id: targetId });
   }
   if (!match) return null;
 
@@ -498,6 +524,9 @@ router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
     .eq("target_id", userId)
     .in("direction", ["like", "super_like"])
     .maybeSingle();
+
+  // TEMPORARY DEBUG — see the "chat unlock still not sticking" investigation.
+  await debugLog("swipe_endpoint_decision", { user_id: userId, target_id: targetId, detail: { reverseSwipeFound: !!reverseSwipe } });
 
   // Handles both a genuinely new match AND the "accepting a message-
   // before-match invite" case — if the target's earlier swipe carried a
