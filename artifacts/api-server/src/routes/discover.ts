@@ -362,6 +362,15 @@ async function createMatchWithAnyPendingMessages(
   // 50/50 unlock process (see messages.ts's POST /matches/:matchId/messages).
   const initialChatUnlockStatus = pendingMessages.length > 0 ? "unlocked" : "locked";
 
+  // TEMPORARY DEBUG — see the "chat unlock still not sticking" investigation.
+  // Confirms the exact computed value going into the insert, and what
+  // actually got persisted afterward, to isolate application-level vs
+  // database-level (trigger/default override) causes. Safe to remove
+  // once resolved.
+  console.error(
+    `CHAT UNLOCK DEBUG v2: userId=${userId} targetId=${targetId} mySwipeMessageContent=${JSON.stringify(mySwipe?.message_content)} theirSwipeMessageContent=${JSON.stringify(theirSwipe?.message_content)} pendingMessages.length=${pendingMessages.length} initialChatUnlockStatus=${initialChatUnlockStatus} (type=${typeof initialChatUnlockStatus})`,
+  );
+
   // Same PGRST116 retry pattern used elsewhere in this file — a match
   // insert immediately followed by a read-back is exactly the kind of
   // operation that's previously hit transient connection-consistency
@@ -372,14 +381,18 @@ async function createMatchWithAnyPendingMessages(
     const result = await supabase
       .from("matches")
       .insert({ user1_id: lo, user2_id: hi, chat_unlock_status: initialChatUnlockStatus })
-      .select("id")
+      .select("id, chat_unlock_status")
       .single();
     if (result.data) {
       match = result.data;
       matchError = null;
+      console.error(
+        `CHAT UNLOCK DEBUG v2: insert succeeded, matchId=${result.data.id} PERSISTED chat_unlock_status=${(result.data as any).chat_unlock_status}`,
+      );
       break;
     }
     matchError = result.error;
+    console.error(`CHAT UNLOCK DEBUG v2: insert attempt ${attempt} failed: ${JSON.stringify(result.error)}`);
     if (attempt === 0 && result.error?.code === "PGRST116") {
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
@@ -392,6 +405,7 @@ async function createMatchWithAnyPendingMessages(
     // is already correct — nothing further to set here.
     const { data: raceMatch } = await supabase.from("matches").select("id").eq("user1_id", lo).eq("user2_id", hi).maybeSingle();
     match = raceMatch ?? null;
+    console.error(`CHAT UNLOCK DEBUG v2: 23505 race fallback, found matchId=${raceMatch?.id}`);
   }
   if (!match) return null;
 
