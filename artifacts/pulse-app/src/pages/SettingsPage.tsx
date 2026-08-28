@@ -18,11 +18,12 @@ import { PageHeader } from "@/components/PageHeader";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation, Link } from "wouter";
 import { Shield } from "lucide-react";
+import { PhoneVerificationFlow } from "@/components/PhoneVerificationFlow";
 import {
   LogOut, Moon, Sun, Type, Lock, HelpCircle, LifeBuoy, Trash2,
   ChevronRight, AlertTriangle, Eye, EyeOff, Mail, EyeOff as IncognitoIcon,
   ShieldOff, X as XIcon, ScanEye, Send, FileText, ShieldCheck,
-  Fingerprint, Loader2, Info, CheckCheck,
+  Fingerprint, Loader2, Info, CheckCheck, Phone, Users,
 } from "lucide-react";
 
 // Registers biometric sign-in on this device. Native: OS-level fingerprint
@@ -185,6 +186,36 @@ export default function SettingsPage() {
   // actively choose to turn it off.
   const [shareReadReceipts, setShareReadReceipts] = useState(true);
   const [isTogglingReadReceipts, setIsTogglingReadReceipts] = useState(false);
+
+  // Phone number / verification state — see PhoneVerificationFlow for
+  // the actual entry+OTP UI, shared with onboarding.
+  const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
+  const [phoneVerified, setPhoneVerified] = useState(false);
+  const [showPhoneForm, setShowPhoneForm] = useState(false);
+  const [isLoadingPhoneStatus, setIsLoadingPhoneStatus] = useState(true);
+
+  // Block Contacts entry point — gated on phone verification per the
+  // spec (the actual contact picker + manual-add flow lives on its own
+  // page, since it needs native contacts access and its own permission
+  // handling; this is just the Settings entry point and the
+  // not-yet-verified prompt).
+  const [showBlockContactsPrompt, setShowBlockContactsPrompt] = useState(false);
+
+  const fetchPhoneStatus = async () => {
+    setIsLoadingPhoneStatus(true);
+    try {
+      const res = await fetch("/api/phone/status", { headers: { Authorization: `Bearer ${token}` } });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setPhoneNumber(body.phone_number ?? null);
+        setPhoneVerified(!!body.phone_verified);
+      }
+    } catch {
+      // Silent — non-critical, section just shows "No phone number added".
+    } finally {
+      setIsLoadingPhoneStatus(false);
+    }
+  };
 
   interface BlockedEntry {
     id: string;
@@ -398,6 +429,7 @@ export default function SettingsPage() {
       })
       .catch(() => {});
     fetchBlockedUsers();
+    fetchPhoneStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
@@ -524,6 +556,45 @@ export default function SettingsPage() {
               </div>
             </div>
           )}
+
+          <div className="bg-card border border-card-border rounded-2xl p-4">
+            <button
+              onClick={() => setShowPhoneForm((v) => !v)}
+              className="w-full flex items-center justify-between"
+            >
+              <div className="flex items-center gap-3">
+                <Phone size={18} className={phoneVerified ? "text-primary" : "text-muted-foreground"} />
+                <div className="text-left">
+                  <p className="text-sm font-medium">Phone Number</p>
+                  <p className="text-xs text-muted-foreground">
+                    {isLoadingPhoneStatus
+                      ? "Loading..."
+                      : phoneVerified
+                      ? `Verified: ${phoneNumber}`
+                      : "No phone number added"}
+                  </p>
+                </div>
+              </div>
+              {!showPhoneForm && (
+                <span className="text-xs font-medium text-primary shrink-0">
+                  {phoneVerified ? "Update" : "Add"}
+                </span>
+              )}
+            </button>
+
+            {showPhoneForm && (
+              <div className="mt-4 pt-4 border-t border-border">
+                <PhoneVerificationFlow
+                  onVerified={(number) => {
+                    setPhoneNumber(number);
+                    setPhoneVerified(true);
+                    setShowPhoneForm(false);
+                  }}
+                  onCancel={() => setShowPhoneForm(false)}
+                />
+              </div>
+            )}
+          </div>
 
           <div className="bg-card border border-card-border rounded-2xl p-4">
             <div className="flex items-center justify-between">
@@ -758,6 +829,59 @@ export default function SettingsPage() {
               </div>
             </button>
           )}
+
+          <div className="bg-card border border-card-border rounded-2xl overflow-hidden">
+            <button
+              onClick={() => {
+                if (phoneVerified) {
+                  // TODO: navigate to the dedicated contact-picker page
+                  // once built (needs native contacts access + its own
+                  // permission flow).
+                  setLocation("/block-contacts");
+                } else {
+                  setShowBlockContactsPrompt((v) => !v);
+                }
+              }}
+              className="w-full flex items-center justify-between p-4"
+            >
+              <div className="flex items-center gap-3">
+                <Users size={18} className="text-muted-foreground" />
+                <div className="text-left">
+                  <p className="text-sm font-medium">Block Contacts</p>
+                  <p className="text-xs text-muted-foreground">
+                    {phoneVerified ? "Hide people from your contacts" : "Requires phone verification"}
+                  </p>
+                </div>
+              </div>
+              <ChevronRight size={16} className={`text-muted-foreground transition-transform ${showBlockContactsPrompt ? "rotate-90" : ""}`} />
+            </button>
+
+            {!phoneVerified && showBlockContactsPrompt && (
+              <div className="border-t border-border p-4 space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  To block people from your contact list, we need your phone number. You haven't added one yet.
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => {
+                      setShowBlockContactsPrompt(false);
+                      setShowPhoneForm(true);
+                    }}
+                    className="flex-1 h-10 rounded-xl bg-gradient-accent border-0 text-sm"
+                  >
+                    Add Phone Number
+                  </Button>
+                  <Button
+                    onClick={() => setShowBlockContactsPrompt(false)}
+                    variant="outline"
+                    className="flex-1 h-10 rounded-xl text-sm"
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
 
           <div className="bg-card border border-card-border rounded-2xl overflow-hidden">
             <button

@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
 import { getBlockedUserIds } from "./blocks-helper";
+import { getBlockedContactProfileIds } from "./blocked-contacts-helper";
 
 /** IDs to exclude from any discovery/search candidate list: the viewer
  *  themselves, anyone they've already swiped on, anyone they're already
@@ -9,17 +10,18 @@ import { getBlockedUserIds } from "./blocks-helper";
  *  message-request) can create a match without necessarily recording a
  *  reciprocal swipe row for both users. */
 export async function getExcludedCandidateIds(userId: string): Promise<string[]> {
-  // These 4 queries are fully independent of each other's results, but
+  // These 5 queries are fully independent of each other's results, but
   // were previously awaited one after another — on every single
   // Discover/Search/Categories/Invites request. Running them concurrently
   // cuts this part's latency to roughly the slowest single query instead
   // of the sum of all four, which matters here specifically because this
   // function is called on nearly every page in the app.
-  const [{ data: alreadySwiped }, { data: existingMatches }, blockedIds, { data: adminRows }] = await Promise.all([
+  const [{ data: alreadySwiped }, { data: existingMatches }, blockedIds, { data: adminRows }, blockedContactIds] = await Promise.all([
     supabase.from("swipes").select("target_id").eq("swiper_id", userId),
     supabase.from("matches").select("user1_id, user2_id").or(`user1_id.eq.${userId},user2_id.eq.${userId}`),
     getBlockedUserIds(userId),
     supabase.from("profiles").select("id").eq("is_admin", true),
+    getBlockedContactProfileIds(userId),
   ]);
 
   const matchedPartnerIds = (existingMatches ?? []).map((m) =>
@@ -33,6 +35,7 @@ export async function getExcludedCandidateIds(userId: string): Promise<string[]>
     ...matchedPartnerIds,
     ...blockedIds,
     ...adminIds,
+    ...blockedContactIds,
   ];
 }
 
@@ -50,14 +53,15 @@ export async function getExcludedCandidateIds(userId: string): Promise<string[]>
 export async function getCandidateExclusionSets(
   userId: string,
 ): Promise<{ hardExcluded: string[]; pendingInvitedIds: string[] }> {
-  // Same fix as getExcludedCandidateIds above — these 4 queries don't
+  // Same fix as getExcludedCandidateIds above — these 5 queries don't
   // depend on each other, so run them concurrently rather than one after
   // another.
-  const [{ data: allSwipes }, { data: existingMatches }, blockedIds, { data: adminRows }] = await Promise.all([
+  const [{ data: allSwipes }, { data: existingMatches }, blockedIds, { data: adminRows }, blockedContactIds] = await Promise.all([
     supabase.from("swipes").select("target_id, direction").eq("swiper_id", userId),
     supabase.from("matches").select("user1_id, user2_id").or(`user1_id.eq.${userId},user2_id.eq.${userId}`),
     getBlockedUserIds(userId),
     supabase.from("profiles").select("id").eq("is_admin", true),
+    getBlockedContactProfileIds(userId),
   ]);
 
   const pendingInvitedIds = (allSwipes ?? [])
@@ -71,7 +75,7 @@ export async function getCandidateExclusionSets(
   const adminIds = (adminRows ?? []).map((a) => a.id);
 
   return {
-    hardExcluded: [userId, ...passedIds, ...matchedPartnerIds, ...blockedIds, ...adminIds],
+    hardExcluded: [userId, ...passedIds, ...matchedPartnerIds, ...blockedIds, ...adminIds, ...blockedContactIds],
     pendingInvitedIds,
   };
 }

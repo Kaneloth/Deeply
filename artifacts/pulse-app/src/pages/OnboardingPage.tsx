@@ -11,6 +11,7 @@ import { RadioList, ChipGrid } from "@/components/SelectorControls";
 import { RadiusSlider } from "@/components/DropdownControls";
 import { AudioRecorderControl } from "@/components/AudioRecorderControl";
 import { HeightInput } from "@/components/HeightInput";
+import { PhoneVerificationFlow } from "@/components/PhoneVerificationFlow";
 import {
   INTERESTS,
   DATING_INTENTIONS,
@@ -34,7 +35,10 @@ import {
   NIGHTLIFE_OPTIONS,
 } from "@/lib/lifestylePreferenceOptions";
 
-const TOTAL_STEPS = 23;
+// Was 23 — +1 for the new optional phone verification step, inserted
+// after profile setup and before the final Welcome screen (see
+// PhoneVerificationFlow, step 22 below). Welcome moved from 22 to 23.
+const TOTAL_STEPS = 24;
 
 // Birthday picker bounds: must be at least 18, and a sane upper bound of
 // 100 years old.
@@ -708,6 +712,27 @@ export default function OnboardingPage() {
         )}
 
         {step === 22 && (
+          <motion.div
+            key={step}
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            transition={{ duration: 0.25 }}
+            className="flex-1 flex flex-col"
+          >
+            <button
+              onClick={goBack}
+              className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center text-foreground mb-4 shrink-0"
+            >
+              <ChevronLeft size={18} />
+            </button>
+            <div className="flex-1 overflow-y-auto">
+              <PhoneVerificationFlow onVerified={() => goNext()} onSkip={goNext} />
+            </div>
+          </motion.div>
+        )}
+
+        {step === 23 && (
           <motion.div key={step} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex-1 flex flex-col">
             <div className="flex-1 flex flex-col items-center justify-center text-center">
               <div className="text-5xl mb-6">🎉</div>
