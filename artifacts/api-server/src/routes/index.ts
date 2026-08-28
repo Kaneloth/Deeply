@@ -8,6 +8,8 @@ import messagesRouter from "./messages";
 import sparksRouter from "./sparks";
 import supportRouter from "./support";
 import gifsRouter from "./gifs";
+import phoneVerificationRouter from "./phone-verification";
+import blockedContactsRouter from "./blocked-contacts";
 
 const router: IRouter = Router();
 
@@ -20,5 +22,7 @@ router.use(messagesRouter);
 router.use(sparksRouter);
 router.use(supportRouter);
 router.use(gifsRouter);
+router.use(phoneVerificationRouter);
+router.use(blockedContactsRouter);
 
 export default router;
