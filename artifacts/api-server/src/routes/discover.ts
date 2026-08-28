@@ -383,16 +383,26 @@ async function createMatchWithAnyPendingMessages(
   // 50/50 unlock process (see messages.ts's POST /matches/:matchId/messages).
   const initialChatUnlockStatus = pendingMessages.length > 0 ? "unlocked" : "locked";
 
-  await debugLog("computed_initial_status", {
-    user_id: userId,
-    target_id: targetId,
-    detail: {
-      mySwipeMessageContent: mySwipe?.message_content ?? null,
-      theirSwipeMessageContent: theirSwipe?.message_content ?? null,
-      pendingMessagesLength: pendingMessages.length,
-      initialChatUnlockStatus,
-    },
-  });
+  // TEMPORARY DEBUG — see the "chat unlock still not sticking" investigation.
+  // Written directly into the SAME insert that creates the row (via the
+  // debug_creation_info column below), rather than as a separate
+  // debugLog() write. A prior version relied on debugLog for this exact
+  // moment and it never showed up for the request that actually won the
+  // insert race, even though the real matches row was created
+  // successfully — meaning that separate, independent write silently
+  // failed while the main insert succeeded. Embedding the diagnostic
+  // payload in the same INSERT statement makes that failure mode
+  // impossible: either both land together, or neither does. Safe to
+  // remove (along with the debug_creation_info column) once resolved.
+  const debugCreationInfo = {
+    userId,
+    targetId,
+    mySwipeMessageContent: mySwipe?.message_content ?? null,
+    theirSwipeMessageContent: theirSwipe?.message_content ?? null,
+    pendingMessagesLength: pendingMessages.length,
+    initialChatUnlockStatus,
+    computedAt: new Date().toISOString(),
+  };
 
   // Same PGRST116 retry pattern used elsewhere in this file — a match
   // insert immediately followed by a read-back is exactly the kind of
@@ -403,7 +413,7 @@ async function createMatchWithAnyPendingMessages(
   for (let attempt = 0; attempt < 2; attempt++) {
     const result = await supabase
       .from("matches")
-      .insert({ user1_id: lo, user2_id: hi, chat_unlock_status: initialChatUnlockStatus })
+      .insert({ user1_id: lo, user2_id: hi, chat_unlock_status: initialChatUnlockStatus, debug_creation_info: debugCreationInfo })
       .select("id, chat_unlock_status")
       .single();
     if (result.data) {
