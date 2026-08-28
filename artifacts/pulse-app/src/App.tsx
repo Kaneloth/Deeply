@@ -22,6 +22,7 @@ import PreferencesPage from '@/pages/PreferencesPage';
 import NotificationsPage from '@/pages/NotificationsPage';
 import WhoViewedMePage from '@/pages/WhoViewedMePage';
 import SettingsPage from '@/pages/SettingsPage';
+import BlockContactsPage from '@/pages/BlockContactsPage';
 import AdminPage from '@/pages/AdminPage';
 import ResetPasswordPage from '@/pages/ResetPasswordPage';
 import AuthCallbackPage from '@/pages/AuthCallbackPage';
@@ -85,6 +86,7 @@ const ProtectedPayfastCancelRoute = () => <ProtectedRoute component={PayfastCanc
 const ProtectedVerificationPayfastReturnRoute = () => <ProtectedRoute component={VerificationPayfastReturnPage} />;
 const ProtectedVerificationPayfastCancelRoute = () => <ProtectedRoute component={VerificationPayfastCancelPage} />;
 const ProtectedSettingsRoute = () => <ProtectedRoute component={SettingsPage} />;
+const ProtectedBlockContactsRoute = () => <ProtectedRoute component={BlockContactsPage} />;
 const ProtectedAdminRoute = () => <ProtectedRoute component={AdminPage} />;
 
 function Router() {
@@ -113,6 +115,7 @@ function Router() {
         <Route path="/verification/payfast/return" component={ProtectedVerificationPayfastReturnRoute} />
         <Route path="/verification/payfast/cancel" component={ProtectedVerificationPayfastCancelRoute} />
         <Route path="/settings" component={ProtectedSettingsRoute} />
+        <Route path="/block-contacts" component={ProtectedBlockContactsRoute} />
         <Route path="/admin" component={ProtectedAdminRoute} />
         
         {/* Catch all */}
