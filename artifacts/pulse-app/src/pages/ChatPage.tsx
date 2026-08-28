@@ -687,7 +687,12 @@ export default function ChatPage() {
       },
     };
     const entry = copy[action];
-    if (entry) toast(entry);
+    // Explicit, longer duration for this specific toast only — it's
+    // explaining an entire mechanic in a full sentence, not confirming a
+    // quick action like "Copied", so the default toast duration (tuned
+    // for brief confirmations) wasn't giving anyone enough time to
+    // actually read it before it disappeared.
+    if (entry) toast({ ...entry, duration: 12000 });
   };
 
   const handleSend = async (e: React.FormEvent) => {

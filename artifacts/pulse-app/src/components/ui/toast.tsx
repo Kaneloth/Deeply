@@ -84,7 +84,16 @@ const ToastClose = React.forwardRef<
   <ToastPrimitives.Close
     ref={ref}
     className={cn(
-      'absolute right-2 top-2 rounded-md p-1 text-foreground/50 opacity-0 transition-opacity hover:text-foreground focus:opacity-100 focus:outline-none focus:ring-2 group-hover:opacity-100 group-[.destructive]:text-red-300 group-[.destructive]:hover:text-red-50 group-[.destructive]:focus:ring-red-400 group-[.destructive]:focus:ring-offset-red-600',
+      // Was opacity-0 with only group-hover:opacity-100 to reveal it —
+      // a purely desktop interaction with no equivalent on a touchscreen,
+      // so on this app's actual (mobile/Capacitor) target this button
+      // was being rendered on every single toast but was permanently
+      // invisible and untappable, giving no way to dismiss a toast early
+      // once you'd finished reading it. Now visible (at reduced opacity
+      // so it doesn't compete with the title/description) all the time,
+      // with focus/hover still bumping it to full strength for anyone
+      // on a device where those states do apply.
+      'absolute right-2 top-2 rounded-md p-1 text-foreground/50 opacity-70 transition-opacity hover:text-foreground hover:opacity-100 focus:opacity-100 focus:outline-none focus:ring-2 group-[.destructive]:text-red-300 group-[.destructive]:hover:text-red-50 group-[.destructive]:focus:ring-red-400 group-[.destructive]:focus:ring-offset-red-600',
       className,
     )}
     toast-close=""
