@@ -265,7 +265,22 @@ export default function AuthPage() {
 
       if (!res.ok) throw new Error(body.error ?? "Login failed");
       login(body.access_token, body.refresh_token, body.expires_in);
-      setLocation("/discover");
+      // Previously this always went straight to /discover, unlike
+      // biometric and Google login (both already check this) — so an
+      // account that never finished onboarding for any reason would
+      // silently land in Discover via password login instead of being
+      // sent back to finish onboarding, masking the account's real
+      // state rather than fixing it. Password login should behave the
+      // same as every other login method.
+      try {
+        const profileRes = await fetch("/api/profile/me", {
+          headers: { Authorization: `Bearer ${body.access_token}` },
+        });
+        const profile = profileRes.ok ? await profileRes.json() : null;
+        setLocation(profile?.onboarding_completed ? "/discover" : "/onboarding");
+      } catch {
+        setLocation("/discover");
+      }
     } catch (err) {
       toast({
         title: "Error",
