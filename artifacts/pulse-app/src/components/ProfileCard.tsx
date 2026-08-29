@@ -288,9 +288,15 @@ export function ProfileCard({
               near the top, not folded away below the details section
               like the older static audio_prompts. The whole point of
               this feature is to feel alive and be seen immediately,
-              not discovered only after scrolling past the photo. */}
+              not discovered only after scrolling past the photo.
+              top-14 (not top-3) is deliberate: pages that host
+              ProfileCard in an expanded/detail view (confirmed in
+              SearchPage's ProfileDetailOverlay, likely true elsewhere
+              too) commonly place their own back button at top-3 left-3
+              with a higher z-index — this sat in the exact same spot
+              and rendered underneath it, invisible and unreachable. */}
           {profile.voice_question && (
-            <div className="absolute top-3 left-3 right-3 z-10 flex items-center gap-2">
+            <div className="absolute top-14 left-3 right-3 z-10 flex items-center gap-2">
               <button
                 onClick={togglePlayVoiceQuestion}
                 className="flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-full bg-black/50 backdrop-blur-sm text-white text-xs font-semibold"

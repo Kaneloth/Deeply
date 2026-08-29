@@ -141,12 +141,14 @@ function ProfileDetailOverlay({
   onClose,
   onSwipe,
   onMessage,
+  onReplyToVoiceQuestion,
   isActioning,
 }: {
   profile: Result;
   onClose: () => void;
   onSwipe: (direction: "like" | "pass" | "super_like") => void;
   onMessage: () => void;
+  onReplyToVoiceQuestion: (blob: Blob) => Promise<void>;
   isActioning: boolean;
 }) {
   return (
@@ -156,7 +158,11 @@ function ProfileDetailOverlay({
 
         <div className="flex-1 flex flex-col overflow-hidden px-4 pb-20 pt-4">
           <div className="flex-1 min-h-0 relative">
-            <ProfileCard profile={profile} />
+            <ProfileCard
+              profile={profile}
+              canReplyToVoiceQuestion
+              onReplyToVoiceQuestion={onReplyToVoiceQuestion}
+            />
             <button
               onClick={onClose}
               className="absolute top-3 left-3 z-20 w-8 h-8 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center text-white border border-white/10"
@@ -423,6 +429,65 @@ export default function SearchPage() {
       });
     } finally {
       setActioningId(null);
+    }
+  };
+
+  // Same pattern as handleSwipe above (and DiscoverPage's equivalent) —
+  // upload via the shared endpoint, call the reply route, refresh
+  // Sparks, remove the candidate, celebrate a match if this reply
+  // completed one. A voice reply is stored server-side as an ordinary
+  // "like" swipe, so it's undoable exactly like any other swipe would
+  // be from here (this page doesn't currently have its own undo
+  // affordance, matching handleSwipe's existing behavior above).
+  //
+  // Re-throws after toasting: ProfileCard's recording modal expects
+  // this promise to reject on failure so it keeps the recording visible
+  // for a retry, but doesn't show its own error message — this does.
+  const handleReplyToVoiceQuestion = async (targetId: string, blob: Blob) => {
+    try {
+      const formData = new FormData();
+      formData.append("audio", blob, "voice-reply.webm");
+      const uploadRes = await fetch("/api/prompts/audio-upload", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      const uploadBody = await uploadRes.json();
+      if (!uploadRes.ok) throw new Error(uploadBody.error ?? "Upload failed");
+
+      const replyRes = await fetch(`/api/discover/voice-question/${targetId}/reply`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ audio_url: uploadBody.audio_url }),
+      });
+      const replyBody = await replyRes.json().catch(() => ({}));
+      if (!replyRes.ok) throw new Error(replyBody.error ?? "Failed to send your reply");
+
+      refreshSparksBadge();
+
+      const repliedProfile = results?.find((r) => r.id === targetId) ?? selectedProfile;
+      setResults((prev) => (prev ? prev.filter((r) => r.id !== targetId) : prev));
+      setSelectedProfile((prev) => (prev?.id === targetId ? null : prev));
+
+      if (replyBody.matched && repliedProfile) {
+        setMatchCelebration({
+          name: repliedProfile.name ?? "them",
+          matchId: replyBody.matchId,
+          photoUrl: repliedProfile.photo_url,
+        });
+      } else {
+        toast({ title: "Reply sent", description: "Your voice reply was sent as an invite." });
+      }
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to send your reply.",
+        variant: "destructive",
+      });
+      throw err;
     }
   };
 
@@ -736,6 +801,7 @@ export default function SearchPage() {
           onClose={() => setSelectedProfile(null)}
           onSwipe={(direction) => handleSwipe(selectedProfile.id, direction)}
           onMessage={() => setComposeFor(selectedProfile)}
+          onReplyToVoiceQuestion={(blob) => handleReplyToVoiceQuestion(selectedProfile.id, blob)}
           isActioning={actioningId === selectedProfile.id}
         />
       )}
