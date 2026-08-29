@@ -1803,8 +1803,10 @@ function EconomySection({ token, toast }: { token: string | null; toast: any }) 
         "cost_super_like", "cost_undo_swipe", "cost_reveal_invites", "cost_message_before_match", "cost_chat_unlock",
         "cost_reshuffle", "cost_send_message", "cost_unsend_message", "cost_unlock_read_receipts",
         "cost_extra_invite", "cost_extra_photo", "cost_boost", "cost_incognito_per_day", "cost_reveal_profile_views",
+        "cost_voice_question_record", "cost_voice_question_reply",
       ],
     },
+    { title: "Timing & Expiry", keys: ["invite_expiry_days", "voice_question_expiry_days"] },
     { title: "Real-Money Fees", keys: ["id_verification_fee_zar"] },
     {
       title: "Sparks Bundle Prices (ZAR)",
