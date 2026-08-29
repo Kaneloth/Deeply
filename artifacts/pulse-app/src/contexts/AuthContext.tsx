@@ -34,12 +34,22 @@ interface AuthContextType {
   isAuthenticated: boolean;
   blockInfo: BlockInfo | null;
   clearBlockInfo: () => void;
+  // null = not yet checked (or nothing to check, e.g. logged out).
+  // Once true, stays true permanently — onboarding completion is a
+  // one-way transition, so there's never a need to re-verify an
+  // already-onboarded account. While false (or null), ProtectedRoute
+  // re-checks fresh on every navigation to a guarded route, which is
+  // what lets it pick up a just-completed onboarding immediately
+  // without OnboardingPage needing to explicitly announce it.
+  onboardingCompleted: boolean | null;
+  checkOnboardingStatus: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(localStorage.getItem(ACCESS_TOKEN_KEY));
+  const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | null>(null);
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -66,6 +76,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(EXPIRES_AT_KEY);
     setAuthTokenGetter(() => null);
     setToken(null);
+    // Without this, the NEXT account to log in on this device would
+    // briefly inherit whatever onboarding state the PREVIOUS account
+    // left behind — the exact same class of cross-account leak
+    // queryClient.clear() below exists to prevent, just for this one
+    // new field specifically.
+    setOnboardingCompleted(null);
     setSentryUser(null);
     if (Capacitor.isNativePlatform()) {
       GoogleSignIn.signOut().catch(() => {
@@ -90,6 +106,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // just via a different storage mechanism.
     clearAllPersistentCaches();
     setLocation("/");
+  };
+
+  // Fetches the current onboarding_completed value fresh from the
+  // profile endpoint. Deliberately does NOT trust any cached value on
+  // the way in — ProtectedRoute is the one responsible for skipping
+  // this call once onboardingCompleted is already true, since once
+  // true it can never legitimately become false again for the same
+  // account. This function's own job is simple: go find out, right
+  // now, using whatever the current token is.
+  const checkOnboardingStatus = async () => {
+    const currentToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+    if (!currentToken) {
+      setOnboardingCompleted(null);
+      return;
+    }
+    try {
+      const res = await fetch("/api/profile/me", {
+        headers: { Authorization: `Bearer ${currentToken}` },
+      });
+      if (!res.ok) {
+        // Leave it null (unknown) rather than assuming either true or
+        // false on a failed check — ProtectedRoute treats null as
+        // "still verifying" and will simply try again on the next
+        // navigation, rather than either wrongly locking someone out
+        // or wrongly letting them through because of a transient
+        // network blip.
+        setOnboardingCompleted(null);
+        return;
+      }
+      const profile = await res.json();
+      setOnboardingCompleted(!!profile.onboarding_completed);
+    } catch {
+      setOnboardingCompleted(null);
+    }
   };
 
   const scheduleRefresh = (expiresAt: number) => {
@@ -278,6 +328,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAuthenticated: !!token,
         blockInfo,
         clearBlockInfo: () => setBlockInfo(null),
+        onboardingCompleted,
+        checkOnboardingStatus,
       }}
     >
       {children}

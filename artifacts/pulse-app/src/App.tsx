@@ -1,7 +1,9 @@
+import { useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { Route, Switch, Router as WouterRouter, Redirect } from 'wouter';
+import { Route, Switch, Router as WouterRouter, Redirect, useLocation } from 'wouter';
+import { Loader2 } from 'lucide-react';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { SparksProvider } from '@/contexts/SparksContext';
 import { InvitesProvider } from '@/contexts/InvitesContext';
@@ -31,13 +33,48 @@ import PayfastCancelPage from '@/pages/PayfastCancelPage';
 import VerificationPayfastReturnPage from '@/pages/VerificationPayfastReturnPage';
 import VerificationPayfastCancelPage from '@/pages/VerificationPayfastCancelPage';
 const queryClient = new QueryClient();
-function ProtectedRoute({ component: Component, ...rest }: any) {
-  const { isAuthenticated } = useAuth();
-  
+function ProtectedRoute({ component: Component, skipOnboardingCheck, ...rest }: any) {
+  const { isAuthenticated, onboardingCompleted, checkOnboardingStatus } = useAuth();
+  const [location] = useLocation();
+
+  // Re-verifies on every navigation to a guarded route, but ONLY while
+  // onboardingCompleted isn't already known-true — once true, it can
+  // never legitimately become false again for the same account, so
+  // there's no reason to keep re-checking an already-onboarded user on
+  // every single navigation. This is also what closes the back-button
+  // bypass: pressing back still mounts this component fresh for
+  // whatever route it lands on, which re-runs this effect and
+  // re-confirms the real state instead of trusting whatever was
+  // rendered before the user navigated away.
+  useEffect(() => {
+    if (isAuthenticated && onboardingCompleted !== true) {
+      checkOnboardingStatus();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, location]);
+
   if (!isAuthenticated) {
     return <Redirect to="/" />;
   }
-  
+
+  if (!skipOnboardingCheck) {
+    if (onboardingCompleted === null) {
+      // Still verifying (or the check hasn't run yet) — deliberately
+      // does NOT render Component here, even briefly. Rendering the
+      // real page first and redirecting a moment later is exactly the
+      // kind of flash-then-redirect that made the back-button bypass
+      // possible in the first place.
+      return (
+        <div className="flex items-center justify-center h-[100dvh] w-full">
+          <Loader2 className="animate-spin text-primary" size={28} />
+        </div>
+      );
+    }
+    if (onboardingCompleted === false) {
+      return <Redirect to="/onboarding" />;
+    }
+  }
+
   return <Component {...rest} />;
 }
 function PublicRoute({ component: Component, ...rest }: any) {
@@ -70,7 +107,7 @@ function PublicRoute({ component: Component, ...rest }: any) {
 // a referentially stable identity forever, so ordinary re-renders no
 // longer cause a remount.
 const PublicAuthRoute = () => <PublicRoute component={AuthPage} />;
-const ProtectedOnboardingRoute = () => <ProtectedRoute component={OnboardingPage} />;
+const ProtectedOnboardingRoute = () => <ProtectedRoute component={OnboardingPage} skipOnboardingCheck />;
 const ProtectedDiscoverRoute = () => <ProtectedRoute component={DiscoverPage} />;
 const ProtectedSearchRoute = () => <ProtectedRoute component={SearchPage} />;
 const ProtectedInvitesRoute = () => <ProtectedRoute component={InvitesPage} />;
