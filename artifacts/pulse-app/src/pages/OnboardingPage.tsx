@@ -6,10 +6,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
-import { Image as ImageIcon, Check, ChevronLeft, Play, Pause, Crown } from "lucide-react";
+import { Image as ImageIcon, Check, ChevronLeft, Crown } from "lucide-react";
 import { RadioList, ChipGrid } from "@/components/SelectorControls";
 import { RadiusSlider } from "@/components/DropdownControls";
-import { AudioRecorderControl } from "@/components/AudioRecorderControl";
 import { HeightInput } from "@/components/HeightInput";
 import { PhoneVerificationFlow } from "@/components/PhoneVerificationFlow";
 import {
@@ -25,7 +24,6 @@ import {
   LOVE_LANGUAGE_OPTIONS,
   EDUCATION_OPTIONS,
   LANGUAGES,
-  AUDIO_PROMPT_QUESTIONS,
 } from "@/lib/preferenceOptions";
 import {
   VAPING_OPTIONS,
@@ -35,10 +33,11 @@ import {
   NIGHTLIFE_OPTIONS,
 } from "@/lib/lifestylePreferenceOptions";
 
-// Was 23 — +1 for the new optional phone verification step, inserted
-// after profile setup and before the final Welcome screen (see
-// PhoneVerificationFlow, step 22 below). Welcome moved from 22 to 23.
-const TOTAL_STEPS = 24;
+// Was 24 — the audio prompt step (old step 21) is removed entirely;
+// that feature no longer exists (superseded by Voice Question, now
+// recorded from the Profile page instead of during onboarding). Phone
+// verification shifts from 22 to 21, Welcome from 23 to 22.
+const TOTAL_STEPS = 23;
 
 // Birthday picker bounds: must be at least 18, and a sane upper bound of
 // 100 years old.
@@ -135,14 +134,6 @@ export default function OnboardingPage() {
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
-  const [selectedPromptQuestion, setSelectedPromptQuestion] = useState<string | null>(null);
-  const [customPromptDraft, setCustomPromptDraft] = useState("");
-  const [isSavingAudio, setIsSavingAudio] = useState(false);
-  const [audioSaved, setAudioSaved] = useState(false);
-  const [savedAudioUrl, setSavedAudioUrl] = useState<string | null>(null);
-  const [isPlayingSaved, setIsPlayingSaved] = useState(false);
-  const savedAudioRef = useRef<HTMLAudioElement | null>(null);
-
   const [notifySparks, setNotifySparks] = useState(true);
 
   // Pre-fill whatever name already exists — currently only possible via
@@ -217,80 +208,6 @@ export default function OnboardingPage() {
     } finally {
       setIsUploadingPhoto(false);
     }
-  };
-
-  // The filename extension must match the blob's real format, not
-  // assume web's audio/webm — native recordings (capacitor-voice-recorder)
-  // come back as audio/aac or similar, and a mismatched extension is
-  // exactly what produces an "unsupported format" rejection server-side.
-  const audioExtensionFromMimeType = (mimeType: string): string => {
-    const map: Record<string, string> = {
-      "audio/webm": "webm",
-      "audio/mp4": "m4a",
-      "audio/aac": "aac",
-      "audio/mpeg": "mp3",
-      "audio/wav": "wav",
-      "audio/x-wav": "wav",
-      "audio/3gpp": "3gp",
-    };
-    return map[mimeType] ?? "webm";
-  };
-
-  const saveAudioPrompt = async (blob: Blob) => {
-    if (!selectedPromptQuestion) return;
-    setIsSavingAudio(true);
-    try {
-      const formData = new FormData();
-      const extension = audioExtensionFromMimeType(blob.type);
-      formData.append("audio", blob, `prompt.${extension}`);
-      const uploadRes = await fetch("/api/prompts/audio-upload", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
-      const uploadBody = await uploadRes.json();
-      if (!uploadRes.ok) throw new Error(uploadBody.error ?? "Upload failed");
-
-      const saveRes = await fetch("/api/prompts", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ prompt_question: selectedPromptQuestion, audio_url: uploadBody.audio_url }),
-      });
-      if (!saveRes.ok) {
-        const body = await saveRes.json().catch(() => ({}));
-        throw new Error(body.error ?? "Failed to save prompt");
-      }
-      const savedPrompt = await saveRes.json();
-      setSavedAudioUrl(savedPrompt.audio_url ?? uploadBody.audio_url);
-      setAudioSaved(true);
-      toast({ title: "Audio prompt saved" });
-    } catch (err) {
-      toast({
-        title: "Error",
-        description: err instanceof Error ? err.message : "Failed to save audio prompt.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSavingAudio(false);
-    }
-  };
-
-  const toggleSavedPlayback = () => {
-    if (!savedAudioUrl) return;
-    if (isPlayingSaved) {
-      savedAudioRef.current?.pause();
-      setIsPlayingSaved(false);
-      return;
-    }
-    if (!savedAudioRef.current) {
-      savedAudioRef.current = new Audio(savedAudioUrl);
-      savedAudioRef.current.onended = () => setIsPlayingSaved(false);
-    }
-    savedAudioRef.current.play();
-    setIsPlayingSaved(true);
   };
 
   const handleComplete = async () => {
@@ -641,77 +558,6 @@ export default function OnboardingPage() {
         )}
 
         {step === 21 && (
-          <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={audioSaved ? "Continue" : "Skip for now"}>
-            <h2 className="text-2xl font-['Syne'] font-bold mb-2">🎙️ Record an audio prompt.</h2>
-            <p className="text-sm text-muted-foreground mb-6">Your voice helps people connect with you on a deeper level.</p>
-
-            {!selectedPromptQuestion ? (
-              <div className="space-y-2">
-                <div className="flex gap-2 mb-1">
-                  <Input
-                    value={customPromptDraft}
-                    onChange={(e) => setCustomPromptDraft(e.target.value)}
-                    placeholder="Or write your own question..."
-                    className="bg-card border-card-border h-11 rounded-xl text-sm"
-                  />
-                  <Button
-                    onClick={() => {
-                      if (customPromptDraft.trim()) {
-                        setSelectedPromptQuestion(customPromptDraft.trim());
-                        setCustomPromptDraft("");
-                      }
-                    }}
-                    disabled={!customPromptDraft.trim()}
-                    className="h-11 px-4 rounded-xl bg-gradient-accent border-0 shrink-0"
-                  >
-                    Use
-                  </Button>
-                </div>
-                {AUDIO_PROMPT_QUESTIONS.map((q) => (
-                  <button
-                    key={q}
-                    onClick={() => setSelectedPromptQuestion(q)}
-                    className="w-full text-left px-4 py-3 rounded-xl bg-card border border-card-border text-sm hover:border-primary/50 transition-colors"
-                  >
-                    {q}
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <div className="bg-card border border-card-border rounded-xl p-4">
-                  <p className="text-sm font-medium">{selectedPromptQuestion}</p>
-                  <button
-                    onClick={() => {
-                      setSelectedPromptQuestion(null);
-                      setAudioSaved(false);
-                      setSavedAudioUrl(null);
-                    }}
-                    className="text-xs text-muted-foreground mt-2 underline"
-                  >
-                    Choose a different question
-                  </button>
-                </div>
-
-                {!audioSaved ? (
-                  <AudioRecorderControl onSave={saveAudioPrompt} isSaving={isSavingAudio} />
-                ) : (
-                  <div className="flex items-center gap-3 bg-card border border-card-border rounded-xl p-3">
-                    <button
-                      onClick={toggleSavedPlayback}
-                      className="w-10 h-10 rounded-full bg-gradient-accent flex items-center justify-center text-white shrink-0"
-                    >
-                      {isPlayingSaved ? <Pause size={16} /> : <Play size={16} />}
-                    </button>
-                    <p className="text-sm text-primary font-medium">✓ Saved — tap to listen</p>
-                  </div>
-                )}
-              </div>
-            )}
-          </StepShell>
-        )}
-
-        {step === 22 && (
           <motion.div
             key={step}
             initial={{ opacity: 0, x: 20 }}
@@ -732,13 +578,13 @@ export default function OnboardingPage() {
           </motion.div>
         )}
 
-        {step === 23 && (
+        {step === 22 && (
           <motion.div key={step} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex-1 flex flex-col">
             <div className="flex-1 flex flex-col items-center justify-center text-center">
               <div className="text-5xl mb-6">🎉</div>
               <h1 className="text-3xl font-['Syne'] font-bold mb-3">You're all set!</h1>
               <p className="text-muted-foreground mb-6">Welcome to Deeply.</p>
-              <p className="text-xs text-muted-foreground max-w-xs">💡 Tip: Add more photos and record an audio prompt to stand out.</p>
+              <p className="text-xs text-muted-foreground max-w-xs">💡 Tip: Add more photos and record a Voice Question from your profile to stand out.</p>
             </div>
             <Button
               onClick={handleComplete}

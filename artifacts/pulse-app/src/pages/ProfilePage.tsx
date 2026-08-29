@@ -26,7 +26,6 @@ import {
   LOVE_LANGUAGE_OPTIONS,
   EDUCATION_OPTIONS,
   LANGUAGES,
-  AUDIO_PROMPT_QUESTIONS,
 } from "@/lib/preferenceOptions";
 import { TATTOO_OPTIONS, VAPING_OPTIONS, PETS_OPTIONS, ACTIVITY_LEVEL_OPTIONS, NIGHTLIFE_OPTIONS } from "@/lib/lifestylePreferenceOptions";
 import { HeightInput } from "@/components/HeightInput";
@@ -46,11 +45,12 @@ interface GalleryPhoto {
   position: number;
 }
 
-interface AudioPrompt {
+interface VoiceQuestion {
   id: string;
-  prompt_question: string;
   audio_url: string;
   duration_seconds: number | null;
+  created_at: string;
+  is_expired: boolean;
 }
 
 const MAX_FREE_PHOTOS = 8;
@@ -95,22 +95,20 @@ const MIN_BIRTHDATE = new Date(_today.getFullYear() - 100, _today.getMonth(), _t
   .split("T")[0];
 
 // In-memory only, same pattern as DiscoverPage.tsx's cachedCandidates.
-// Four separate caches since profile, photos, prompts, and boost status
-// are all independently fetched. cachedProfile alone is enough to seed
-// every individual form field too — the existing population effect
-// keyed on `profile` re-runs on mount whenever it starts non-null.
+// Three separate caches since profile, photos, and boost status are all
+// independently fetched. cachedProfile alone is enough to seed every
+// individual form field too — the existing population effect keyed on
+// `profile` re-runs on mount whenever it starts non-null.
 import { readPersistentCache, writePersistentCache, registerCacheResetter } from "@/lib/persistentCache";
 import { useRefetchOnAppResume } from "@/hooks/useRefetchOnAppResume";
 import { usePullToRefresh } from "@/contexts/PullToRefreshContext";
 
 const PROFILE_DATA_CACHE_KEY = "profile_data";
 const PROFILE_PHOTOS_CACHE_KEY = "profile_photos";
-const PROFILE_PROMPTS_CACHE_KEY = "profile_prompts";
 const PROFILE_BOOST_CACHE_KEY = "profile_boost_status";
 
 let cachedProfileData: any = readPersistentCache<any>(PROFILE_DATA_CACHE_KEY);
 let cachedPhotos: GalleryPhoto[] | null = readPersistentCache<GalleryPhoto[]>(PROFILE_PHOTOS_CACHE_KEY);
-let cachedPrompts: AudioPrompt[] | null = readPersistentCache<AudioPrompt[]>(PROFILE_PROMPTS_CACHE_KEY);
 let cachedBoostStatus: BoostStatus | null = readPersistentCache<BoostStatus>(PROFILE_BOOST_CACHE_KEY);
 
 function updateProfileDataCache(value: any) {
@@ -121,10 +119,6 @@ function updateProfilePhotosCache(value: GalleryPhoto[]) {
   cachedPhotos = value;
   writePersistentCache(PROFILE_PHOTOS_CACHE_KEY, value);
 }
-function updateProfilePromptsCache(value: AudioPrompt[]) {
-  cachedPrompts = value;
-  writePersistentCache(PROFILE_PROMPTS_CACHE_KEY, value);
-}
 function updateProfileBoostCache(value: BoostStatus) {
   cachedBoostStatus = value;
   writePersistentCache(PROFILE_BOOST_CACHE_KEY, value);
@@ -132,7 +126,6 @@ function updateProfileBoostCache(value: BoostStatus) {
 registerCacheResetter(() => {
   cachedProfileData = null;
   cachedPhotos = null;
-  cachedPrompts = null;
   cachedBoostStatus = null;
 });
 
@@ -265,56 +258,18 @@ export default function ProfilePage() {
   }, []);
   useRefetchOnAppResume(fetchPhotos);
 
-  const MAX_AUDIO_PROMPTS = 2;
-
-  const [prompts, setPrompts] = useState<AudioPrompt[]>(cachedPrompts ?? []);
-  const [isLoadingPrompts, setIsLoadingPrompts] = useState(cachedPrompts === null);
-  const [showAddPromptSheet, setShowAddPromptSheet] = useState(false);
-  const [selectedNewPromptQuestion, setSelectedNewPromptQuestion] = useState<string | null>(null);
-  const [customPromptDraft, setCustomPromptDraft] = useState("");
-  const [isSavingPrompt, setIsSavingPrompt] = useState(false);
-  const [deletingPromptId, setDeletingPromptId] = useState<string | null>(null);
-  const [playingPromptId, setPlayingPromptId] = useState<string | null>(null);
-  const promptAudioRef = useRef<HTMLAudioElement | null>(null);
-
-  const fetchPrompts = useCallback(async () => {
-    if (cachedPrompts === null) setIsLoadingPrompts(true);
-    try {
-      const res = await fetch("/api/prompts", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) return;
-      const body = await res.json();
-      const fresh = body ?? [];
-      updateProfilePromptsCache(fresh);
-      setPrompts(fresh);
-    } catch {
-      // Silent — non-critical.
-    } finally {
-      setIsLoadingPrompts(false);
-    }
-  }, [token]);
-
-  // Run once on mount only — same reasoning as fetchProfile above.
-  useEffect(() => {
-    fetchPrompts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  useRefetchOnAppResume(fetchPrompts);
-
-  const togglePlayPrompt = (prompt: AudioPrompt) => {
-    if (playingPromptId === prompt.id) {
-      promptAudioRef.current?.pause();
-      setPlayingPromptId(null);
-      return;
-    }
-    promptAudioRef.current?.pause();
-    const audio = new Audio(prompt.audio_url);
-    audio.onended = () => setPlayingPromptId(null);
-    audio.play();
-    promptAudioRef.current = audio;
-    setPlayingPromptId(prompt.id);
-  };
+  const [voiceQuestion, setVoiceQuestion] = useState<VoiceQuestion | null>(null);
+  const [isLoadingVoiceQuestion, setIsLoadingVoiceQuestion] = useState(true);
+  const [showVoiceQuestionSheet, setShowVoiceQuestionSheet] = useState(false);
+  const [isSavingVoiceQuestion, setIsSavingVoiceQuestion] = useState(false);
+  const [isPlayingVoiceQuestion, setIsPlayingVoiceQuestion] = useState(false);
+  const voiceQuestionAudioRef = useRef<HTMLAudioElement | null>(null);
+  // Fetched purely for display in the recording sheet, same pattern
+  // VerificationSection already uses for its own admin-configurable fee
+  // — never hardcoded, always read live so a price change in the admin
+  // dashboard is reflected immediately.
+  const [voiceQuestionRecordCost, setVoiceQuestionRecordCost] = useState<number | null>(null);
+  const [voiceQuestionExpiryDays, setVoiceQuestionExpiryDays] = useState<number | null>(null);
 
   // The filename extension must match the blob's real format, not
   // assume web's audio/webm — native recordings (capacitor-voice-recorder)
@@ -333,13 +288,74 @@ export default function ProfilePage() {
     return map[mimeType] ?? "webm";
   };
 
-  const saveNewPrompt = async (blob: Blob) => {
-    if (!selectedNewPromptQuestion) return;
-    setIsSavingPrompt(true);
+  const fetchVoiceQuestion = useCallback(async () => {
+    setIsLoadingVoiceQuestion(true);
+    try {
+      const res = await fetch("/api/voice-question/me", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const body = await res.json();
+      setVoiceQuestion(body.question ?? null);
+    } catch {
+      // Silent — non-critical, same as fetchPhotos above.
+    } finally {
+      setIsLoadingVoiceQuestion(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  useEffect(() => {
+    fetchVoiceQuestion();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useRefetchOnAppResume(fetchVoiceQuestion);
+
+  useEffect(() => {
+    fetch("/api/app-settings", { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (body && typeof body.cost_voice_question_record === "number") {
+          setVoiceQuestionRecordCost(body.cost_voice_question_record);
+        }
+        if (body && typeof body.voice_question_expiry_days === "number") {
+          setVoiceQuestionExpiryDays(body.voice_question_expiry_days);
+        }
+      })
+      .catch(() => {
+        // Silent — the sheet just shows a loading state for the price
+        // until this resolves, same convention as VerificationSection.
+      });
+  }, [token]);
+
+  const togglePlayVoiceQuestion = () => {
+    if (!voiceQuestion) return;
+    if (isPlayingVoiceQuestion) {
+      voiceQuestionAudioRef.current?.pause();
+      setIsPlayingVoiceQuestion(false);
+      return;
+    }
+    const audio = new Audio(voiceQuestion.audio_url);
+    audio.onended = () => setIsPlayingVoiceQuestion(false);
+    audio.play();
+    voiceQuestionAudioRef.current = audio;
+    setIsPlayingVoiceQuestion(true);
+  };
+
+  // Whether recording right now would be free — an active (non-expired)
+  // question already exists, so this would be treated as a replace, not
+  // a fresh paid recording. Computed here purely for what the sheet
+  // displays; the backend independently makes the real charging
+  // decision itself using the same logic, and is the only one that
+  // actually matters for correctness.
+  const voiceQuestionReplaceIsFree = !!voiceQuestion && !voiceQuestion.is_expired;
+
+  const saveVoiceQuestion = async (blob: Blob) => {
+    setIsSavingVoiceQuestion(true);
     try {
       const formData = new FormData();
       const extension = audioExtensionFromMimeType(blob.type);
-      formData.append("audio", blob, `prompt.${extension}`);
+      formData.append("audio", blob, `voice-question.${extension}`);
       const uploadRes = await fetch("/api/prompts/audio-upload", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
@@ -348,57 +364,29 @@ export default function ProfilePage() {
       const uploadBody = await uploadRes.json();
       if (!uploadRes.ok) throw new Error(uploadBody.error ?? "Upload failed");
 
-      const saveRes = await fetch("/api/prompts", {
+      const saveRes = await fetch("/api/voice-question", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ prompt_question: selectedNewPromptQuestion, audio_url: uploadBody.audio_url }),
+        body: JSON.stringify({ audio_url: uploadBody.audio_url }),
       });
-      if (!saveRes.ok) {
-        const body = await saveRes.json().catch(() => ({}));
-        throw new Error(body.error ?? "Failed to save prompt");
-      }
-      toast({ title: "Audio prompt added" });
-      setShowAddPromptSheet(false);
-      setSelectedNewPromptQuestion(null);
-      fetchPrompts();
-    } catch (err) {
-      toast({
-        title: "Error",
-        description: err instanceof Error ? err.message : "Failed to save audio prompt.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSavingPrompt(false);
-    }
-  };
+      const saveBody = await saveRes.json().catch(() => ({}));
+      if (!saveRes.ok) throw new Error(saveBody.error ?? "Failed to save voice question");
 
-  const handleDeletePrompt = async (promptId: string) => {
-    setDeletingPromptId(promptId);
-    try {
-      const res = await fetch(`/api/prompts/${promptId}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? "Failed to delete prompt");
-      }
-      setPrompts((prev) => {
-        const next = prev.filter((p) => p.id !== promptId);
-        updateProfilePromptsCache(next);
-        return next;
-      });
+      setVoiceQuestion({ ...saveBody.question, is_expired: false });
+      setShowVoiceQuestionSheet(false);
+      toast({ title: saveBody.charged ? "Voice Question recorded" : "Voice Question updated" });
+      if (saveBody.charged) refreshSparksBadge();
     } catch (err) {
       toast({
         title: "Error",
-        description: err instanceof Error ? err.message : "Failed to delete prompt.",
+        description: err instanceof Error ? err.message : "Failed to save your voice question.",
         variant: "destructive",
       });
     } finally {
-      setDeletingPromptId(null);
+      setIsSavingVoiceQuestion(false);
     }
   };
 
@@ -853,7 +841,7 @@ export default function ProfilePage() {
   // to-refresh — a person pulling down on their own profile means "make
   // sure everything here is current", not just one piece of it.
   usePullToRefresh(async () => {
-    await Promise.all([fetchProfile(), fetchPhotos(), fetchPrompts(), fetchBoostStatus()]);
+    await Promise.all([fetchProfile(), fetchPhotos(), fetchVoiceQuestion(), fetchBoostStatus()]);
   });
 
   const handleBoost = async () => {
@@ -1260,63 +1248,75 @@ export default function ProfilePage() {
         )}
       </AnimatePresence>
 
-      {/* Audio Prompts */}
+      {/* Voice Question — deliberately its own distinct, prominent
+          section rather than folded into Audio Prompts below: this is
+          a different feature entirely (a question others can reply to
+          from Discover, creating a real invite), not another static
+          prompt. */}
       <div className="bg-card border border-card-border rounded-2xl p-5 mb-8">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="font-['Syne'] font-bold text-base">Audio Prompts</h3>
-            <p className="text-xs text-muted-foreground">Your voice helps people connect with you</p>
+            <h3 className="font-['Syne'] font-bold text-base">Voice Question</h3>
+            <p className="text-xs text-muted-foreground">
+              Ask something on Discover — replies count as invites
+            </p>
           </div>
           <Mic size={18} className="text-muted-foreground shrink-0" />
         </div>
 
-        {isLoadingPrompts ? (
+        {isLoadingVoiceQuestion ? (
           <Skeleton className="h-16 w-full rounded-xl" />
-        ) : (
+        ) : voiceQuestion && !voiceQuestion.is_expired ? (
           <div className="space-y-3">
-            {prompts.map((prompt) => (
-              <div key={prompt.id} className="flex items-center gap-3 bg-background border border-card-border rounded-xl p-3">
-                <button
-                  onClick={() => togglePlayPrompt(prompt)}
-                  className="w-10 h-10 rounded-full bg-gradient-accent flex items-center justify-center text-white shrink-0"
-                >
-                  {playingPromptId === prompt.id ? <Pause size={16} /> : <Play size={16} />}
-                </button>
-                <p className="text-sm flex-1 min-w-0 truncate">{prompt.prompt_question}</p>
-                <button
-                  onClick={() => handleDeletePrompt(prompt.id)}
-                  disabled={deletingPromptId === prompt.id}
-                  className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors shrink-0 disabled:opacity-50"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            ))}
-
-            {prompts.length < MAX_AUDIO_PROMPTS && (
+            <div className="flex items-center gap-3 bg-background border border-card-border rounded-xl p-3">
               <button
-                onClick={() => setShowAddPromptSheet(true)}
-                className="w-full h-14 rounded-xl border-2 border-dashed border-card-border flex items-center justify-center gap-2 text-muted-foreground hover:border-primary/50 hover:text-primary transition-colors"
+                onClick={togglePlayVoiceQuestion}
+                className="w-10 h-10 rounded-full bg-gradient-accent flex items-center justify-center text-white shrink-0"
               >
-                <Plus size={18} />
-                <span className="text-sm font-medium">Add an audio prompt</span>
+                {isPlayingVoiceQuestion ? <Pause size={16} /> : <Play size={16} />}
               </button>
-            )}
+              <p className="text-sm flex-1 min-w-0 text-muted-foreground">Your voice question is live</p>
+            </div>
+            <button
+              onClick={() => setShowVoiceQuestionSheet(true)}
+              className="w-full h-11 rounded-xl border border-card-border text-sm font-medium text-muted-foreground hover:border-primary/50 hover:text-primary transition-colors"
+            >
+              Replace — free while your question is active
+            </button>
           </div>
+        ) : voiceQuestion && voiceQuestion.is_expired ? (
+          <div className="space-y-3">
+            <div className="flex items-start gap-2 text-xs text-amber-600 bg-amber-500/10 rounded-xl p-3">
+              <AlertCircle size={14} className="shrink-0 mt-0.5" />
+              <span>Your voice question expired. Record a new one to start receiving voice replies again.</span>
+            </div>
+            <button
+              onClick={() => setShowVoiceQuestionSheet(true)}
+              className="w-full h-14 rounded-xl border-2 border-dashed border-card-border flex items-center justify-center gap-2 text-muted-foreground hover:border-primary/50 hover:text-primary transition-colors"
+            >
+              <Mic size={16} />
+              Record a New Voice Question
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setShowVoiceQuestionSheet(true)}
+            className="w-full h-14 rounded-xl border-2 border-dashed border-card-border flex items-center justify-center gap-2 text-muted-foreground hover:border-primary/50 hover:text-primary transition-colors"
+          >
+            <Mic size={16} />
+            Record Your Voice Question
+          </button>
         )}
       </div>
 
       <AnimatePresence>
-        {showAddPromptSheet && (
+        {showVoiceQuestionSheet && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-x-0 top-0 bottom-20 z-[100] bg-background/80 backdrop-blur-sm flex items-end"
-            onClick={() => {
-              setShowAddPromptSheet(false);
-              setSelectedNewPromptQuestion(null);
-            }}
+            onClick={() => !isSavingVoiceQuestion && setShowVoiceQuestionSheet(false)}
           >
             <motion.div
               initial={{ y: 100 }}
@@ -1327,66 +1327,35 @@ export default function ProfilePage() {
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between mb-4 shrink-0">
-                <h3 className="font-['Syne'] font-bold text-lg">
-                  {selectedNewPromptQuestion ? "Record Your Answer" : "Choose a Prompt"}
-                </h3>
-                <button
-                  onClick={() => {
-                    setShowAddPromptSheet(false);
-                    setSelectedNewPromptQuestion(null);
-                  }}
-                  className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center shrink-0"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-
-              {!selectedNewPromptQuestion ? (
-                <div className="space-y-2 overflow-y-auto flex-1 min-h-0">
-                  <div className="flex gap-2 mb-1">
-                    <Input
-                      value={customPromptDraft}
-                      onChange={(e) => setCustomPromptDraft(e.target.value)}
-                      placeholder="Or write your own question..."
-                      className="bg-background border-card-border h-11 rounded-xl text-sm"
-                    />
-                    <Button
-                      onClick={() => {
-                        if (customPromptDraft.trim()) {
-                          setSelectedNewPromptQuestion(customPromptDraft.trim());
-                          setCustomPromptDraft("");
-                        }
-                      }}
-                      disabled={!customPromptDraft.trim()}
-                      className="h-11 px-4 rounded-xl bg-gradient-accent border-0 shrink-0"
-                    >
-                      Use
-                    </Button>
-                  </div>
-                  {AUDIO_PROMPT_QUESTIONS.filter((q) => !prompts.some((p) => p.prompt_question === q)).map((q) => (
-                    <button
-                      key={q}
-                      onClick={() => setSelectedNewPromptQuestion(q)}
-                      className="w-full text-left px-4 py-3 rounded-xl bg-background border border-card-border text-sm hover:border-primary/50 transition-colors"
-                    >
-                      {q}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="overflow-y-auto flex-1 min-h-0">
-                  <p className="text-sm font-medium bg-background border border-card-border rounded-xl p-4 mb-2">
-                    {selectedNewPromptQuestion}
-                  </p>
+                <h3 className="font-['Syne'] font-bold text-lg">Record Your Voice Question</h3>
+                {!isSavingVoiceQuestion && (
                   <button
-                    onClick={() => setSelectedNewPromptQuestion(null)}
-                    className="text-xs text-muted-foreground underline mb-2"
+                    onClick={() => setShowVoiceQuestionSheet(false)}
+                    className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center shrink-0"
                   >
-                    Choose a different question
+                    <X size={16} />
                   </button>
-                  <AudioRecorderControl onSave={saveNewPrompt} isSaving={isSavingPrompt} saveLabel="Save This Prompt" />
-                </div>
-              )}
+                )}
+              </div>
+              <div className="overflow-y-auto flex-1 min-h-0">
+                <p className="text-sm text-muted-foreground mb-3">
+                  Ask something you're curious about — up to 10 seconds. Anyone who replies with their own
+                  voice sends you a real invite.
+                </p>
+                <p className="text-xs font-medium bg-background border border-card-border rounded-xl p-3 mb-4">
+                  {voiceQuestionReplaceIsFree
+                    ? "Replacing your active question — free."
+                    : voiceQuestionRecordCost !== null
+                      ? `Costs ${voiceQuestionRecordCost} Sparks. Free to re-record for ${voiceQuestionExpiryDays ?? "a few"} days after.`
+                      : "Loading price..."}
+                </p>
+                <AudioRecorderControl
+                  onSave={saveVoiceQuestion}
+                  isSaving={isSavingVoiceQuestion}
+                  saveLabel={voiceQuestionReplaceIsFree ? "Save Replacement" : "Record Voice Question"}
+                  maxDurationSeconds={10}
+                />
+              </div>
             </motion.div>
           </motion.div>
         )}

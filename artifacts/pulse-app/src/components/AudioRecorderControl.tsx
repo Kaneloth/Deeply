@@ -19,10 +19,17 @@ export function AudioRecorderControl({
   onSave,
   isSaving,
   saveLabel = "Save This Prompt",
+  maxDurationSeconds = 30,
 }: {
   onSave: (blob: Blob) => void;
   isSaving?: boolean;
   saveLabel?: string;
+  // Defaults to 30 so every existing caller (the static audio prompts
+  // feature) keeps behaving exactly as before without needing any
+  // change on their end. Voice Question passes 10 for recording a
+  // question and 30 for replying — two different limits on the same
+  // shared control, rather than a second near-duplicate component.
+  maxDurationSeconds?: number;
 }) {
   const [isRecording, setIsRecording] = useState(false);
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
@@ -69,7 +76,7 @@ export function AudioRecorderControl({
           mediaRecorderRef.current.stop();
           setIsRecording(false);
         }
-      }, 30000);
+      }, maxDurationSeconds * 1000);
     } catch {
       setErrorMessage("Couldn't access your microphone. Check your browser's site permissions and try again.");
     }
@@ -103,7 +110,7 @@ export function AudioRecorderControl({
 
       autoStopTimerRef.current = setTimeout(() => {
         void stopRecordingNative();
-      }, 30000);
+      }, maxDurationSeconds * 1000);
     } catch {
       setErrorMessage("Couldn't start recording. Please try again.");
     }
@@ -179,7 +186,7 @@ export function AudioRecorderControl({
           </div>
         )}
         <p className="text-xs text-muted-foreground">
-          {isRecording ? "Recording... (up to 30s)" : recordedBlob ? "Preview your recording, or discard and retry" : "Tap to record"}
+          {isRecording ? `Recording... (up to ${maxDurationSeconds}s)` : recordedBlob ? "Preview your recording, or discard and retry" : "Tap to record"}
         </p>
         {errorMessage && <p className="text-xs text-destructive text-center max-w-[260px]">{errorMessage}</p>}
       </div>

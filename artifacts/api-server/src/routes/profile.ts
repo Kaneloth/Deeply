@@ -8,7 +8,7 @@ import { withComputedAge, withComputedAges } from "../lib/age";
 import { isSuperAdmin, requireSuperAdmin, requireAdminScope, type AdminScope } from "../lib/admin-auth";
 import { createNotification, createNotificationForUsers, recordProfileView, scheduleProfileViewNotificationClear } from "../lib/notifications-helper";
 import { attachPhotoGalleries } from "../lib/photo-galleries";
-import { attachAudioPrompts } from "../lib/audio-prompts-helper";
+import { attachVoiceQuestions } from "../lib/voice-questions-helper";
 import { checkImageSafety } from "../lib/content-moderation";
 import { getEconomyConfig, invalidateEconomyConfigCache } from "../lib/economy-config";
 import { verifyAndConsumeGooglePurchase } from "../lib/google-play-helper";
@@ -453,8 +453,11 @@ const AUDIO_EXT_BY_MIME: Record<string, string> = {
 };
 
 /** POST /api/prompts/audio-upload — uploads a recorded audio clip to
- *  storage and returns its public URL, ready to pass into POST /prompts
- *  as `audio_url`. */
+ *  storage and returns its public URL. Originally built for the old
+ *  audio_prompts feature (now removed); reused as-is by Voice Question,
+ *  since the actual storage-upload step is identical either way — only
+ *  what gets done with the returned audio_url differs (POST
+ *  /voice-question, not a now-removed POST /prompts). */
 router.post(
   "/prompts/audio-upload",
   requireAuth,
@@ -495,69 +498,101 @@ router.post(
   },
 );
 
-/** GET /api/prompts — get my audio prompts */
-router.get("/prompts", requireAuth, async (req, res): Promise<void> => {
-  const { data: prompts } = await supabase
-    .from("audio_prompts")
-    .select("*")
-    .eq("user_id", req.user!.id)
-    .order("created_at", { ascending: false });
-  res.json(prompts ?? []);
-});
-
-/** POST /api/prompts — add audio prompt */
-router.post("/prompts", requireAuth, async (req, res): Promise<void> => {
-  const { prompt_question, audio_url, duration_seconds } = req.body as {
-    prompt_question?: string;
-    audio_url?: string;
-    duration_seconds?: number;
-  };
-  if (!prompt_question || !audio_url) {
-    res.status(400).json({ error: "prompt_question and audio_url are required" });
-    return;
-  }
-  const { data: prompt, error } = await supabase
-    .from("audio_prompts")
-    .insert({
-      user_id: req.user!.id,
-      prompt_question,
-      audio_url,
-      duration_seconds,
-    })
-    .select("*")
-    .single();
-  if (error || !prompt) {
-    res.status(400).json({ error: error?.message ?? "Failed to create prompt" });
-    return;
-  }
-  res.status(201).json(prompt);
-});
-
-/** DELETE /api/prompts/:promptId — remove one of my audio prompts */
-router.delete("/prompts/:promptId", requireAuth, async (req, res): Promise<void> => {
+/** GET /api/voice-question/me — my current voice question, if any, with
+ *  a computed is_expired flag (age-based, nothing physically deleted —
+ *  same read-time-status approach used for invite expiry). */
+router.get("/voice-question/me", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
-  const promptId = Array.isArray(req.params.promptId) ? req.params.promptId[0] : req.params.promptId;
 
-  const { data: prompt } = await supabase
-    .from("audio_prompts")
-    .select("id")
-    .eq("id", promptId)
+  const { data: question, error } = await supabase
+    .from("voice_questions")
+    .select("*")
     .eq("user_id", userId)
-    .single();
-
-  if (!prompt) {
-    res.status(404).json({ error: "Prompt not found" });
-    return;
-  }
-
-  const { error } = await supabase.from("audio_prompts").delete().eq("id", promptId);
+    .maybeSingle();
 
   if (error) {
-    res.status(500).json({ error: `Failed to delete prompt: ${error.message}` });
+    res.status(500).json({ error: `Failed to load voice question: ${error.message}` });
+    return;
+  }
+  if (!question) {
+    res.json({ question: null });
     return;
   }
 
-  res.sendStatus(204);
+  const { voice_question_expiry_days: expiryDays } = await getEconomyConfig();
+  const isExpired = Date.now() - new Date(question.created_at).getTime() >= expiryDays * 24 * 60 * 60 * 1000;
+
+  res.json({ question: { ...question, is_expired: isExpired } });
+});
+
+/** POST /api/voice-question — record a fresh question, or replace the
+ *  current one. Charges cost_voice_question_record ONLY when there's no
+ *  currently-active (non-expired) question — replacing one that's still
+ *  within its window is free, per how this feature is meant to work:
+ *  pay once to have an active question, edit it as many times as you
+ *  want during that window at no extra cost. Critically, a free edit
+ *  does NOT reset created_at — only a genuinely new paid recording
+ *  starts a fresh expiry window. Resetting it on every edit would let
+ *  someone keep a question alive forever by editing right before each
+ *  deadline without ever paying again. */
+router.post("/voice-question", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const { audio_url, storage_path, duration_seconds } = req.body as {
+    audio_url?: string;
+    storage_path?: string;
+    duration_seconds?: number;
+  };
+
+  if (!audio_url) {
+    res.status(400).json({ error: "audio_url is required" });
+    return;
+  }
+
+  const { voice_question_expiry_days: expiryDays, cost_voice_question_record: recordCost } = await getEconomyConfig();
+
+  const { data: existing } = await supabase
+    .from("voice_questions")
+    .select("created_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  const isActive =
+    !!existing && Date.now() - new Date(existing.created_at).getTime() < expiryDays * 24 * 60 * 60 * 1000;
+
+  let balance: number | null = null;
+  if (!isActive) {
+    const spend = await spendSparks(userId, recordCost, "Record Voice Question");
+    if (!spend.success) {
+      res.status(402).json({ error: `Insufficient Sparks (need ${recordCost})`, balance: spend.balance });
+      return;
+    }
+    balance = spend.balance;
+  }
+
+  const upsertPayload: Record<string, unknown> = {
+    user_id: userId,
+    audio_url,
+    storage_path: storage_path ?? null,
+    duration_seconds: duration_seconds ?? null,
+  };
+  // Only set on a genuinely new (paid) recording — see the comment
+  // above for why a free edit must never touch this.
+  if (!isActive) {
+    upsertPayload.created_at = new Date().toISOString();
+  }
+
+  const { data: saved, error } = await supabase
+    .from("voice_questions")
+    .upsert(upsertPayload, { onConflict: "user_id" })
+    .select("*")
+    .single();
+
+  if (error || !saved) {
+    res.status(500).json({ error: error?.message ?? "Failed to save voice question" });
+    return;
+  }
+
+  res.status(201).json({ question: saved, balance, charged: !isActive });
 });
 
 /** GET /api/profile/me/photos — list own gallery, ordered */
@@ -1960,9 +1995,9 @@ router.get("/profile-views/who-viewed-me", requireAuth, async (req, res): Promis
   );
 
   const withPhotos = await attachPhotoGalleries(merged);
-  const withAudio = await attachAudioPrompts(withPhotos);
+  const withVoiceQuestion = await attachVoiceQuestions(withPhotos);
 
-  res.json({ revealed: withAudio, new_count: newCount });
+  res.json({ revealed: withVoiceQuestion, new_count: newCount });
 });
 
 /** POST /api/profile-views/reveal — PAID (admin-configurable Sparks),
@@ -2074,9 +2109,9 @@ router.post("/profile-views/reveal", requireAuth, async (req, res): Promise<void
   );
 
   const withPhotos = await attachPhotoGalleries(merged);
-  const withAudio = await attachAudioPrompts(withPhotos);
+  const withVoiceQuestion = await attachVoiceQuestions(withPhotos);
 
-  res.json({ revealed: withAudio, balance });
+  res.json({ revealed: withVoiceQuestion, balance });
 });
 
 // ============================================================
@@ -2688,6 +2723,9 @@ const ECONOMY_CONFIG_LABELS: Record<string, { label: string; description: string
   cost_incognito_per_day: { label: "Incognito Mode", description: "Cost per day while Incognito is active", unit: "Sparks" },
   id_verification_fee_zar: { label: "ID Verification Fee", description: "One-off fee for paid ID verification", unit: "ZAR" },
   invite_expiry_days: { label: "Invite Expiry", description: "Unreplied invites stop appearing as pending after this many days (the underlying record isn't deleted — manual withdraw is still the only way to fully cancel one, and still costs Sparks)", unit: "days" },
+  voice_question_expiry_days: { label: "Voice Question Expiry", description: "A recorded voice question stops accepting replies after this many days", unit: "days" },
+  cost_voice_question_record: { label: "Record Voice Question", description: "Cost to record or replace a voice question", unit: "Sparks" },
+  cost_voice_question_reply: { label: "Reply to Voice Question", description: "Cost to reply to someone's voice question with a voice answer", unit: "Sparks" },
   sparks_price_starter: { label: "Starter Bundle Price", description: "Price for the 100-Sparks starter bundle", unit: "ZAR" },
   sparks_price_popular: { label: "Popular Bundle Price", description: "Price for the 300-Sparks popular bundle", unit: "ZAR" },
   sparks_price_date_night: { label: "Date Night Bundle Price", description: "Price for the 600-Sparks date night bundle", unit: "ZAR" },

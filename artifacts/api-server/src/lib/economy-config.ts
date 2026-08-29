@@ -19,6 +19,9 @@ export interface EconomyConfig {
   cost_incognito_per_day: number;
   id_verification_fee_zar: number;
   invite_expiry_days: number;
+  voice_question_expiry_days: number;
+  cost_voice_question_record: number;
+  cost_voice_question_reply: number;
   sparks_price_starter: number;
   sparks_price_popular: number;
   sparks_price_date_night: number;
@@ -66,6 +69,18 @@ const DEFAULTS: EconomyConfig = {
   // expiry only ever affects visibility, never sparks, never the
   // exclusion logic that keeps someone from reappearing in Discover.
   invite_expiry_days: 30,
+  // Voice Question: a 10-second question shown on the Discover card,
+  // replied to with a 30-second voice answer that creates a real
+  // invite (see migration_voice_questions.sql — swipes.voice_reply_url
+  // is what makes a reply flow through the exact same invite/match
+  // pipeline as everything else, not a separate system). Expiry here
+  // works the same way as invite_expiry_days: a read-time computed
+  // status based on age, not a physical deletion — once expired, the
+  // question just stops appearing for others to reply to, and the
+  // owner sees a prompt to record a fresh one.
+  voice_question_expiry_days: 14,
+  cost_voice_question_record: 10,
+  cost_voice_question_reply: 15,
   // Mirrors what was previously hardcoded directly in sparks.ts's
   // BUNDLES array — moving these here doesn't change any current price,
   // it just makes them admin-editable going forward. See sparks.ts for

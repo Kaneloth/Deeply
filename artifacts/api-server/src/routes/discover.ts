@@ -3,7 +3,7 @@ import { requireAuth } from "../middlewares/auth";
 import { supabase } from "../lib/supabase";
 import { spendSparks } from "../lib/sparks-helper";
 import { attachPhotoGalleries } from "../lib/photo-galleries";
-import { attachAudioPrompts } from "../lib/audio-prompts-helper";
+import { attachVoiceQuestions } from "../lib/voice-questions-helper";
 import { withComputedAge, withComputedAges, calculateAge } from "../lib/age";
 import { consumeFreeInviteOrCharge } from "../lib/invites-quota";
 import { getExcludedCandidateIds, getPendingInviterIds, getCandidateExclusionSets, rememberRevealed, getStickyRevealed, rememberReshuffleTimestamp, getStickyReshuffleTimestamp, rememberMatched } from "../lib/discover-exclusions";
@@ -50,13 +50,17 @@ async function getEnabledPreferenceFilters(): Promise<Record<string, boolean>> {
   return Object.fromEntries((data ?? []).map((row) => [row.key, row.value === true]));
 }
 
-async function attachPhotosAndAudio<T extends { id: string; photo_url: string | null }>(items: T[]) {
-  const [withPhotos, withAudio] = await Promise.all([
+// Renamed from attachPhotosAndAudio — the old audio_prompts feature is
+// gone entirely; this now attaches the new (singular, active-only)
+// voice_question instead. Same combined-fetch shape as before, just a
+// different second attachment.
+async function attachPhotosAndVoiceQuestion<T extends { id: string; photo_url: string | null }>(items: T[]) {
+  const [withPhotos, withVoiceQuestion] = await Promise.all([
     attachPhotoGalleries(items),
-    attachAudioPrompts(items),
+    attachVoiceQuestions(items),
   ]);
-  const audioById = new Map(withAudio.map((i) => [i.id, i.audio_prompts]));
-  return withPhotos.map((item) => ({ ...item, audio_prompts: audioById.get(item.id) ?? [] }));
+  const voiceQuestionById = new Map(withVoiceQuestion.map((i) => [i.id, i.voice_question]));
+  return withPhotos.map((item) => ({ ...item, voice_question: voiceQuestionById.get(item.id) ?? null }));
 }
 
 async function attachDistances<T extends { id: string; latitude?: number | null; longitude?: number | null }>(
@@ -195,9 +199,9 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
     }),
   );
 
-  const withPhotosAndAudio = await attachPhotosAndAudio(strippedCandidates);
+  const withPhotosAndVoiceQuestion = await attachPhotosAndVoiceQuestion(strippedCandidates);
 
-  return { candidates: withComputedAges(withPhotosAndAudio), error: null };
+  return { candidates: withComputedAges(withPhotosAndVoiceQuestion), error: null };
 }
 
 router.get("/discover/queue", requireAuth, async (req, res): Promise<void> => {
@@ -494,6 +498,82 @@ router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
   res.json({ matched: !!match, matchId: match?.id ?? null, sparksCharged: inviteBalanceAfter !== null });
 });
 
+/** POST /api/discover/voice-question/:targetUserId/reply — PAID
+ *  (cost_voice_question_reply), always — this is a standalone premium
+ *  action, not eligible for the daily free-invite allowance the way an
+ *  ordinary like is (unlike the main swipe route above, this never
+ *  touches consumeFreeInviteOrCharge). Stored as an ordinary swipes row
+ *  with voice_reply_url set, so it flows through the exact same
+ *  match-creation path as any other invite. */
+router.post("/discover/voice-question/:targetUserId/reply", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const targetUserId = Array.isArray(req.params.targetUserId) ? req.params.targetUserId[0] : req.params.targetUserId;
+  const { audio_url } = req.body as { audio_url?: string };
+
+  if (targetUserId === userId) {
+    res.status(400).json({ error: "Cannot reply to your own voice question" });
+    return;
+  }
+  if (!audio_url) {
+    res.status(400).json({ error: "audio_url is required" });
+    return;
+  }
+
+  const { voice_question_expiry_days: expiryDays, cost_voice_question_reply: replyCost } = await getEconomyConfig();
+
+  const { data: question } = await supabase
+    .from("voice_questions")
+    .select("created_at")
+    .eq("user_id", targetUserId)
+    .maybeSingle();
+
+  if (!question) {
+    res.status(404).json({ error: "This person doesn't have an active voice question" });
+    return;
+  }
+  const isExpired = Date.now() - new Date(question.created_at).getTime() >= expiryDays * 24 * 60 * 60 * 1000;
+  if (isExpired) {
+    res.status(410).json({ error: "This voice question has expired" });
+    return;
+  }
+
+  const spend = await spendSparks(userId, replyCost, "Reply to Voice Question");
+  if (!spend.success) {
+    res.status(402).json({ error: `Insufficient Sparks (need ${replyCost})`, balance: spend.balance });
+    return;
+  }
+
+  const { error: insertError } = await supabase.from("swipes").upsert(
+    {
+      swiper_id: userId,
+      target_id: targetUserId,
+      direction: "like",
+      voice_reply_url: audio_url,
+    },
+    { onConflict: "swiper_id,target_id" },
+  );
+
+  if (insertError) {
+    res.status(500).json({ error: `Failed to record reply: ${insertError.message}` });
+    return;
+  }
+
+  // Same reciprocal-match check as the main swipe route — if the
+  // question's owner had already liked this person first, this reply
+  // completes a mutual match immediately.
+  const { data: reverseSwipe } = await supabase
+    .from("swipes")
+    .select("id")
+    .eq("swiper_id", targetUserId)
+    .eq("target_id", userId)
+    .in("direction", ["like", "super_like"])
+    .maybeSingle();
+
+  const match = reverseSwipe ? await createMatchWithAnyPendingMessages(userId, targetUserId) : null;
+
+  res.json({ matched: !!match, matchId: match?.id ?? null, balance: spend.balance });
+});
+
 router.post("/discover/undo", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
   const { targetId } = req.body as { targetId?: string };
@@ -551,9 +631,9 @@ router.post("/discover/undo", requireAuth, async (req, res): Promise<void> => {
     : null;
 
   const [restoredWithPhotos] = restoredProfile ? await attachPhotoGalleries([restoredProfile]) : [null];
-  const [restoredWithAudio] = restoredWithPhotos ? await attachAudioPrompts([restoredWithPhotos]) : [null];
+  const [restoredWithVoiceQuestion] = restoredWithPhotos ? await attachVoiceQuestions([restoredWithPhotos]) : [null];
 
-  res.json({ restoredProfile: restoredWithAudio ? withComputedAge(restoredWithAudio) : null, balance: spend.balance });
+  res.json({ restoredProfile: restoredWithVoiceQuestion ? withComputedAge(restoredWithVoiceQuestion) : null, balance: spend.balance });
 });
 
 /** GET /api/discover/invites — FREE. Returns people who already invited
@@ -642,9 +722,9 @@ router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => 
     message_content: messageById.get(p.id) ?? null,
   }));
   const withDistance = await attachDistances(userId, enriched);
-  const withPhotosAndAudio = await attachPhotosAndAudio(withDistance);
+  const withPhotosAndVoiceQuestion = await attachPhotosAndVoiceQuestion(withDistance);
 
-  res.json({ revealed: withComputedAges(withPhotosAndAudio), new_count: newCount });
+  res.json({ revealed: withComputedAges(withPhotosAndVoiceQuestion), new_count: newCount });
 });
 
 /** POST /api/discover/invites/reveal — PAID (30 Sparks), but ONLY if
@@ -742,9 +822,9 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
     message_content: messageById.get(l.id) ?? null,
   }));
   const withDistance = await attachDistances(userId, enriched);
-  const withPhotosAndAudio = await attachPhotosAndAudio(withDistance);
+  const withPhotosAndVoiceQuestion = await attachPhotosAndVoiceQuestion(withDistance);
 
-  res.json({ invites: withComputedAges(withPhotosAndAudio), balance });
+  res.json({ invites: withComputedAges(withPhotosAndVoiceQuestion), balance });
 });
 
 router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
@@ -839,9 +919,9 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
     invite_pending: pendingInvitedSet.has(rest.id),
   }));
 
-  const withPhotosAndAudio = await attachPhotosAndAudio(stripped);
+  const withPhotosAndVoiceQuestion = await attachPhotosAndVoiceQuestion(stripped);
 
-  res.json({ results: withComputedAges(withPhotosAndAudio) });
+  res.json({ results: withComputedAges(withPhotosAndVoiceQuestion) });
 });
 
 router.get("/discover/categories", requireAuth, async (req, res): Promise<void> => {
@@ -924,7 +1004,14 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
   }
 
   {
-    const { data: audioUserRows } = await supabase.from("audio_prompts").select("user_id");
+    // Repurposed from the old audio_prompts feature — now shows people
+    // with a currently active Voice Question. Deliberately doesn't
+    // filter by expiry here: this is a lightweight preview count, and
+    // an expired question is rare enough, and self-correcting enough
+    // (the person's own next Discover/Search fetch reflects it
+    // correctly via attachVoiceQuestions), that it's not worth an extra
+    // getEconomyConfig() call just for this preview tile.
+    const { data: audioUserRows } = await supabase.from("voice_questions").select("user_id");
     const audioUserIds = [...new Set((audioUserRows ?? []).map((r) => r.user_id))].filter(
       (id) => !excludedIds.includes(id),
     );
@@ -937,7 +1024,7 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
         .eq("is_incognito", false);
       result = applyHardFilters(data ?? []);
     }
-    categories.push({ key: "has_audio", label: "Audio Bios", ...result });
+    categories.push({ key: "has_audio", label: "Voice Questions", ...result });
   }
 
   // Previously used .ilike("city", viewerProfile.city) — an exact
@@ -1105,7 +1192,8 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
       break;
     }
     case "has_audio": {
-      const { data: audioUserRows } = await supabase.from("audio_prompts").select("user_id");
+      // Same repurposing as the preview count above.
+      const { data: audioUserRows } = await supabase.from("voice_questions").select("user_id");
       const audioUserIds = [...new Set((audioUserRows ?? []).map((r) => r.user_id))].filter(
         (id) => !excludedIds.includes(id),
       );
@@ -1232,9 +1320,9 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
   const renamed = results.map(({ relationship_type, ...rest }) => ({ ...rest, looking_for: relationship_type ?? null }));
 
   const withDistance = await attachDistances(userId, renamed);
-  const withPhotosAndAudio = await attachPhotosAndAudio(withDistance);
+  const withPhotosAndVoiceQuestion = await attachPhotosAndVoiceQuestion(withDistance);
 
-  res.json({ results: withComputedAges(withPhotosAndAudio) });
+  res.json({ results: withComputedAges(withPhotosAndVoiceQuestion) });
 });
 
 /** POST /api/discover/message-request — send an opening message to
@@ -1388,9 +1476,9 @@ router.get("/discover/invites/sent", requireAuth, async (req, res): Promise<void
     message_content: messageByTargetId.get(p.id) ?? null,
   }));
   const withDistance = await attachDistances(userId, enriched);
-  const withPhotosAndAudio = await attachPhotosAndAudio(withDistance);
+  const withPhotosAndVoiceQuestion = await attachPhotosAndVoiceQuestion(withDistance);
 
-  res.json({ sent: withComputedAges(withPhotosAndAudio) });
+  res.json({ sent: withComputedAges(withPhotosAndVoiceQuestion) });
 });
 
 router.delete("/discover/invites/sent/:targetId", requireAuth, async (req, res): Promise<void> => {

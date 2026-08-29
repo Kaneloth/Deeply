@@ -2,7 +2,6 @@ import { Router, type IRouter } from "express";
 import { requireAuth } from "../middlewares/auth";
 import { supabase } from "../lib/supabase";
 import { attachPhotoGalleries } from "../lib/photo-galleries";
-import { attachAudioPrompts } from "../lib/audio-prompts-helper";
 import { getBlockedUserIds } from "../lib/blocks-helper";
 import { withComputedAge } from "../lib/age";
 import { rememberMatched, getStickyMatched, forgetMatched } from "../lib/discover-exclusions";
@@ -116,10 +115,9 @@ function renameLookingFor<T extends Record<string, any>>(profile: T): Omit<T, "r
 async function formatMatch(m: Record<string, any>, viewerId: string) {
   const matchedUser = m.user1_id === viewerId ? m.user2 : m.user1;
   const [withPhotos] = matchedUser ? await attachPhotoGalleries([matchedUser]) : [null];
-  const [withAudio] = withPhotos ? await attachAudioPrompts([withPhotos]) : [null];
   return {
     id: m.id,
-    matched_user: withAudio ? renameLookingFor(withComputedAge(withAudio)) : null,
+    matched_user: withPhotos ? renameLookingFor(withComputedAge(withPhotos)) : null,
     message_count: m.message_count,
     created_at: m.created_at,
     // See chat-unlock-helper.ts for the full state machine. initiator_id
@@ -139,21 +137,19 @@ async function formatMatch(m: Record<string, any>, viewerId: string) {
 /** Same output shape as formatMatch, but for a whole list at once. The
  *  list endpoint used to call formatMatch once per match via
  *  Promise.all — that parallelizes the round trips instead of doing them
- *  one at a time, but for N matches it's still 2N separate outbound
- *  requests to Supabase (attachPhotoGalleries + attachAudioPrompts,
- *  each called individually per match) instead of 2 total. Both of those
- *  helpers already accept a whole array and batch internally in a single
- *  query — the fix is simply calling them ONCE across every matched user
- *  at once, the way they were designed to be used, instead of once per
- *  match. */
+ *  one at a time, but for N matches it's still N separate outbound
+ *  requests to Supabase (attachPhotoGalleries called individually per
+ *  match) instead of 1. That helper already accepts a whole array and
+ *  batches internally in a single query — the fix is simply calling it
+ *  ONCE across every matched user at once, the way it was designed to
+ *  be used, instead of once per match. */
 async function formatMatchesBatch(rawMatches: Record<string, any>[], viewerId: string) {
   const matchedUsers = rawMatches
     .map((m) => (m.user1_id === viewerId ? m.user2 : m.user1))
     .filter((u): u is Record<string, any> => !!u);
 
   const withPhotos = await attachPhotoGalleries(matchedUsers);
-  const withAudio = await attachAudioPrompts(withPhotos);
-  const hydratedById = new Map(withAudio.map((u) => [u.id, u]));
+  const hydratedById = new Map(withPhotos.map((u) => [u.id, u]));
 
   return rawMatches.map((m) => {
     const matchedUser = m.user1_id === viewerId ? m.user2 : m.user1;

@@ -1,14 +1,18 @@
 import { useState, useRef, useEffect } from "react";
-import { MapPin, Baby, Users, Cigarette, Wine, Mic, Play, Pause, BadgeCheck, Camera, Wind, PenTool, PawPrint, Dumbbell, PartyPopper, Ruler, Crown, Search, Sparkles, GraduationCap, Languages, Heart } from "lucide-react";
+import { MapPin, Baby, Users, Cigarette, Wine, Mic, Play, Pause, BadgeCheck, Camera, Wind, PenTool, PawPrint, Dumbbell, PartyPopper, Ruler, Crown, Search, Sparkles, GraduationCap, Languages, Heart, X } from "lucide-react";
+import { AudioRecorderControl } from "@/components/AudioRecorderControl";
 import { PhotoCarousel, type CarouselPhoto } from "@/components/PhotoCarousel";
 import { TATTOO_OPTIONS, VAPING_OPTIONS, PETS_OPTIONS, ACTIVITY_LEVEL_OPTIONS, NIGHTLIFE_OPTIONS, cmToDisplay } from "@/lib/lifestylePreferenceOptions";
 import { RELATIONSHIP_TYPES, LOVE_LANGUAGE_OPTIONS } from "@/lib/preferenceOptions";
 
 const PULL_REVEAL_THRESHOLD_PX = 50;
 
-export interface AudioPromptData {
+// No is_expired flag here on purpose — the backend's attach-helper only
+// ever includes a voice_question on a candidate at all when it's
+// currently active. If it's present here, it's guaranteed replyable;
+// there's nothing for the frontend to separately check.
+export interface VoiceQuestionData {
   id: string;
-  prompt_question: string;
   audio_url: string;
   duration_seconds: number | null;
 }
@@ -42,7 +46,7 @@ export interface ProfileCardData {
   languages_other?: string | null;
   love_language?: string | null;
   dating_intentions?: string[];
-  audio_prompts?: AudioPromptData[];
+  voice_question?: VoiceQuestionData | null;
 }
 
 const NUM_KIDS_LABELS: Record<string, string> = {
@@ -120,6 +124,8 @@ export function ProfileCard({
   profile,
   active = true,
   enablePullReveal = false,
+  canReplyToVoiceQuestion = false,
+  onReplyToVoiceQuestion,
 }: {
   profile: ProfileCardData;
   active?: boolean;
@@ -128,9 +134,24 @@ export function ProfileCard({
    *  MatchDetail) there's nothing to reveal, so this stays off by
    *  default. */
   enablePullReveal?: boolean;
+  /** Separate from enablePullReveal on purpose, even though both are
+   *  currently only ever true on Discover — replying to a voice
+   *  question and revealing the next card are unrelated capabilities
+   *  that just happen to share a page today. Keeping them independent
+   *  props means either can change without silently affecting the
+   *  other. Search/Invites/MatchDetail still show and can PLAY a voice
+   *  question if one is present — replying specifically is the
+   *  Discover-only action, matching where this whole feature is meant
+   *  to live. */
+  canReplyToVoiceQuestion?: boolean;
+  /** Only called when the recording is actually saved — the parent
+   *  page owns the real API call (charging Sparks, handling a match,
+   *  toasts, errors). ProfileCard only owns the recording UI itself and
+   *  its own submitting/loading state while that call is in flight. */
+  onReplyToVoiceQuestion?: (blob: Blob) => Promise<void>;
 }) {
   const photos = profile.photos.length > 0 ? profile.photos : [];
-  const [playingPromptId, setPlayingPromptId] = useState<string | null>(null);
+  const [isPlayingVoiceQuestion, setIsPlayingVoiceQuestion] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // Pull-down-to-reveal-next-card. Only claims the gesture when: the
@@ -183,18 +204,36 @@ export function ProfileCard({
     setPullY(0);
   };
 
-  const togglePlayPrompt = (prompt: AudioPromptData) => {
-    if (playingPromptId === prompt.id) {
+  const togglePlayVoiceQuestion = () => {
+    if (!profile.voice_question) return;
+    if (isPlayingVoiceQuestion) {
       audioRef.current?.pause();
-      setPlayingPromptId(null);
+      setIsPlayingVoiceQuestion(false);
       return;
     }
-    audioRef.current?.pause();
-    const audio = new Audio(prompt.audio_url);
-    audio.onended = () => setPlayingPromptId(null);
+    const audio = new Audio(profile.voice_question.audio_url);
+    audio.onended = () => setIsPlayingVoiceQuestion(false);
     audio.play();
     audioRef.current = audio;
-    setPlayingPromptId(prompt.id);
+    setIsPlayingVoiceQuestion(true);
+  };
+
+  const [showReplyRecorder, setShowReplyRecorder] = useState(false);
+  const [isSubmittingReply, setIsSubmittingReply] = useState(false);
+
+  const handleSaveReply = async (blob: Blob) => {
+    if (!onReplyToVoiceQuestion) return;
+    setIsSubmittingReply(true);
+    try {
+      await onReplyToVoiceQuestion(blob);
+      setShowReplyRecorder(false);
+    } finally {
+      // Not reset on the success path only — if the parent's own
+      // handler throws (e.g. insufficient Sparks, a network error), the
+      // modal should stay open with the recording still in place rather
+      // than silently closing on a failed attempt.
+      setIsSubmittingReply(false);
+    }
   };
 
   // Grouped the same way the sections below are grouped, so this stays
@@ -218,8 +257,7 @@ export function ProfileCard({
     !!profile.languages_other ||
     !!profile.love_language ||
     (profile.dating_intentions?.length ?? 0) > 0;
-  const hasAudio = (profile.audio_prompts?.length ?? 0) > 0;
-  const hasDetails = !!profile.bio || hasAudio || hasLifestyle || hasInterests || hasBackground;
+  const hasDetails = !!profile.bio || hasLifestyle || hasInterests || hasBackground;
 
   const relationshipLabel = profile.looking_for ? RELATIONSHIP_TYPE_LABELS[profile.looking_for] ?? profile.looking_for : null;
 
@@ -245,6 +283,33 @@ export function ProfileCard({
             image. */}
         <div className="relative w-full h-full min-h-full bg-muted">
           <PhotoCarousel photos={photos} name={profile.name} active={active} />
+
+          {/* Voice Question — deliberately placed on the photo itself,
+              near the top, not folded away below the details section
+              like the older static audio_prompts. The whole point of
+              this feature is to feel alive and be seen immediately,
+              not discovered only after scrolling past the photo. */}
+          {profile.voice_question && (
+            <div className="absolute top-3 left-3 right-3 z-10 flex items-center gap-2">
+              <button
+                onClick={togglePlayVoiceQuestion}
+                className="flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-full bg-black/50 backdrop-blur-sm text-white text-xs font-semibold"
+              >
+                <span className="w-6 h-6 rounded-full bg-gradient-accent flex items-center justify-center shrink-0">
+                  {isPlayingVoiceQuestion ? <Pause size={11} /> : <Play size={11} />}
+                </span>
+                Voice Question
+              </button>
+              {canReplyToVoiceQuestion && onReplyToVoiceQuestion && (
+                <button
+                  onClick={() => setShowReplyRecorder(true)}
+                  className="flex items-center gap-1.5 pl-2.5 pr-3 py-1.5 rounded-full bg-gradient-accent text-white text-xs font-semibold shrink-0"
+                >
+                  <Mic size={13} /> Reply
+                </button>
+              )}
+            </div>
+          )}
 
           <div
             className="absolute bottom-0 left-0 right-0 h-32 pointer-events-none"
@@ -321,28 +386,6 @@ export function ProfileCard({
               </div>
             )}
 
-            {hasAudio && (
-              <div className="space-y-2">
-                {profile.audio_prompts!.map((prompt) => (
-                  <button
-                    key={prompt.id}
-                    onClick={() => togglePlayPrompt(prompt)}
-                    className="w-full flex items-center gap-3 bg-secondary/60 border border-card-border rounded-xl p-3 text-left"
-                  >
-                    <div className="w-9 h-9 rounded-full bg-gradient-accent flex items-center justify-center text-white shrink-0">
-                      {playingPromptId === prompt.id ? <Pause size={15} /> : <Play size={15} />}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wide">
-                        <Mic size={10} /> Audio prompt
-                      </div>
-                      <p className="text-sm font-medium line-clamp-2 leading-snug">{prompt.prompt_question}</p>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-
             {hasLifestyle && (
               <div className="bg-secondary/40 rounded-2xl p-4">
                 <SectionHeader icon={Dumbbell} label="Lifestyle & Habits" />
@@ -405,6 +448,42 @@ export function ProfileCard({
           </div>
         )}
       </div>
+
+      {showReplyRecorder && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/50"
+            onClick={() => !isSubmittingReply && setShowReplyRecorder(false)}
+          />
+          <div className="fixed inset-x-6 top-1/2 -translate-y-1/2 z-50 bg-card border border-card-border rounded-2xl p-5 space-y-2 max-w-sm mx-auto">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-gradient-accent flex items-center justify-center text-white shrink-0">
+                  <Mic size={18} />
+                </div>
+                <h3 className="font-['Syne'] font-bold text-base">Reply with your voice</h3>
+              </div>
+              {!isSubmittingReply && (
+                <button
+                  onClick={() => setShowReplyRecorder(false)}
+                  className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-muted-foreground shrink-0"
+                >
+                  <X size={15} />
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Your reply is sent as an invite — {profile.name} will hear it and can match with you.
+            </p>
+            <AudioRecorderControl
+              onSave={handleSaveReply}
+              isSaving={isSubmittingReply}
+              saveLabel="Send Reply"
+              maxDurationSeconds={30}
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }

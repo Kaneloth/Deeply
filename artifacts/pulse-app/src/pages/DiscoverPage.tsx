@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ProfileCard, type ProfileCardData } from "@/components/ProfileCard";
-import { X, Heart, MessageCircle, Star, RotateCcw } from "lucide-react";
+import { X, Heart, MessageCircle, Star, RotateCcw, Mic } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useSparks } from "@/contexts/SparksContext";
 import { useDiscoverControls } from "@/contexts/DiscoverControlsContext";
@@ -33,12 +33,14 @@ const SwipeCard = memo(
     isExiting,
     exitDirection,
     stackIndex,
+    onReplyToVoiceQuestion,
   }: {
     candidate: Candidate;
     isTop: boolean;
     isExiting: boolean;
     exitDirection: SwipeDirection | null;
     stackIndex: number;
+    onReplyToVoiceQuestion: (targetId: string, blob: Blob) => Promise<void>;
   }) {
     return (
       <motion.div
@@ -56,7 +58,13 @@ const SwipeCard = memo(
         }
         transition={isExiting ? { duration: 0.3, ease: "easeOut" } : { duration: 0 }}
       >
-        <ProfileCard profile={candidate} active={isTop} enablePullReveal={isTop} />
+        <ProfileCard
+          profile={candidate}
+          active={isTop}
+          enablePullReveal={isTop}
+          canReplyToVoiceQuestion={isTop}
+          onReplyToVoiceQuestion={(blob) => onReplyToVoiceQuestion(candidate.id, blob)}
+        />
       </motion.div>
     );
   },
@@ -73,6 +81,15 @@ const SwipeCard = memo(
   // props that actually affect rendering) instead of reference stops
   // that cascade at this boundary regardless of what's happening deeper
   // inside ProfileCard.
+  //
+  // onReplyToVoiceQuestion is intentionally NOT in this comparison —
+  // it's recreated in the parent on every render, but it's a thin
+  // wrapper that only closes over candidate.id (passed fresh as an arg,
+  // not captured) and calls straight into a useCallback'd handler in
+  // the parent, so an older closure behaves identically to a newer one.
+  // Including it would defeat this whole memo, re-rendering every card
+  // on every parent render regardless of whether anything it actually
+  // depends on changed.
   (prev, next) =>
     prev.candidate.id === next.candidate.id &&
     prev.isTop === next.isTop &&
@@ -148,6 +165,28 @@ export default function DiscoverPage() {
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [reshuffleStatus, setReshuffleStatus] = useState<{ isFree: boolean; cost: number } | null>(null);
   const [isReshuffling, setIsReshuffling] = useState(false);
+
+  // "Try it" nudge for Voice Question — shown only while the account
+  // genuinely has no active question of its own yet (never recorded,
+  // or it expired). Dismissing is per-session only (a plain in-memory
+  // flag, not localStorage) — reappearing on the next fresh open is
+  // intentional here, closer to how Tinder's own periodic feature
+  // nudges work, rather than a one-time notice gone forever after a
+  // single dismissal.
+  const [hasActiveVoiceQuestion, setHasActiveVoiceQuestion] = useState<boolean | null>(null);
+  const [voiceQuestionNudgeDismissed, setVoiceQuestionNudgeDismissed] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/voice-question/me", { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        setHasActiveVoiceQuestion(!!body?.question && !body.question.is_expired);
+      })
+      .catch(() => {
+        // Silent — worst case the nudge just doesn't show this load,
+        // not worth a toast over.
+      });
+  }, [token]);
 
   const fetchReshuffleStatus = useCallback(async () => {
     try {
@@ -409,6 +448,78 @@ export default function DiscoverPage() {
     }
   };
 
+  // Uploads via the same shared endpoint the old audio prompts feature
+  // used (still generic — it just uploads to storage and returns a
+  // URL), then the actual reply call. Mirrors handleDecision above:
+  // toast on error, refresh Sparks and remove the candidate from the
+  // stack on success, show the match celebration if this reply
+  // completed a mutual match. A voice reply is stored server-side as an
+  // ordinary "like" swipe (see discover.ts), so removing the candidate
+  // here keeps the frontend consistent with what the backend now
+  // actually excludes them for — same reasoning as a normal swipe.
+  //
+  // setLastSwiped below makes Undo available afterward, exactly like a
+  // normal swipe — /discover/undo is fully generic (it just finds "the
+  // last swipe by this user" and doesn't care whether it came from a
+  // like, a super like, or a voice reply), and undoing was never a
+  // refund in this app anyway — it charges cost_undo_swipe again, same
+  // as withdrawing an invite. If this reply already completed an
+  // immediate mutual match, the backend's existing "can't undo a swipe
+  // that already resulted in a match" guard applies exactly as it
+  // already does for a normal swipe — no special-casing needed here.
+  //
+  // Deliberately re-throws after toasting: ProfileCard's recording
+  // modal expects this promise to reject on failure so it can keep the
+  // recording visible for a retry, but it doesn't show its own error
+  // message — this is what surfaces one.
+  const handleReplyToVoiceQuestion = async (targetId: string, blob: Blob) => {
+    try {
+      const formData = new FormData();
+      formData.append("audio", blob, "voice-reply.webm");
+      const uploadRes = await fetch("/api/prompts/audio-upload", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      const uploadBody = await uploadRes.json();
+      if (!uploadRes.ok) throw new Error(uploadBody.error ?? "Upload failed");
+
+      const replyRes = await fetch(`/api/discover/voice-question/${targetId}/reply`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ audio_url: uploadBody.audio_url }),
+      });
+      const replyBody = await replyRes.json().catch(() => ({}));
+      if (!replyRes.ok) throw new Error(replyBody.error ?? "Failed to send your reply");
+
+      refreshSparksBadge();
+      setLastSwiped({ targetId, direction: "like" });
+
+      const target = candidates.find((c) => c.id === targetId);
+      setCandidates((prev) => {
+        const next = prev.filter((c) => c.id !== targetId);
+        cachedCandidates = next;
+        return next;
+      });
+
+      if (replyBody.matched && target) {
+        setMatchCelebration({ name: target.name, matchId: replyBody.matchId, photoUrl: target.photo_url ?? undefined });
+      } else {
+        toast({ title: "Reply sent", description: "Your voice reply was sent as an invite." });
+      }
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to send your reply.",
+        variant: "destructive",
+      });
+      throw err;
+    }
+  };
+
   const handleSendPreMatchMessage = async () => {
     if (!composeFor || !messageText.trim() || isSendingMessage) return;
     setIsSendingMessage(true);
@@ -486,6 +597,26 @@ export default function DiscoverPage() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden px-2 pb-1 pt-2">
+      {hasActiveVoiceQuestion === false && !voiceQuestionNudgeDismissed && visibleCards.length > 0 && (
+        <div className="flex items-center gap-3 bg-gradient-accent rounded-2xl p-3 mb-2 text-white shadow-lg shrink-0">
+          <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+            <Mic size={16} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold leading-tight">Try a Voice Question</p>
+            <p className="text-xs text-white/80 leading-tight">Ask something — replies count as invites</p>
+          </div>
+          <button
+            onClick={() => setLocation("/profile")}
+            className="px-3 py-1.5 rounded-full bg-white text-primary text-xs font-semibold shrink-0"
+          >
+            Try it
+          </button>
+          <button onClick={() => setVoiceQuestionNudgeDismissed(true)} className="text-white/70 shrink-0">
+            <X size={16} />
+          </button>
+        </div>
+      )}
       <div className="flex-1 relative min-h-0">
         {visibleCards.length === 0 ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-6">
@@ -510,6 +641,7 @@ export default function DiscoverPage() {
                 stackIndex={i}
                 isExiting={exiting?.id === candidate.id}
                 exitDirection={exiting?.id === candidate.id ? exiting.direction : null}
+                onReplyToVoiceQuestion={handleReplyToVoiceQuestion}
               />
             ))}
           </AnimatePresence>
