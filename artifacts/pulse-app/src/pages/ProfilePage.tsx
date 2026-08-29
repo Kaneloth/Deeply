@@ -262,6 +262,7 @@ export default function ProfilePage() {
   const [isLoadingVoiceQuestion, setIsLoadingVoiceQuestion] = useState(true);
   const [showVoiceQuestionSheet, setShowVoiceQuestionSheet] = useState(false);
   const [isSavingVoiceQuestion, setIsSavingVoiceQuestion] = useState(false);
+  const [isRenewingVoiceQuestion, setIsRenewingVoiceQuestion] = useState(false);
   const [isPlayingVoiceQuestion, setIsPlayingVoiceQuestion] = useState(false);
   const voiceQuestionAudioRef = useRef<HTMLAudioElement | null>(null);
   // Fetched purely for display in the recording sheet, same pattern
@@ -387,6 +388,39 @@ export default function ProfilePage() {
       });
     } finally {
       setIsSavingVoiceQuestion(false);
+    }
+  };
+
+  // Renews using the recording already on file, no re-recording
+  // required — sends no audio_url at all, which the backend treats as
+  // "reuse whatever's already there" (see POST /voice-question). Costs
+  // exactly the same as a brand new recording — the audio was never
+  // what was being charged for, an active window is.
+  const handleRenewVoiceQuestion = async () => {
+    setIsRenewingVoiceQuestion(true);
+    try {
+      const res = await fetch("/api/voice-question", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({}),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "Failed to renew your voice question");
+
+      setVoiceQuestion({ ...body.question, is_expired: false });
+      toast({ title: "Voice Question renewed" });
+      refreshSparksBadge();
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to renew your voice question.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRenewingVoiceQuestion(false);
     }
   };
 
@@ -1288,8 +1322,26 @@ export default function ProfilePage() {
           <div className="space-y-3">
             <div className="flex items-start gap-2 text-xs text-amber-600 bg-amber-500/10 rounded-xl p-3">
               <AlertCircle size={14} className="shrink-0 mt-0.5" />
-              <span>Your voice question expired. Record a new one to start receiving voice replies again.</span>
+              <span>Your voice question expired. Keep your existing recording or record a new one to start receiving voice replies again.</span>
             </div>
+            <div className="flex items-center gap-3 bg-background border border-card-border rounded-xl p-3">
+              <button
+                onClick={togglePlayVoiceQuestion}
+                className="w-10 h-10 rounded-full bg-gradient-accent flex items-center justify-center text-white shrink-0"
+              >
+                {isPlayingVoiceQuestion ? <Pause size={16} /> : <Play size={16} />}
+              </button>
+              <p className="text-sm flex-1 min-w-0 text-muted-foreground">Preview your expired question</p>
+            </div>
+            <button
+              onClick={handleRenewVoiceQuestion}
+              disabled={isRenewingVoiceQuestion}
+              className="w-full h-14 rounded-xl bg-gradient-accent text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-60"
+            >
+              {isRenewingVoiceQuestion
+                ? "Renewing..."
+                : `Keep Same Recording${voiceQuestionRecordCost !== null ? ` — ${voiceQuestionRecordCost} Sparks` : ""}`}
+            </button>
             <button
               onClick={() => setShowVoiceQuestionSheet(true)}
               className="w-full h-14 rounded-xl border-2 border-dashed border-card-border flex items-center justify-center gap-2 text-muted-foreground hover:border-primary/50 hover:text-primary transition-colors"

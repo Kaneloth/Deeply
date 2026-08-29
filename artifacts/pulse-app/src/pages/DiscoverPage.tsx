@@ -104,6 +104,16 @@ import { ScanWaveLoader } from "@/components/ScanWaveLoader";
 let hasShownDiscoverScanWave = false;
 const MIN_SCAN_WAVE_MS = 2000;
 
+// Same in-memory, module-level pattern as hasShownDiscoverScanWave
+// above — survives navigating away and back to Discover (component
+// unmount/remount) within the same running app session, but resets on
+// an actual app restart or page reload. The original version of this
+// lived in component state instead, which reset on every single
+// remount — meaning it reappeared every time someone merely switched
+// tabs and came back, not just on a genuinely fresh app open. That's
+// the exact "annoying" behavior this fixes.
+let voiceQuestionNudgeDismissedThisSession = false;
+
 // In-memory only — deliberately not persisted to localStorage, so this
 // only survives within the same app session/process (a real app restart
 // or web page reload both start fresh, same as hasShownDiscoverScanWave
@@ -168,13 +178,19 @@ export default function DiscoverPage() {
 
   // "Try it" nudge for Voice Question — shown only while the account
   // genuinely has no active question of its own yet (never recorded,
-  // or it expired). Dismissing is per-session only (a plain in-memory
-  // flag, not localStorage) — reappearing on the next fresh open is
-  // intentional here, closer to how Tinder's own periodic feature
-  // nudges work, rather than a one-time notice gone forever after a
-  // single dismissal.
+  // or it expired). Dismissing lasts for the rest of this app session
+  // (see voiceQuestionNudgeDismissedThisSession above) — it'll come
+  // back on a genuinely fresh app open, closer to how a recurring
+  // feature nudge should behave, rather than a one-time notice gone
+  // forever after a single dismissal.
   const [hasActiveVoiceQuestion, setHasActiveVoiceQuestion] = useState<boolean | null>(null);
-  const [voiceQuestionNudgeDismissed, setVoiceQuestionNudgeDismissed] = useState(false);
+  const [voiceQuestionNudgeDismissed, setVoiceQuestionNudgeDismissedState] = useState(
+    voiceQuestionNudgeDismissedThisSession,
+  );
+  const dismissVoiceQuestionNudge = () => {
+    voiceQuestionNudgeDismissedThisSession = true;
+    setVoiceQuestionNudgeDismissedState(true);
+  };
 
   useEffect(() => {
     fetch("/api/voice-question/me", { headers: { Authorization: `Bearer ${token}` } })
@@ -612,7 +628,7 @@ export default function DiscoverPage() {
           >
             Try it
           </button>
-          <button onClick={() => setVoiceQuestionNudgeDismissed(true)} className="text-white/70 shrink-0">
+          <button onClick={dismissVoiceQuestionNudge} className="text-white/70 shrink-0">
             <X size={16} />
           </button>
         </div>

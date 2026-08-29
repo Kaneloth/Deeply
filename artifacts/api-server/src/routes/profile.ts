@@ -525,16 +525,14 @@ router.get("/voice-question/me", requireAuth, async (req, res): Promise<void> =>
   res.json({ question: { ...question, is_expired: isExpired } });
 });
 
-/** POST /api/voice-question — record a fresh question, or replace the
- *  current one. Charges cost_voice_question_record ONLY when there's no
- *  currently-active (non-expired) question — replacing one that's still
- *  within its window is free, per how this feature is meant to work:
- *  pay once to have an active question, edit it as many times as you
- *  want during that window at no extra cost. Critically, a free edit
- *  does NOT reset created_at — only a genuinely new paid recording
- *  starts a fresh expiry window. Resetting it on every edit would let
- *  someone keep a question alive forever by editing right before each
- *  deadline without ever paying again. */
+/** POST /api/voice-question — record a fresh question, replace the
+ *  current one, or RENEW using the existing recording (audio_url
+ *  omitted entirely). Renewing exists because someone happy with their
+ *  question shouldn't be forced to re-record identical audio just to
+ *  keep it live past expiry — the cost and the isActive logic below are
+ *  otherwise completely unchanged; renewing an expired question is
+ *  charged exactly like recording a brand new one, since the audio
+ *  itself was never what was being paid for — an active window was. */
 router.post("/voice-question", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
   const { audio_url, storage_path, duration_seconds } = req.body as {
@@ -543,18 +541,25 @@ router.post("/voice-question", requireAuth, async (req, res): Promise<void> => {
     duration_seconds?: number;
   };
 
-  if (!audio_url) {
-    res.status(400).json({ error: "audio_url is required" });
-    return;
-  }
-
   const { voice_question_expiry_days: expiryDays, cost_voice_question_record: recordCost } = await getEconomyConfig();
 
   const { data: existing } = await supabase
     .from("voice_questions")
-    .select("created_at")
+    .select("audio_url, storage_path, duration_seconds, created_at")
     .eq("user_id", userId)
     .maybeSingle();
+
+  // A renewal (no audio_url in the request) reuses whatever's already
+  // on file rather than requiring a fresh recording. If there's nothing
+  // on file to reuse, this is a genuine error, not silently allowed
+  // through with an empty audio_url.
+  const finalAudioUrl = audio_url ?? existing?.audio_url;
+  if (!finalAudioUrl) {
+    res.status(400).json({ error: "audio_url is required" });
+    return;
+  }
+  const finalStoragePath = audio_url !== undefined ? (storage_path ?? null) : (existing?.storage_path ?? null);
+  const finalDuration = audio_url !== undefined ? (duration_seconds ?? null) : (existing?.duration_seconds ?? null);
 
   const isActive =
     !!existing && Date.now() - new Date(existing.created_at).getTime() < expiryDays * 24 * 60 * 60 * 1000;
@@ -571,12 +576,12 @@ router.post("/voice-question", requireAuth, async (req, res): Promise<void> => {
 
   const upsertPayload: Record<string, unknown> = {
     user_id: userId,
-    audio_url,
-    storage_path: storage_path ?? null,
-    duration_seconds: duration_seconds ?? null,
+    audio_url: finalAudioUrl,
+    storage_path: finalStoragePath,
+    duration_seconds: finalDuration,
   };
-  // Only set on a genuinely new (paid) recording — see the comment
-  // above for why a free edit must never touch this.
+  // Only set on a genuinely new (paid) recording/renewal — see the
+  // comment above for why a free edit must never touch this.
   if (!isActive) {
     upsertPayload.created_at = new Date().toISOString();
   }
