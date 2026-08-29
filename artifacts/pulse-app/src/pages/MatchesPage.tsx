@@ -1,11 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Link } from "wouter";
 import { Skeleton } from "@/components/ui/skeleton";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/PageHeader";
-import { UserX, Flag, Sparkles, ChevronDown } from "lucide-react";
+import { UserX, Flag, Sparkles, ChevronDown, MoreVertical } from "lucide-react";
 import { ReportBlockModal } from "@/components/ReportBlockModal";
 
 interface MatchedUser {
@@ -80,19 +80,6 @@ export default function MatchesPage() {
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
   const [reportTarget, setReportTarget] = useState<{ id: string; name: string; matchId: string } | null>(null);
   const [isBlocking, setIsBlocking] = useState(false);
-  const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const longTriggered = useRef(false);
-
-  const startLongPress = (matchId: string) => {
-    longTriggered.current = false;
-    longPressRef.current = setTimeout(() => {
-      longTriggered.current = true;
-      setSelectedMatchId(matchId);
-    }, 400);
-  };
-  const cancelLongPress = () => {
-    if (longPressRef.current) clearTimeout(longPressRef.current);
-  };
 
   const handleBlockFromMatch = async (userId: string) => {
     setIsBlocking(true);
@@ -297,22 +284,10 @@ export default function MatchesPage() {
               transition={{ delay: idx * 0.05 }}
               className="relative"
             >
-              <div
-                onMouseDown={() => startLongPress(match.id)}
-                onMouseUp={cancelLongPress}
-                onMouseLeave={cancelLongPress}
-                onTouchStart={() => startLongPress(match.id)}
-                onTouchEnd={cancelLongPress}
-                onClick={(e) => {
-                  if (longTriggered.current) {
-                    e.preventDefault();
-                    longTriggered.current = false;
-                  }
-                }}
-              >
+              <div className="relative">
                 <Link href={`/matches/${match.id}`} className="block">
                   <div
-                    className={`flex items-center gap-4 p-4 rounded-2xl bg-card border transition-colors active:scale-[0.98] select-none ${
+                    className={`flex items-center gap-4 p-4 pr-12 rounded-2xl bg-card border transition-colors active:scale-[0.98] select-none ${
                       selectedMatchId === match.id ? "border-primary/40 bg-primary/5" : "border-card-border hover:border-primary/50"
                     }`}
                   >
@@ -348,6 +323,25 @@ export default function MatchesPage() {
                     </div>
                   </div>
                 </Link>
+
+                {/* Tap-to-open menu, matching MatchDetailPage's 3-dot
+                    pattern — replaces the previous tap-and-hold gesture,
+                    which was firing accidentally during an ordinary
+                    slow pull-to-refresh drag (both gestures start the
+                    same way: finger down, little movement yet), causing
+                    people to block/report someone by accident. A
+                    sibling of the Link (not nested inside it), so
+                    tapping it can never also trigger navigation. */}
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setSelectedMatchId(selectedMatchId === match.id ? null : match.id);
+                  }}
+                  className="absolute top-3 right-3 z-10 w-8 h-8 rounded-full bg-black/10 hover:bg-black/20 flex items-center justify-center text-foreground transition-colors"
+                >
+                  <MoreVertical size={16} />
+                </button>
               </div>
 
               {selectedMatchId === match.id && (
