@@ -138,6 +138,36 @@ export default function BlockContactsPage() {
     return contacts.filter((c) => c.name.toLowerCase().includes(q) || c.rawPhoneNumber?.includes(q));
   }, [contacts, searchQuery]);
 
+  // Only contacts that ALREADY resolve to a usable number are eligible
+  // for bulk select-all — someone with no saved number can't be bulk-
+  // selected since there's nothing to block yet for them until a number
+  // is typed in via the per-contact flow below. Scoped to whatever's
+  // currently visible (respects an active search), matching how "select
+  // all" behaves in most list UIs — it acts on what you're looking at,
+  // not the entire underlying dataset regardless of filter.
+  const selectableVisibleContacts = useMemo(
+    () =>
+      filteredContacts.filter((c) => {
+        const raw = contactNumberOverrides[c.id] ?? c.rawPhoneNumber;
+        return raw ? normalizeNumber(raw, userCountryCode) !== null : false;
+      }),
+    [filteredContacts, contactNumberOverrides, userCountryCode],
+  );
+  const allVisibleSelected =
+    selectableVisibleContacts.length > 0 && selectableVisibleContacts.every((c) => selectedIds.has(c.id));
+
+  const toggleSelectAll = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        for (const c of selectableVisibleContacts) next.delete(c.id);
+      } else {
+        for (const c of selectableVisibleContacts) next.add(c.id);
+      }
+      return next;
+    });
+  };
+
   const toggleSelected = (id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -315,6 +345,21 @@ export default function BlockContactsPage() {
               />
             </div>
 
+            {!isLoadingContacts && selectableVisibleContacts.length > 0 && (
+              <button onClick={toggleSelectAll} className="flex items-center gap-2 text-sm font-medium text-primary">
+                <div
+                  className={`w-5 h-5 rounded-md border shrink-0 flex items-center justify-center transition-colors ${
+                    allVisibleSelected ? "bg-primary border-primary" : "border-card-border"
+                  }`}
+                >
+                  {allVisibleSelected && <Check size={13} className="text-primary-foreground" />}
+                </div>
+                {allVisibleSelected
+                  ? "Deselect All"
+                  : `Select All${searchQuery ? " (matching search)" : ""} (${selectableVisibleContacts.length})`}
+              </button>
+            )}
+
             {isLoadingContacts ? (
               <p className="text-xs text-muted-foreground text-center py-6">Loading contacts...</p>
             ) : filteredContacts.length === 0 ? (
@@ -400,14 +445,30 @@ export default function BlockContactsPage() {
       </div>
 
       {selectedIds.size > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 p-4 bg-background border-t border-border">
-          <Button
-            onClick={handleBlockSelected}
-            disabled={isSubmitting}
-            className="w-full h-14 rounded-xl text-lg font-semibold bg-gradient-accent border-0 shadow-[0_4px_20px_rgba(225,29,72,0.3)]"
-          >
-            {isSubmitting ? "Blocking..." : `Block ${selectedIds.size} Selected`}
-          </Button>
+        // Positioned ABOVE the app's BottomNav rather than at bottom-0
+        // like it — BottomNav (see BottomNav.tsx) is itself `fixed
+        // bottom-0` with `z-50`, so a second bottom-0 element with no
+        // z-index of its own renders directly underneath it in the
+        // stacking order, not visibly on top — exactly the "button
+        // hidden behind the nav" symptom. bottom-20 (5rem/80px) clears
+        // the nav's own height (py-4 padding + a 22px icon + label
+        // text) with a bit of headroom; z-40 keeps this deliberately
+        // just below the nav's own z-50, since once they're vertically
+        // separated stacking order between them no longer matters, but
+        // it should still stay above ordinary page content. Matches
+        // BottomNav's own max-w-[430px] mx-auto so it lines up with the
+        // rest of the app's mobile-width container instead of
+        // stretching full browser width on desktop.
+        <div className="fixed bottom-20 left-0 right-0 z-40 px-6">
+          <div className="max-w-[430px] mx-auto">
+            <Button
+              onClick={handleBlockSelected}
+              disabled={isSubmitting}
+              className="w-full h-14 rounded-xl text-lg font-semibold bg-gradient-accent border-0 shadow-[0_4px_20px_rgba(225,29,72,0.3)]"
+            >
+              {isSubmitting ? "Blocking..." : `Block ${selectedIds.size} Selected`}
+            </Button>
+          </div>
         </div>
       )}
     </div>
