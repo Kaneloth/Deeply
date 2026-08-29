@@ -8,7 +8,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { Capacitor } from "@capacitor/core";
 import { Camera as CapacitorCamera } from "@capacitor/camera";
-import { CheckCircle2, AlertCircle, Rocket, Plus, X, ImageIcon, Camera, Video, Mic, Play, Pause, Crown, Star } from "lucide-react";
+import { CheckCircle2, AlertCircle, Rocket, Plus, X, ImageIcon, Camera, Video, Mic, Play, Pause, Crown, Star, Trash2 } from "lucide-react";
 import { SparkIcon } from "@/components/Icons";
 import { SparksModal } from "@/components/SparksModal";
 import { motion, AnimatePresence } from "framer-motion";
@@ -263,6 +263,8 @@ export default function ProfilePage() {
   const [showVoiceQuestionSheet, setShowVoiceQuestionSheet] = useState(false);
   const [isSavingVoiceQuestion, setIsSavingVoiceQuestion] = useState(false);
   const [isRenewingVoiceQuestion, setIsRenewingVoiceQuestion] = useState(false);
+  const [showRemoveVoiceQuestionConfirm, setShowRemoveVoiceQuestionConfirm] = useState(false);
+  const [isRemovingVoiceQuestion, setIsRemovingVoiceQuestion] = useState(false);
   const [isPlayingVoiceQuestion, setIsPlayingVoiceQuestion] = useState(false);
   const voiceQuestionAudioRef = useRef<HTMLAudioElement | null>(null);
   // Fetched purely for display in the recording sheet, same pattern
@@ -421,6 +423,35 @@ export default function ProfilePage() {
       });
     } finally {
       setIsRenewingVoiceQuestion(false);
+    }
+  };
+
+  // Free, no refund — same as deleting anything else in this app.
+  // Recording a new one afterward is charged normally, same as any
+  // first-time recording, since there's no longer an existing row for
+  // the backend's isActive check to find.
+  const handleRemoveVoiceQuestion = async () => {
+    setIsRemovingVoiceQuestion(true);
+    try {
+      const res = await fetch("/api/voice-question", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok && res.status !== 404) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to remove your voice question");
+      }
+      setVoiceQuestion(null);
+      setShowRemoveVoiceQuestionConfirm(false);
+      toast({ title: "Voice Question removed" });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to remove your voice question.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRemovingVoiceQuestion(false);
     }
   };
 
@@ -1310,6 +1341,12 @@ export default function ProfilePage() {
                 {isPlayingVoiceQuestion ? <Pause size={16} /> : <Play size={16} />}
               </button>
               <p className="text-sm flex-1 min-w-0 text-muted-foreground">Your voice question is live</p>
+              <button
+                onClick={() => setShowRemoveVoiceQuestionConfirm(true)}
+                className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors shrink-0"
+              >
+                <Trash2 size={14} />
+              </button>
             </div>
             <button
               onClick={() => setShowVoiceQuestionSheet(true)}
@@ -1332,6 +1369,12 @@ export default function ProfilePage() {
                 {isPlayingVoiceQuestion ? <Pause size={16} /> : <Play size={16} />}
               </button>
               <p className="text-sm flex-1 min-w-0 text-muted-foreground">Preview your expired question</p>
+              <button
+                onClick={() => setShowRemoveVoiceQuestionConfirm(true)}
+                className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors shrink-0"
+              >
+                <Trash2 size={14} />
+              </button>
             </div>
             <button
               onClick={handleRenewVoiceQuestion}
@@ -1412,6 +1455,44 @@ export default function ProfilePage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {showRemoveVoiceQuestionConfirm && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/40"
+            onClick={() => !isRemovingVoiceQuestion && setShowRemoveVoiceQuestionConfirm(false)}
+          />
+          <div className="fixed inset-x-6 top-1/2 -translate-y-1/2 z-50 bg-card border border-card-border rounded-2xl p-5 space-y-4 max-w-sm mx-auto">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-destructive/10 flex items-center justify-center text-destructive shrink-0">
+                <Trash2 size={18} />
+              </div>
+              <h3 className="font-['Syne'] font-bold text-base">Remove Voice Question?</h3>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              This can't be undone — recording a new one afterward costs Sparks again, same as recording for the
+              first time.
+            </p>
+            <div className="flex gap-2">
+              <Button
+                onClick={() => setShowRemoveVoiceQuestionConfirm(false)}
+                disabled={isRemovingVoiceQuestion}
+                variant="outline"
+                className="flex-1 h-11 rounded-xl"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleRemoveVoiceQuestion}
+                disabled={isRemovingVoiceQuestion}
+                className="flex-1 h-11 rounded-xl bg-destructive hover:bg-destructive/90 border-0"
+              >
+                {isRemovingVoiceQuestion ? "Removing..." : "Remove"}
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
 
       <div className="space-y-6">
         <div className="space-y-2">

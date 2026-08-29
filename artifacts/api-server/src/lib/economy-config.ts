@@ -20,6 +20,7 @@ export interface EconomyConfig {
   id_verification_fee_zar: number;
   invite_expiry_days: number;
   voice_question_expiry_days: number;
+  voice_question_nudge_cooldown_days: number;
   cost_voice_question_record: number;
   cost_voice_question_reply: number;
   sparks_price_starter: number;
@@ -79,6 +80,17 @@ const DEFAULTS: EconomyConfig = {
   // question just stops appearing for others to reply to, and the
   // owner sees a prompt to record a fresh one.
   voice_question_expiry_days: 14,
+  // How many days must pass after someone dismisses the "try Voice
+  // Question" nudge before it's allowed to show again — see
+  // voice_question_nudge_enabled (a plain app_settings boolean, not
+  // part of this numeric config) for the separate on/off switch.
+  // Without a cooldown, dismissing it only suppressed it for the rest
+  // of the current session (see DiscoverPage.tsx's old
+  // in-memory-only version of this) — meaning someone who simply isn't
+  // interested in the feature had to keep dismissing it every single
+  // fresh app open, forever. This makes it a genuine, bounded
+  // reminder cadence instead of a permanent nag.
+  voice_question_nudge_cooldown_days: 3,
   cost_voice_question_record: 10,
   cost_voice_question_reply: 15,
   // Mirrors what was previously hardcoded directly in sparks.ts's

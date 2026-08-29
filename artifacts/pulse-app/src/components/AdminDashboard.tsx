@@ -191,6 +191,13 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
   const [isTogglingIncognito, setIsTogglingIncognito] = useState(false);
   const [dealbreakersEnabled, setDealbreakersEnabled] = useState(false);
   const [isTogglingDealbreakers, setIsTogglingDealbreakers] = useState(false);
+  // Defaults to true (not false, unlike incognito/dealbreakers above) —
+  // this nudge already existed and worked with no admin control at all
+  // until now, so an admin who never touches this new setting should
+  // see the exact same behavior they already had, not have the nudge
+  // silently vanish the moment this shipped.
+  const [voiceQuestionNudgeEnabled, setVoiceQuestionNudgeEnabled] = useState(true);
+  const [isTogglingVoiceQuestionNudge, setIsTogglingVoiceQuestionNudge] = useState(false);
   // One shared map for all ten preference-filter toggles, rather than
   // ten separate useState pairs — these are all read/written the exact
   // same generic way (see togglePreferenceFilter below), so a single
@@ -215,6 +222,10 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
         if (body) {
           setIncognitoEnabled(body.incognito_enabled === true);
           setDealbreakersEnabled(body.dealbreakers_enabled === true);
+          // Absent (never set by an admin yet) must mean "on", not
+          // "off" — see the comment above the state declaration for why
+          // this one flips the usual default.
+          setVoiceQuestionNudgeEnabled(body.voice_question_nudge_enabled !== false);
           // /api/app-settings already returns every key unfiltered, so
           // no separate endpoint/request is needed for these ten — just
           // pick each one out of the same response body.
@@ -278,6 +289,33 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
       });
     } finally {
       setIsTogglingDealbreakers(false);
+    }
+  };
+
+  const toggleVoiceQuestionNudgeFeature = async () => {
+    const next = !voiceQuestionNudgeEnabled;
+    setIsTogglingVoiceQuestionNudge(true);
+    try {
+      const res = await fetch("/api/admin/settings", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ key: "voice_question_nudge_enabled", value: next }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "Failed to update setting");
+      setVoiceQuestionNudgeEnabled(next);
+      toast({ title: next ? "Voice Question nudge enabled" : "Voice Question nudge disabled" });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to update setting.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsTogglingVoiceQuestionNudge(false);
     }
   };
 
@@ -368,6 +406,24 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
           </div>
           <div className={`h-6 w-10 rounded-full relative transition-colors shrink-0 ${dealbreakersEnabled ? "bg-primary" : "bg-secondary"}`}>
             <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${dealbreakersEnabled ? "right-1" : "left-1"}`} />
+          </div>
+        </button>
+
+        <button
+          onClick={toggleVoiceQuestionNudgeFeature}
+          disabled={isTogglingVoiceQuestionNudge}
+          className="w-full flex items-center justify-between bg-card border border-card-border rounded-2xl p-4 disabled:opacity-60 mt-2"
+        >
+          <div className="text-left">
+            <p className="text-sm font-medium">Voice Question Nudge</p>
+            <p className="text-xs text-muted-foreground">
+              {voiceQuestionNudgeEnabled
+                ? "Enabled — shown on Discover to anyone without an active question (see Economy tab for the reminder cadence)"
+                : "Disabled — the \"try it\" nudge never shows to anyone"}
+            </p>
+          </div>
+          <div className={`h-6 w-10 rounded-full relative transition-colors shrink-0 ${voiceQuestionNudgeEnabled ? "bg-primary" : "bg-secondary"}`}>
+            <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${voiceQuestionNudgeEnabled ? "right-1" : "left-1"}`} />
           </div>
         </button>
       </div>
@@ -1806,7 +1862,7 @@ function EconomySection({ token, toast }: { token: string | null; toast: any }) 
         "cost_voice_question_record", "cost_voice_question_reply",
       ],
     },
-    { title: "Timing & Expiry", keys: ["invite_expiry_days", "voice_question_expiry_days"] },
+    { title: "Timing & Expiry", keys: ["invite_expiry_days", "voice_question_expiry_days", "voice_question_nudge_cooldown_days"] },
     { title: "Real-Money Fees", keys: ["id_verification_fee_zar"] },
     {
       title: "Sparks Bundle Prices (ZAR)",

@@ -104,16 +104,6 @@ import { ScanWaveLoader } from "@/components/ScanWaveLoader";
 let hasShownDiscoverScanWave = false;
 const MIN_SCAN_WAVE_MS = 2000;
 
-// Same in-memory, module-level pattern as hasShownDiscoverScanWave
-// above — survives navigating away and back to Discover (component
-// unmount/remount) within the same running app session, but resets on
-// an actual app restart or page reload. The original version of this
-// lived in component state instead, which reset on every single
-// remount — meaning it reappeared every time someone merely switched
-// tabs and came back, not just on a genuinely fresh app open. That's
-// the exact "annoying" behavior this fixes.
-let voiceQuestionNudgeDismissedThisSession = false;
-
 // In-memory only — deliberately not persisted to localStorage, so this
 // only survives within the same app session/process (a real app restart
 // or web page reload both start fresh, same as hasShownDiscoverScanWave
@@ -178,18 +168,27 @@ export default function DiscoverPage() {
 
   // "Try it" nudge for Voice Question — shown only while the account
   // genuinely has no active question of its own yet (never recorded,
-  // or it expired). Dismissing lasts for the rest of this app session
-  // (see voiceQuestionNudgeDismissedThisSession above) — it'll come
-  // back on a genuinely fresh app open, closer to how a recurring
-  // feature nudge should behave, rather than a one-time notice gone
-  // forever after a single dismissal.
+  // or it expired), the admin hasn't turned it off entirely
+  // (voice_question_nudge_enabled), and the admin-configured cooldown
+  // has elapsed since it was last dismissed. The cooldown is real
+  // localStorage persistence, not an in-memory flag — an earlier
+  // version of this lived only in module-level memory, which meant
+  // "dismissed" only ever lasted until the next full app restart.
+  // Someone who's simply not interested in this feature would have had
+  // to dismiss it every single fresh app open, forever. A genuine
+  // multi-day cooldown (admin-configurable, see
+  // voice_question_nudge_cooldown_days) is what actually makes this a
+  // bounded, natural reminder cadence instead of a permanent nag.
   const [hasActiveVoiceQuestion, setHasActiveVoiceQuestion] = useState<boolean | null>(null);
-  const [voiceQuestionNudgeDismissed, setVoiceQuestionNudgeDismissedState] = useState(
-    voiceQuestionNudgeDismissedThisSession,
-  );
+  const [voiceQuestionNudgeEnabled, setVoiceQuestionNudgeEnabled] = useState(true);
+  const [voiceQuestionNudgeCooldownDays, setVoiceQuestionNudgeCooldownDays] = useState(3);
+  const [voiceQuestionNudgeDismissed, setVoiceQuestionNudgeDismissed] = useState(false);
+
+  const voiceQuestionNudgeStorageKey = `deeply_voice_question_nudge_dismissed_at_${userId}`;
+
   const dismissVoiceQuestionNudge = () => {
-    voiceQuestionNudgeDismissedThisSession = true;
-    setVoiceQuestionNudgeDismissedState(true);
+    localStorage.setItem(voiceQuestionNudgeStorageKey, String(Date.now()));
+    setVoiceQuestionNudgeDismissed(true);
   };
 
   useEffect(() => {
@@ -202,6 +201,39 @@ export default function DiscoverPage() {
         // Silent — worst case the nudge just doesn't show this load,
         // not worth a toast over.
       });
+
+    // /api/app-settings already returns every app_settings key
+    // unfiltered (same endpoint VerificationSection and others already
+    // use for their own admin-configurable values) — both the boolean
+    // toggle and the numeric cooldown come from this one call, no
+    // separate economy-config request needed.
+    fetch("/api/app-settings", { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (!body) return;
+        // Absent (an admin who's never touched this new setting) must
+        // mean "on" — this nudge already existed and worked with no
+        // admin control at all until now, so doing nothing should
+        // preserve exactly the behavior that was already there.
+        setVoiceQuestionNudgeEnabled(body.voice_question_nudge_enabled !== false);
+        if (typeof body.voice_question_nudge_cooldown_days === "number") {
+          setVoiceQuestionNudgeCooldownDays(body.voice_question_nudge_cooldown_days);
+        }
+
+        const dismissedAtRaw = localStorage.getItem(voiceQuestionNudgeStorageKey);
+        const cooldownDays =
+          typeof body.voice_question_nudge_cooldown_days === "number" ? body.voice_question_nudge_cooldown_days : 3;
+        if (dismissedAtRaw) {
+          const dismissedAt = Number(dismissedAtRaw);
+          const cooldownMs = cooldownDays * 24 * 60 * 60 * 1000;
+          setVoiceQuestionNudgeDismissed(!Number.isNaN(dismissedAt) && Date.now() - dismissedAt < cooldownMs);
+        }
+      })
+      .catch(() => {
+        // Silent — same reasoning as above; worst case the nudge just
+        // uses its defaults (enabled, 3-day cooldown) for this load.
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   const fetchReshuffleStatus = useCallback(async () => {
@@ -613,7 +645,7 @@ export default function DiscoverPage() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden px-2 pb-1 pt-2">
-      {hasActiveVoiceQuestion === false && !voiceQuestionNudgeDismissed && visibleCards.length > 0 && (
+      {voiceQuestionNudgeEnabled && hasActiveVoiceQuestion === false && !voiceQuestionNudgeDismissed && visibleCards.length > 0 && (
         <div className="flex items-center gap-3 bg-gradient-accent rounded-2xl p-3 mb-2 text-white shadow-lg shrink-0">
           <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center shrink-0">
             <Mic size={16} />

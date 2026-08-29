@@ -600,6 +600,37 @@ router.post("/voice-question", requireAuth, async (req, res): Promise<void> => {
   res.status(201).json({ question: saved, balance, charged: !isActive });
 });
 
+/** DELETE /api/voice-question — removes my current voice question
+ *  entirely. Free, no refund — consistent with how deletion works
+ *  everywhere else in this app (deleting a photo, deleting an old
+ *  static audio prompt); this app has no refund concept anywhere, only
+ *  charges for actions. Recording a new one afterward goes through the
+ *  normal POST /voice-question flow, which will correctly charge again
+ *  since there's no existing row for isActive to find. */
+router.delete("/voice-question", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+
+  const { data: existing } = await supabase
+    .from("voice_questions")
+    .select("id")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (!existing) {
+    res.status(404).json({ error: "No voice question to remove" });
+    return;
+  }
+
+  const { error } = await supabase.from("voice_questions").delete().eq("user_id", userId);
+
+  if (error) {
+    res.status(500).json({ error: `Failed to remove voice question: ${error.message}` });
+    return;
+  }
+
+  res.sendStatus(204);
+});
+
 /** GET /api/profile/me/photos — list own gallery, ordered */
 router.get("/profile/me/photos", requireAuth, async (req, res): Promise<void> => {
   const { data: photos } = await supabase
@@ -2729,6 +2760,7 @@ const ECONOMY_CONFIG_LABELS: Record<string, { label: string; description: string
   id_verification_fee_zar: { label: "ID Verification Fee", description: "One-off fee for paid ID verification", unit: "ZAR" },
   invite_expiry_days: { label: "Invite Expiry", description: "Unreplied invites stop appearing as pending after this many days (the underlying record isn't deleted — manual withdraw is still the only way to fully cancel one, and still costs Sparks)", unit: "days" },
   voice_question_expiry_days: { label: "Voice Question Expiry", description: "A recorded voice question stops accepting replies after this many days", unit: "days" },
+  voice_question_nudge_cooldown_days: { label: "Voice Question Nudge Cooldown", description: "After someone dismisses the 'try it' nudge, how many days before it can show again (see the Overview tab for the on/off switch)", unit: "days" },
   cost_voice_question_record: { label: "Record Voice Question", description: "Cost to record or replace a voice question", unit: "Sparks" },
   cost_voice_question_reply: { label: "Reply to Voice Question", description: "Cost to reply to someone's voice question with a voice answer", unit: "Sparks" },
   sparks_price_starter: { label: "Starter Bundle Price", description: "Price for the 100-Sparks starter bundle", unit: "ZAR" },
