@@ -53,6 +53,13 @@ export function VerificationSection() {
   const [showIdForm, setShowIdForm] = useState(false);
   const [submitFailed, setSubmitFailed] = useState(false);
   const [isRequestingRefund, setIsRequestingRefund] = useState(false);
+  // The fee used to be shown constantly — a badge next to the section
+  // title, plus baked directly into the button text ("Pay R99 to
+  // Start") — visible the whole time someone is just looking at their
+  // profile, before they've expressed any intent to pay. Now the price
+  // only ever appears inside this confirmation step, after they've
+  // already tapped a neutral "Start Verification" button.
+  const [showPaymentConfirm, setShowPaymentConfirm] = useState(false);
 
   // Computed once — the only thing that decides which payment path
   // shows. PayFast must never render inside the native app shell.
@@ -261,6 +268,14 @@ export function VerificationSection() {
     return handlePayfastCheckout();
   };
 
+  // What the button itself calls. Founders go straight through — it's
+  // free, there's nothing to confirm. Everyone else sees the price
+  // clearly, in the confirmation modal, before anything happens.
+  const handleStartVerificationTapped = () => {
+    if (isFounderEligible) return handleClaimFree();
+    setShowPaymentConfirm(true);
+  };
+
   const handleSubmitId = async () => {
     if (!idFrontFile || !idBackFile || !idSelfieFile) {
       toast({ title: "All three photos are required", variant: "destructive" });
@@ -386,7 +401,7 @@ export function VerificationSection() {
         <div className="flex items-center justify-between mb-2">
           <p className="text-sm font-semibold">ID Verified</p>
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-            {isFounderEligible ? "Free" : isNative ? (nativePrice ?? "...") : webPriceZar !== null ? `R${webPriceZar} once-off` : "..."}
+            {isFounderEligible ? "Free" : "Optional"}
           </span>
         </div>
         <p className="text-xs text-muted-foreground mb-3">
@@ -412,7 +427,7 @@ export function VerificationSection() {
 
             {!hasPaidForId ? (
               <Button
-                onClick={handlePayForId}
+                onClick={handleStartVerificationTapped}
                 disabled={isPaying || (isNative && !isFounderEligible && !nativePrice) || (!isNative && !isFounderEligible && webPriceZar === null)}
                 className="w-full h-11 rounded-xl gap-2 bg-gradient-accent border-0"
               >
@@ -421,9 +436,7 @@ export function VerificationSection() {
                   ? "Processing..."
                   : isFounderEligible
                     ? "Claim Free Verification (Founders)"
-                    : isNative
-                      ? (nativePrice ? `Pay ${nativePrice} to Start` : "Loading price...")
-                      : (webPriceZar !== null ? `Pay R${webPriceZar} to Start` : "Loading price...")}
+                    : "Start Verification"}
               </Button>
             ) : !showIdForm ? (
               <Button onClick={() => setShowIdForm(true)} variant="outline" className="w-full h-11 rounded-xl gap-2">
@@ -473,6 +486,46 @@ export function VerificationSection() {
           </>
         )}
       </div>
+
+      {showPaymentConfirm && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setShowPaymentConfirm(false)} />
+          <div className="fixed inset-x-6 top-1/2 -translate-y-1/2 z-50 bg-card border border-card-border rounded-2xl p-5 space-y-4 max-w-sm mx-auto">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-gradient-accent flex items-center justify-center text-white shrink-0">
+                <CreditCard size={18} />
+              </div>
+              <h3 className="font-['Syne'] font-bold text-base">ID Verification</h3>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              A one-time fee of{" "}
+              <span className="font-semibold text-foreground">
+                {isNative ? (nativePrice ?? "...") : webPriceZar !== null ? `R${webPriceZar}` : "..."}
+              </span>{" "}
+              gets your ID reviewed and adds the verified badge to your profile — no recurring charges.
+            </p>
+            <div className="flex gap-2">
+              <Button
+                onClick={() => setShowPaymentConfirm(false)}
+                variant="outline"
+                className="flex-1 h-11 rounded-xl"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => {
+                  setShowPaymentConfirm(false);
+                  handlePayForId();
+                }}
+                disabled={isPaying}
+                className="flex-1 h-11 rounded-xl bg-gradient-accent border-0"
+              >
+                {isPaying ? "Processing..." : "Continue to Payment"}
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
