@@ -1,6 +1,54 @@
 import { supabase } from "./supabase";
 import { getBlockedUserIds } from "./blocks-helper";
 import { getBlockedContactProfileIds } from "./blocked-contacts-helper";
+import { getEconomyConfig } from "./economy-config";
+
+// Unlike the earlier "just stop showing it" version of invite expiry,
+// this actually deletes the swipes row once a like/super_like has gone
+// unanswered past invite_expiry_days — freeing the sender to see that
+// person in Discover again, which matters most for a small user base
+// where permanently using up a candidate over one unanswered invite is
+// a real cost. No scheduled/cron job exists in this codebase, so this
+// runs lazily, right here, wherever a viewer's own candidate exclusions
+// are computed — i.e. essentially every time they open Discover or
+// Search. That's a deliberate, practical choice: the person whose
+// activity would actually benefit from the cleanup (the original
+// sender, now free to see someone new) is exactly the person whose own
+// request triggers it. It only ever deletes the CURRENT viewer's own
+// like/super_like rows — never touches "pass" (a pass is a decision,
+// not an unanswered invite, and was never meant to expire) and never
+// touches anyone else's swipes.
+async function deleteExpiredInvites(
+  userId: string,
+  swipes: { target_id: string; direction: string; created_at: string }[],
+): Promise<Set<string>> {
+  const { invite_expiry_days: expiryDays } = await getEconomyConfig();
+  const cutoffMs = Date.now() - expiryDays * 24 * 60 * 60 * 1000;
+
+  const expiredTargetIds = swipes
+    .filter((s) => (s.direction === "like" || s.direction === "super_like") && new Date(s.created_at).getTime() < cutoffMs)
+    .map((s) => s.target_id);
+
+  if (expiredTargetIds.length === 0) return new Set();
+
+  const { error } = await supabase
+    .from("swipes")
+    .delete()
+    .eq("swiper_id", userId)
+    .in("target_id", expiredTargetIds)
+    .in("direction", ["like", "super_like"]);
+
+  if (error) {
+    console.error(`INVITES DEBUG: failed to delete expired invites for userId=${userId}: ${error.message}`);
+    // Deletion failed — don't treat them as gone for THIS request either,
+    // since the row is still actually there. They'll simply get another
+    // chance to expire on a future request.
+    return new Set();
+  }
+
+  console.error(`INVITES DEBUG: expired invite(s) deleted for userId=${userId}: [${expiredTargetIds.join(",")}]`);
+  return new Set(expiredTargetIds);
+}
 
 /** IDs to exclude from any discovery/search candidate list: the viewer
  *  themselves, anyone they've already swiped on, anyone they're already
@@ -17,12 +65,14 @@ export async function getExcludedCandidateIds(userId: string): Promise<string[]>
   // of the sum of all four, which matters here specifically because this
   // function is called on nearly every page in the app.
   const [{ data: alreadySwiped }, { data: existingMatches }, blockedIds, { data: adminRows }, blockedContactIds] = await Promise.all([
-    supabase.from("swipes").select("target_id").eq("swiper_id", userId),
+    supabase.from("swipes").select("target_id, direction, created_at").eq("swiper_id", userId),
     supabase.from("matches").select("user1_id, user2_id").or(`user1_id.eq.${userId},user2_id.eq.${userId}`),
     getBlockedUserIds(userId),
     supabase.from("profiles").select("id").eq("is_admin", true),
     getBlockedContactProfileIds(userId),
   ]);
+
+  const expiredIds = await deleteExpiredInvites(userId, alreadySwiped ?? []);
 
   const matchedPartnerIds = (existingMatches ?? []).map((m) =>
     m.user1_id === userId ? m.user2_id : m.user1_id,
@@ -31,7 +81,7 @@ export async function getExcludedCandidateIds(userId: string): Promise<string[]>
 
   return [
     userId,
-    ...(alreadySwiped?.map((s) => s.target_id) ?? []),
+    ...(alreadySwiped?.map((s) => s.target_id).filter((id) => !expiredIds.has(id)) ?? []),
     ...matchedPartnerIds,
     ...blockedIds,
     ...adminIds,
@@ -57,15 +107,17 @@ export async function getCandidateExclusionSets(
   // depend on each other, so run them concurrently rather than one after
   // another.
   const [{ data: allSwipes }, { data: existingMatches }, blockedIds, { data: adminRows }, blockedContactIds] = await Promise.all([
-    supabase.from("swipes").select("target_id, direction").eq("swiper_id", userId),
+    supabase.from("swipes").select("target_id, direction, created_at").eq("swiper_id", userId),
     supabase.from("matches").select("user1_id, user2_id").or(`user1_id.eq.${userId},user2_id.eq.${userId}`),
     getBlockedUserIds(userId),
     supabase.from("profiles").select("id").eq("is_admin", true),
     getBlockedContactProfileIds(userId),
   ]);
 
+  const expiredIds = await deleteExpiredInvites(userId, allSwipes ?? []);
+
   const pendingInvitedIds = (allSwipes ?? [])
-    .filter((s) => s.direction === "like" || s.direction === "super_like")
+    .filter((s) => (s.direction === "like" || s.direction === "super_like") && !expiredIds.has(s.target_id))
     .map((s) => s.target_id);
   const passedIds = (allSwipes ?? []).filter((s) => s.direction === "pass").map((s) => s.target_id);
 
@@ -337,6 +389,19 @@ export async function getPendingInviterIds(userId: string): Promise<PendingInvit
 
   const blockedIds = new Set(await getBlockedUserIds(userId));
 
+  // Read-only visibility filter — never deletes the underlying swipes
+  // row, never touches Sparks. That's deliberate: the manual-withdraw
+  // route (POST/DELETE on /discover/invites/sent/:targetId) is the only
+  // path that actually removes an invite and charges cost_undo_swipe;
+  // this only stops an unreplied invite from continuing to show up as
+  // pending/actionable once it's old enough. Because the swipe row
+  // stays, the sender still correctly won't see this person reappear in
+  // Discover (getExcludedCandidateIds/getCandidateExclusionSets both
+  // exclude anyone already swiped on, regardless of pending/expired
+  // status) — expiry changes visibility, not history.
+  const { invite_expiry_days: expiryDays } = await getEconomyConfig();
+  const expiryCutoffMs = Date.now() - expiryDays * 24 * 60 * 60 * 1000;
+
   const { data: myOwnSwipes } = await supabase
     .from("swipes")
     .select("target_id, created_at")
@@ -384,6 +449,12 @@ export async function getPendingInviterIds(userId: string): Promise<PendingInvit
     if (decidedAt !== undefined && decidedAt >= invite.createdAt) {
       console.error(
         `INVITES DEBUG: ${inviterId} excluded — decided at ${new Date(decidedAt).toISOString()}, invite was at ${new Date(invite.createdAt).toISOString()}`,
+      );
+      continue;
+    }
+    if (invite.createdAt < expiryCutoffMs) {
+      console.error(
+        `INVITES DEBUG: ${inviterId} excluded — invite expired (sent ${new Date(invite.createdAt).toISOString()}, cutoff is ${expiryDays} days)`,
       );
       continue;
     }

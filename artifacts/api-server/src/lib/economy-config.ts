@@ -18,6 +18,7 @@ export interface EconomyConfig {
   cost_boost: number;
   cost_incognito_per_day: number;
   id_verification_fee_zar: number;
+  invite_expiry_days: number;
   sparks_price_starter: number;
   sparks_price_popular: number;
   sparks_price_date_night: number;
@@ -55,6 +56,16 @@ const DEFAULTS: EconomyConfig = {
   cost_boost: 50,
   cost_incognito_per_day: 5,
   id_verification_fee_zar: 99,
+  // An unreplied invite (a "like"/"super_like" the recipient never
+  // acted on) simply stops appearing as pending/actionable after this
+  // many days — filtered at read time in getPendingInviterIds and
+  // GET /discover/invites/sent, never deleting the underlying swipe
+  // row. That's a deliberate choice: it leaves the manual-withdraw
+  // flow (which DOES delete the row and charges cost_undo_swipe)
+  // completely untouched and the only way to fully cancel an invite —
+  // expiry only ever affects visibility, never sparks, never the
+  // exclusion logic that keeps someone from reappearing in Discover.
+  invite_expiry_days: 30,
   // Mirrors what was previously hardcoded directly in sparks.ts's
   // BUNDLES array — moving these here doesn't change any current price,
   // it just makes them admin-editable going forward. See sparks.ts for

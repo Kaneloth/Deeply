@@ -2687,6 +2687,7 @@ const ECONOMY_CONFIG_LABELS: Record<string, { label: string; description: string
   cost_boost: { label: "Profile Boost", description: "Cost for a 5-hour profile boost (24h cooldown)", unit: "Sparks" },
   cost_incognito_per_day: { label: "Incognito Mode", description: "Cost per day while Incognito is active", unit: "Sparks" },
   id_verification_fee_zar: { label: "ID Verification Fee", description: "One-off fee for paid ID verification", unit: "ZAR" },
+  invite_expiry_days: { label: "Invite Expiry", description: "Unreplied invites stop appearing as pending after this many days (the underlying record isn't deleted — manual withdraw is still the only way to fully cancel one, and still costs Sparks)", unit: "days" },
   sparks_price_starter: { label: "Starter Bundle Price", description: "Price for the 100-Sparks starter bundle", unit: "ZAR" },
   sparks_price_popular: { label: "Popular Bundle Price", description: "Price for the 300-Sparks popular bundle", unit: "ZAR" },
   sparks_price_date_night: { label: "Date Night Bundle Price", description: "Price for the 600-Sparks date night bundle", unit: "ZAR" },

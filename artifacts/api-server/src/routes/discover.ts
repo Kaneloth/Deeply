@@ -1336,11 +1336,20 @@ router.get("/discover/invites/sent", requireAuth, async (req, res): Promise<void
 
   const { data: outgoingLikes } = await supabase
     .from("swipes")
-    .select("target_id, direction, message_content")
+    .select("target_id, direction, message_content, created_at")
     .eq("swiper_id", userId)
     .in("direction", ["like", "super_like"]);
 
-  const sentIds = outgoingLikes?.map((l) => l.target_id) ?? [];
+  // Same read-only expiry filter as the received side in
+  // getPendingInviterIds — never deletes the row, never touches Sparks,
+  // just stops an old unreplied invite from continuing to show up here.
+  const { invite_expiry_days: expiryDays } = await getEconomyConfig();
+  const expiryCutoffMs = Date.now() - expiryDays * 24 * 60 * 60 * 1000;
+  const unexpiredOutgoingLikes = (outgoingLikes ?? []).filter(
+    (l) => new Date(l.created_at).getTime() >= expiryCutoffMs,
+  );
+
+  const sentIds = unexpiredOutgoingLikes.map((l) => l.target_id);
 
   if (sentIds.length === 0) {
     res.json({ sent: [] });
@@ -1369,9 +1378,9 @@ router.get("/discover/invites/sent", requireAuth, async (req, res): Promise<void
     .in("id", pendingSentIds);
 
   const superSentIds = new Set(
-    (outgoingLikes ?? []).filter((l) => l.direction === "super_like").map((l) => l.target_id),
+    unexpiredOutgoingLikes.filter((l) => l.direction === "super_like").map((l) => l.target_id),
   );
-  const messageByTargetId = new Map((outgoingLikes ?? []).map((l) => [l.target_id, l.message_content ?? null]));
+  const messageByTargetId = new Map(unexpiredOutgoingLikes.map((l) => [l.target_id, l.message_content ?? null]));
   const enriched = (sentProfiles ?? []).map(({ relationship_type, ...p }) => ({
     ...p,
     looking_for: relationship_type ?? null,
