@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -36,6 +36,35 @@ const queryClient = new QueryClient();
 function ProtectedRoute({ component: Component, skipOnboardingCheck, ...rest }: any) {
   const { isAuthenticated, onboardingCompleted, checkOnboardingStatus } = useAuth();
   const [location] = useLocation();
+  // Tracks whether THIS mount's own check has resolved — not whether
+  // onboardingCompleted has ever been checked at all. Real bug found in
+  // production: right after finishing onboarding, onboardingCompleted
+  // was still the OLD cached `false` from before completion (the fresh
+  // re-check below is async and hadn't resolved yet), and the old
+  // version of this component redirected on that stale value
+  // immediately — bouncing someone back to "Get Started" the instant
+  // after they finished onboarding, even though the save had already
+  // succeeded. Initializing this to true only when onboardingCompleted
+  // is ALREADY known-true means a stale `false` is never trusted on its
+  // own; the component waits for this navigation's own fresh check
+  // before deciding anything.
+  const [hasConfirmedThisNav, setHasConfirmedThisNav] = useState(onboardingCompleted === true);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (isAuthenticated && onboardingCompleted !== true) {
+      setHasConfirmedThisNav(false);
+      checkOnboardingStatus().then(() => {
+        if (!cancelled) setHasConfirmedThisNav(true);
+      });
+    } else {
+      setHasConfirmedThisNav(true);
+    }
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, location]);
 
   // Re-verifies on every navigation to a guarded route, but ONLY while
   // onboardingCompleted isn't already known-true — once true, it can
@@ -46,19 +75,13 @@ function ProtectedRoute({ component: Component, skipOnboardingCheck, ...rest }: 
   // whatever route it lands on, which re-runs this effect and
   // re-confirms the real state instead of trusting whatever was
   // rendered before the user navigated away.
-  useEffect(() => {
-    if (isAuthenticated && onboardingCompleted !== true) {
-      checkOnboardingStatus();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated, location]);
 
   if (!isAuthenticated) {
     return <Redirect to="/" />;
   }
 
   if (!skipOnboardingCheck) {
-    if (onboardingCompleted === null) {
+    if (!hasConfirmedThisNav || onboardingCompleted === null) {
       // Still verifying (or the check hasn't run yet) — deliberately
       // does NOT render Component here, even briefly. Rendering the
       // real page first and redirecting a moment later is exactly the
