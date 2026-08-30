@@ -32,6 +32,13 @@ interface SparksContextType {
   balance: number | null;
   nextGrantAt: string | null;
   refresh: () => Promise<void>;
+  // Lets a caller that's about to show its own, more specific toast
+  // about a Sparks spend (e.g. ChatPage's 12-second chat-unlock
+  // explainer) tell this context to hold off on ITS OWN low-balance
+  // warning for a moment, rather than the two competing for the same
+  // single-toast slot and evicting each other. See checkThresholds
+  // below for how this is actually used.
+  suppressThresholdToast: () => void;
 }
 
 const SparksContext = createContext<SparksContextType | undefined>(undefined);
@@ -43,6 +50,8 @@ export function SparksProvider({ children }: { children: ReactNode }) {
   const [nextGrantAt, setNextGrantAt] = useState<string | null>(null);
   const notifiedThresholds = useRef<Set<string>>(new Set());
   const prevBalance = useRef<number | null>(null);
+  // See suppressThresholdToast below.
+  const suppressUntilRef = useRef<number>(0);
 
   const checkThresholds = useCallback(
     (newBalance: number) => {
@@ -54,12 +63,25 @@ export function SparksProvider({ children }: { children: ReactNode }) {
         const alreadyLowOnFirstLoad = prev === null && newBalance <= cutoff;
 
         if ((crossedDown || alreadyLowOnFirstLoad) && !notifiedThresholds.current.has(t.key)) {
-          notifiedThresholds.current.add(t.key);
-          toast({
-            title: t.title,
-            description: t.description(newBalance),
-            variant: t.fraction === 0 ? "destructive" : "default",
-          });
+          if (Date.now() < suppressUntilRef.current) {
+            // Suppressed — deliberately NOT marked as notified, so this
+            // exact crossing is still eligible to fire on the next
+            // balance check instead of being permanently skipped.
+            // Something more specific (e.g. ChatPage's chat-unlock
+            // explainer, which already reports the Sparks spent as part
+            // of its own message) was just shown, and evicting it from
+            // the single-toast slot for a more generic low-balance
+            // warning isn't worth it — this same warning reliably shows
+            // up moments later once the window passes, exactly as if
+            // nothing had suppressed it at all.
+          } else {
+            notifiedThresholds.current.add(t.key);
+            toast({
+              title: t.title,
+              description: t.description(newBalance),
+              variant: t.fraction === 0 ? "destructive" : "default",
+            });
+          }
         }
 
         // If the balance goes back above a threshold (grant or purchase),
@@ -73,6 +95,18 @@ export function SparksProvider({ children }: { children: ReactNode }) {
     },
     [toast],
   );
+
+  // Deliberately a fixed window rather than tied to any specific
+  // caller's own toast duration — this context has no visibility into
+  // how long whatever the caller just showed will stay on screen, and
+  // guessing wrong in the "too short" direction defeats the whole
+  // point. 12s matches the longest custom toast duration used anywhere
+  // in the app today (ChatPage's chat-unlock explainer); callers with
+  // a shorter toast just get a small amount of extra safety margin for
+  // free.
+  const suppressThresholdToast = useCallback(() => {
+    suppressUntilRef.current = Date.now() + 12000;
+  }, []);
 
   const refresh = useCallback(async () => {
     if (!token) return;
@@ -146,7 +180,7 @@ export function SparksProvider({ children }: { children: ReactNode }) {
   useRefetchOnAppResume(refresh);
 
   return (
-    <SparksContext.Provider value={{ balance, nextGrantAt, refresh }}>
+    <SparksContext.Provider value={{ balance, nextGrantAt, refresh, suppressThresholdToast }}>
       {children}
     </SparksContext.Provider>
   );
