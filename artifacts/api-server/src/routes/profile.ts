@@ -1690,7 +1690,17 @@ function applyTransactionFilters(
     // Matches either the display name or a pasted user_id — admins
     // realistically search by whichever one they currently have on
     // screen (e.g. copying a user_id from a support ticket).
-    query = query.or(`user_name.ilike.%${params.search}%,user_id.ilike.%${params.search}%`);
+    //
+    // PostgREST's .or() uses a packed filter-string syntax where the
+    // wildcard character is *, not % — % only works when calling
+    // .ilike() as its own dedicated method, which translates it
+    // internally. Inside .or()'s raw string, % has no special meaning
+    // at all and is matched as a literal character — meaning this was
+    // silently searching for the literal text "%value%", which could
+    // never match real data. This never surfaced in isolated testing
+    // of .ilike() elsewhere in this app, since this specific packed-
+    // string form is only used here.
+    query = query.or(`user_name.ilike.*${params.search}*,user_id.ilike.*${params.search}*`);
   }
   return query;
 }
@@ -1778,7 +1788,9 @@ function applySparksFilters(
   if (params.date_from) query = query.gte("created_at", params.date_from);
   if (params.date_to) query = query.lte("created_at", params.date_to);
   if (params.search) {
-    query = query.or(`user_name.ilike.%${params.search}%,user_id.ilike.%${params.search}%`);
+    // Same fix as applyTransactionFilters above — .or()'s packed syntax
+    // uses * as its wildcard character, not %.
+    query = query.or(`user_name.ilike.*${params.search}*,user_id.ilike.*${params.search}*`);
   }
   return query;
 }
