@@ -183,6 +183,17 @@ export default function DiscoverPage() {
   const [voiceQuestionNudgeEnabled, setVoiceQuestionNudgeEnabled] = useState(true);
   const [voiceQuestionNudgeCooldownDays, setVoiceQuestionNudgeCooldownDays] = useState(3);
   const [voiceQuestionNudgeDismissed, setVoiceQuestionNudgeDismissed] = useState(false);
+  // Real bug found in production: voiceQuestionNudgeEnabled starts as
+  // `true` (its default) and only flips to the admin's actual setting
+  // once /api/app-settings resolves — a network round trip. In that
+  // window, if hasActiveVoiceQuestion had already resolved to false,
+  // the bubble would render using the DEFAULT value, then immediately
+  // disappear the instant the real (disabled) value arrived — a
+  // flash-then-vanish, even though the admin correctly turned it off.
+  // This flag means the bubble never renders at all until the real
+  // setting is actually known, same fix shape as the onboarding guard's
+  // "don't render on a stale/default value" fix earlier this session.
+  const [voiceQuestionNudgeSettingsLoaded, setVoiceQuestionNudgeSettingsLoaded] = useState(false);
 
   const voiceQuestionNudgeStorageKey = `deeply_voice_question_nudge_dismissed_at_${userId}`;
 
@@ -232,6 +243,14 @@ export default function DiscoverPage() {
       .catch(() => {
         // Silent — same reasoning as above; worst case the nudge just
         // uses its defaults (enabled, 3-day cooldown) for this load.
+      })
+      .finally(() => {
+        // In .finally, not inside .then — must run on the success path
+        // (including the `if (!body) return;` early exit above) AND on
+        // a genuine fetch failure, so this can never get stuck at
+        // false and permanently hide the nudge for the rest of the
+        // session over one bad network blip.
+        setVoiceQuestionNudgeSettingsLoaded(true);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
@@ -645,7 +664,7 @@ export default function DiscoverPage() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden px-2 pb-1 pt-2">
-      {voiceQuestionNudgeEnabled && hasActiveVoiceQuestion === false && !voiceQuestionNudgeDismissed && visibleCards.length > 0 && (
+      {voiceQuestionNudgeSettingsLoaded && voiceQuestionNudgeEnabled && hasActiveVoiceQuestion === false && !voiceQuestionNudgeDismissed && visibleCards.length > 0 && (
         <div className="flex items-center gap-3 bg-gradient-accent rounded-2xl p-3 mb-2 text-white shadow-lg shrink-0">
           <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center shrink-0">
             <Mic size={16} />
