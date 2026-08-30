@@ -1679,6 +1679,10 @@ const TRANSACTION_TABLE_BY_TYPE: Record<string, { table: string; idColumn: strin
   id_verification: { table: "identity_verification_payments", idColumn: "id" },
 };
 
+function isUuidLike(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim());
+}
+
 function applyTransactionFilters(
   query: any,
   params: { type?: string; date_from?: string; date_to?: string; search?: string },
@@ -1687,20 +1691,26 @@ function applyTransactionFilters(
   if (params.date_from) query = query.gte("transaction_date", params.date_from);
   if (params.date_to) query = query.lte("transaction_date", params.date_to);
   if (params.search) {
-    // Matches either the display name or a pasted user_id — admins
-    // realistically search by whichever one they currently have on
-    // screen (e.g. copying a user_id from a support ticket).
-    //
-    // The actual bug (confirmed via diagnostic logging, not guessed):
-    // user_id is a uuid column, and Postgres's ILIKE operator (~~*) is
-    // not defined for uuid at all — "operator does not exist: uuid ~~*
-    // unknown". This is why search always silently returned zero rows
-    // regardless of wildcard character (% vs *, both tried first) —
-    // the query was failing before the wildcard even mattered.
-    // ::text explicitly casts the column so ILIKE has something valid
-    // to operate on. % is correct here — matches Supabase's own
-    // documented .or() examples for ilike patterns.
-    query = query.or(`user_name.ilike.%${params.search}%,user_id::text.ilike.%${params.search}%`);
+    const term = params.search.trim();
+    // Matches the WORKING pattern already proven on the Users admin
+    // page (GET /admin/users) instead of continuing to debug .or()'s
+    // packed filter syntax, which failed three separate times here.
+    // The root problem that pattern never had to solve: user_id is
+    // uuid, and Postgres's ILIKE operator isn't defined for uuid at
+    // all (confirmed via diagnostic logging — "operator does not
+    // exist: uuid ~~* unknown"). Users search sidesteps this entirely
+    // by never searching its own uuid id column, only name. Here, a
+    // full/exact UUID uses .eq() instead — a native, un-cast
+    // comparison uuid columns support directly — and anything else is
+    // treated as a name search via plain .ilike(), same method Users
+    // already uses successfully. The trade-off: a PARTIAL user_id
+    // (not the complete UUID) won't match — only a full, exact one
+    // pasted in whole, e.g. copied from a support ticket or log line.
+    if (isUuidLike(term)) {
+      query = query.eq("user_id", term);
+    } else {
+      query = query.ilike("user_name", `%${term}%`);
+    }
   }
   return query;
 }
@@ -1788,9 +1798,13 @@ function applySparksFilters(
   if (params.date_from) query = query.gte("created_at", params.date_from);
   if (params.date_to) query = query.lte("created_at", params.date_to);
   if (params.search) {
-    // Same fix as applyTransactionFilters above — user_id is uuid, and
-    // ILIKE isn't defined for it without an explicit ::text cast.
-    query = query.or(`user_name.ilike.%${params.search}%,user_id::text.ilike.%${params.search}%`);
+    // Same fix and reasoning as applyTransactionFilters above.
+    const term = params.search.trim();
+    if (isUuidLike(term)) {
+      query = query.eq("user_id", term);
+    } else {
+      query = query.ilike("user_name", `%${term}%`);
+    }
   }
   return query;
 }
