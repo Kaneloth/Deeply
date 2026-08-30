@@ -43,7 +43,6 @@ const router: IRouter = Router();
 // that gets a genuine successful read — so a match confirmed by ANY of
 // these routes protects all of them, not just the one that happened to
 // see it.
-const MATCHES_RETRY_DELAY_MS = 400; // kept for the list/indicator retries below, unchanged
 // Extended 2026-08-30, based on direct evidence from production logs: a
 // single account (e4541cc0...) hit the exact same match failing on
 // EVERY first attempt, 404 after exhausting the old 3-attempt schedule
@@ -56,13 +55,45 @@ const MATCHES_RETRY_DELAY_MS = 400; // kept for the list/indicator retries below
 // eliminating the "fails, disappears, tap again to actually open it"
 // cycle entirely for most cases. Still a mitigation, not a fix — the
 // underlying cause is still an open question with Supabase.
-const MATCH_LOOKUP_RETRY_SCHEDULE_MS = [500, 1000, 2000, 3000, 3000]; // single-match lookup gets more chances specifically
+//
+// Widened to a SHARED schedule (was single-match-lookup-only) after
+// further evidence the same day: the LIST read (GET /matches) and
+// indicator-status were still each only getting ONE 400ms retry, and
+// production logs showed the list read missing SEVEN confirmed match
+// partners simultaneously, three times in one session — a single
+// account's entire matches list coming back nearly empty, not just one
+// flaky row. That's a more severe symptom than anything the single-
+// match lookup was hitting, yet it had the WEAKEST retry protection in
+// this file. All four routes below now share this same schedule.
+const MATCHES_RETRY_SCHEDULE_MS = [500, 1000, 2000, 3000, 3000];
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Retries `fetchOnce` against MATCH_LOOKUP_RETRY_SCHEDULE_MS until it
+/** Generic version of fetchMatchWithBackoff below, for the three routes
+ *  that don't fit its {data, error} shape (the list and indicator-status
+ *  routes check "is a sticky-confirmed partner missing from this
+ *  result", DELETE checks "did we find a row at all"). Same shared
+ *  schedule, same principle — keep retrying until the result looks
+ *  right or the schedule runs out — just parameterized over what
+ *  "looks right" means for each specific caller. */
+async function retryUntilSatisfied<T>(
+  fetchOnce: () => Promise<T>,
+  isSatisfied: (result: T) => boolean,
+  logLabel: string,
+): Promise<T> {
+  let result = await fetchOnce();
+  for (const delayMs of MATCHES_RETRY_SCHEDULE_MS) {
+    if (isSatisfied(result)) break;
+    console.error(`MATCHES DEBUG: ${logLabel} — retrying after ${delayMs}ms`);
+    await delay(delayMs);
+    result = await fetchOnce();
+  }
+  return result;
+}
+
+/** Retries `fetchOnce` against MATCHES_RETRY_SCHEDULE_MS until it
  *  returns a non-empty, error-free result or the schedule is exhausted.
  *  See the file-level comment above for why a single fixed retry proved
  *  insufficient.
@@ -80,7 +111,7 @@ async function fetchMatchWithBackoff<T>(
   logLabel: string,
 ): Promise<{ data: T | null; error: unknown }> {
   let result = await fetchOnce();
-  for (const delayMs of MATCH_LOOKUP_RETRY_SCHEDULE_MS) {
+  for (const delayMs of MATCHES_RETRY_SCHEDULE_MS) {
     if (!result.error && result.data) break;
     if (result.error) {
       console.error(`MATCHES DEBUG: ${logLabel} — GENUINE ERROR (not just empty): ${JSON.stringify(result.error)} — retrying after ${delayMs}ms`);
@@ -204,25 +235,33 @@ router.get("/matches", requireAuth, async (req, res): Promise<void> => {
       .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
       .order("created_at", { ascending: false });
 
-  let { data: rawMatches } = await fetchRawMatches();
-
   // Cross-check against the shared sticky-matched cache — if a partner
   // this cache confirms should be matched isn't in this read's results,
   // that's a strong signal this particular read came back wrong (see
-  // the comment above MATCHES_RETRY_DELAY_MS), so retry once rather
-  // than trusting it immediately.
+  // the comment above MATCHES_RETRY_SCHEDULE_MS), so keep retrying
+  // rather than trusting it immediately. Was a single 400ms retry;
+  // widened to the same multi-attempt schedule as the single-match
+  // lookup after logs showed this exact check failing for SEVEN
+  // confirmed partners simultaneously — one retry was nowhere near
+  // enough for a failure that severe.
   const partnerIdOf = (m: Record<string, any>) => (m.user1_id === userId ? m.user2_id : m.user1_id);
-  const presentPartnerIds = new Set((rawMatches ?? []).map(partnerIdOf));
   const stickyMatched = await getStickyMatched(userId);
-  const missingFromSticky = [...stickyMatched].filter((id) => !presentPartnerIds.has(id));
 
-  if (missingFromSticky.length > 0) {
-    console.error(
-      `MATCHES DEBUG: userId=${userId} list read missing sticky-confirmed partner(s) [${missingFromSticky.join(",")}] — retrying after ${MATCHES_RETRY_DELAY_MS}ms`,
-    );
-    await delay(MATCHES_RETRY_DELAY_MS);
-    ({ data: rawMatches } = await fetchRawMatches());
-  }
+  const { data: rawMatches } = await retryUntilSatisfied(
+    fetchRawMatches,
+    (result) => {
+      const present = new Set((result.data ?? []).map(partnerIdOf));
+      const missing = [...stickyMatched].filter((id) => !present.has(id));
+      if (missing.length > 0) {
+        console.error(
+          `MATCHES DEBUG: userId=${userId} list read missing sticky-confirmed partner(s) [${missing.join(",")}]`,
+        );
+        return false;
+      }
+      return true;
+    },
+    `userId=${userId} list read`,
+  );
 
   // Reinforce the shared cache with whatever this read genuinely found
   // — same cache getPendingInviterIds reads from, so a match confirmed
@@ -307,21 +346,24 @@ router.get("/matches/indicator-status", requireAuth, async (req, res): Promise<v
       .select("id, created_at, user1_id, user2_id")
       .or(`user1_id.eq.${userId},user2_id.eq.${userId}`);
 
-  const [{ data: viewerProfile }, { data: firstMatches }] = await Promise.all([
-    supabase.from("profiles").select("matches_last_viewed_at").eq("id", userId).single(),
-    fetchMyMatches(),
-  ]);
-
-  let myMatches = firstMatches;
   const partnerIdOf = (m: Record<string, any>) => (m.user1_id === userId ? m.user2_id : m.user1_id);
-  const presentPartnerIds = new Set((myMatches ?? []).map(partnerIdOf));
   const stickyMatched = await getStickyMatched(userId);
-  const missingFromSticky = [...stickyMatched].filter((id) => !presentPartnerIds.has(id));
 
-  if (missingFromSticky.length > 0) {
-    await delay(MATCHES_RETRY_DELAY_MS);
-    ({ data: myMatches } = await fetchMyMatches());
-  }
+  // Same widened retry as the list route above (see its comment) — this
+  // drives the bottom-nav "new match" dot, so a false negative here
+  // means someone doesn't even realize they have a new match to check.
+  const [{ data: viewerProfile }, matchesResult] = await Promise.all([
+    supabase.from("profiles").select("matches_last_viewed_at").eq("id", userId).single(),
+    retryUntilSatisfied(
+      fetchMyMatches,
+      (result) => {
+        const present = new Set((result.data ?? []).map(partnerIdOf));
+        return [...stickyMatched].every((id) => present.has(id));
+      },
+      `userId=${userId} indicator-status`,
+    ),
+  ]);
+  const myMatches = matchesResult.data;
 
   const lastViewedAt = viewerProfile?.matches_last_viewed_at
     ? new Date(viewerProfile.matches_last_viewed_at)
@@ -401,14 +443,7 @@ router.delete("/matches/:matchId", requireAuth, async (req, res): Promise<void> 
       .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
       .single();
 
-  let { data: match } = await fetchMatchId();
-
-  // Same retry as the GET routes above — a false "not found" here would
-  // wrongly block someone from unmatching a match that genuinely exists.
-  if (!match) {
-    await delay(MATCHES_RETRY_DELAY_MS);
-    ({ data: match } = await fetchMatchId());
-  }
+  const { data: match } = await fetchMatchWithBackoff(fetchMatchId, `userId=${userId} matchId=${matchId} delete-lookup`);
 
   if (!match) {
     res.status(404).json({ error: "Match not found" });
