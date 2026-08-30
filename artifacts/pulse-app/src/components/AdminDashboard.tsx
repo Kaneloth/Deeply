@@ -6,10 +6,10 @@ import { Input } from "@/components/ui/input";
 import {
   X, Users, Flag, Coins, Megaphone, LayoutDashboard, Loader2, Search,
   Ban, ShieldOff, Crown, Plus, Trash2, CheckCircle2, XCircle, ChevronLeft,
-  ChevronRight, ShieldCheck, AlertTriangle, RefreshCw, Sliders,
+  ChevronRight, ShieldCheck, AlertTriangle, RefreshCw, Sliders, Receipt,
 } from "lucide-react";
 
-type Section = "overview" | "reports" | "users" | "sparks" | "economy" | "announcements" | "verification";
+type Section = "overview" | "reports" | "users" | "sparks" | "transactions" | "economy" | "announcements" | "verification";
 type AdminScope = "manage_reports" | "manage_users" | "manage_sparks" | "view_analytics";
 
 const SECTIONS: { key: Section; label: string; icon: any; scope: AdminScope }[] = [
@@ -18,6 +18,7 @@ const SECTIONS: { key: Section; label: string; icon: any; scope: AdminScope }[] 
   { key: "users", label: "Users", icon: Users, scope: "manage_users" },
   { key: "verification", label: "Verification", icon: ShieldCheck, scope: "manage_users" },
   { key: "sparks", label: "Sparks", icon: Coins, scope: "manage_sparks" },
+  { key: "transactions", label: "Transactions", icon: Receipt, scope: "manage_sparks" },
   { key: "economy", label: "Pricing", icon: Sliders, scope: "manage_sparks" },
   { key: "announcements", label: "Announcements", icon: Megaphone, scope: "manage_users" },
 ];
@@ -25,7 +26,7 @@ const SECTIONS: { key: Section; label: string; icon: any; scope: AdminScope }[] 
 const NAV_GROUPS: { label: string; keys: Section[] }[] = [
   { label: "Overview", keys: ["overview"] },
   { label: "People & Safety", keys: ["reports", "users", "verification"] },
-  { label: "Money", keys: ["sparks", "economy"] },
+  { label: "Money", keys: ["sparks", "transactions", "economy"] },
   { label: "Communication", keys: ["announcements"] },
 ];
 
@@ -65,6 +66,7 @@ export function AdminDashboard({ access, onClose }: { access: AdminAccess; onClo
       {section === "reports" && <ReportsSection token={token} toast={toast} />}
       {section === "users" && <UsersSection token={token} toast={toast} isSuperAdmin={access.isSuperAdmin} />}
       {section === "sparks" && <SparksSection token={token} toast={toast} />}
+      {section === "transactions" && <TransactionsSection token={token} toast={toast} />}
       {section === "economy" && <EconomySection token={token} toast={toast} />}
       {section === "verification" && <AdminVerificationSection token={token} toast={toast} />}
       {section === "announcements" && <AnnouncementsSection token={token} toast={toast} />}
@@ -1721,51 +1723,146 @@ function EditProfileForm({
 // Sparks
 // ============================================================
 function SparksSection({ token, toast }: { token: string | null; toast: any }) {
-  const [transactions, setTransactions] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [reason, setReason] = useState("");
+  const [reasonOptions, setReasonOptions] = useState<string[]>([]);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [search, setSearch] = useState("");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  // Run once on mount only — depending on [token, toast] directly meant
-  // this re-ran (and re-showed the loading spinner) on every background
-  // token refresh, same root cause as EconomySection's more severe
-  // version of this bug above.
   useEffect(() => {
-    setLoading(true);
-    fetch("/api/admin/sparks/transactions", { headers: { Authorization: `Bearer ${token}` } })
-      .then(async (res) => {
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(body.error ?? `Failed to load transactions (${res.status})`);
-        setTransactions(body ?? []);
-      })
-      .catch((err) => {
-        toast({
-          title: "Error",
-          description: err instanceof Error ? err.message : "Failed to load transactions.",
-          variant: "destructive",
-        });
-        setTransactions([]);
-      })
-      .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    fetch("/api/admin/sparks/transactions/reasons", { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : []))
+      .then((list) => setReasonOptions(Array.isArray(list) ? list : []))
+      .catch(() => {
+        // Silent — the dropdown just shows "All reasons" only, not
+        // worth a toast over a non-critical filter option failing.
+      });
+  }, [token]);
 
-  if (loading) return <CenteredLoader />;
-  if (transactions.length === 0) return <EmptyNote text="No transactions yet." />;
+  const filters = { reason, date_from: dateFrom, date_to: dateTo, search };
+  const { rows, totalCount, page, setPage, pageSize, setPageSize, loading, refetch } = useAdminTable<
+    Record<string, any>
+  >({ endpoint: "/api/admin/sparks/transactions", token, filters });
+
+  const handleDelete = async (row: Record<string, any>) => {
+    // Specific, every-time warning about the balance_after consequence
+    // — an explicit admin decision, not a generic "are you sure": see
+    // this table's own DELETE route comment. Deleting a row here leaves
+    // a gap in the running balance sequence for every later transaction
+    // this user has, which a generic confirm wouldn't communicate.
+    const confirmed = window.confirm(
+      `Delete this transaction? This will leave a gap in ${row.user_name ?? "this user"}'s balance_after history — later transactions will no longer add up against a continuous running balance. This cannot be undone.`,
+    );
+    if (!confirmed) return;
+    setDeletingId(row.id);
+    try {
+      const res = await fetch(`/api/admin/sparks/transactions/${row.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to delete");
+      }
+      toast({ title: "Transaction deleted" });
+      refetch();
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to delete transaction.",
+        variant: "destructive",
+      });
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleExport = async () => {
+    try {
+      const params = new URLSearchParams();
+      if (reason) params.set("reason", reason);
+      if (dateFrom) params.set("date_from", dateFrom);
+      if (dateTo) params.set("date_to", dateTo);
+      if (search) params.set("search", search);
+      await exportCsv(
+        `/api/admin/sparks/transactions/export?${params.toString()}`,
+        token,
+        `sparks_transactions_${Date.now()}.csv`,
+      );
+    } catch {
+      toast({ title: "Error", description: "Failed to export CSV.", variant: "destructive" });
+    }
+  };
 
   return (
-    <div className="space-y-2">
-      <p className="text-xs text-muted-foreground mb-1">Most recent 200 transactions across all users. To adjust a specific user's balance, find them in Users.</p>
-      {transactions.map((t) => (
-        <div key={t.id} className="flex items-center justify-between bg-card border border-card-border rounded-xl p-3">
-          <div className="min-w-0">
-            <p className="text-xs font-medium truncate">{t.description || t.type}</p>
-            <p className="text-[10px] text-muted-foreground">{new Date(t.created_at).toLocaleString()}</p>
-          </div>
-          <span className={`text-sm font-bold shrink-0 ${t.amount >= 0 ? "text-green-500" : "text-destructive"}`}>
-            {t.amount >= 0 ? "+" : ""}
-            {t.amount}
-          </span>
+    <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">
+        Every Sparks credit and charge across all users — grants, purchases, and every activity that spends Sparks.
+        To adjust a specific user's balance directly, find them in Users.
+      </p>
+      <div className="flex items-center gap-2 flex-wrap">
+        <select
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          className="bg-card border border-card-border rounded-lg px-2 py-1.5 text-xs h-8 max-w-[180px]"
+        >
+          <option value="">All reasons</option>
+          {reasonOptions.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+        <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-8 w-36 text-xs" />
+        <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-8 w-36 text-xs" />
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search name or user_id..."
+          className="h-8 flex-1 min-w-[160px] text-xs"
+        />
+        <Button variant="outline" size="sm" onClick={refetch} className="h-8 gap-1.5">
+          <RefreshCw size={13} /> Refresh
+        </Button>
+        <Button variant="outline" size="sm" onClick={handleExport} className="h-8 gap-1.5">
+          Export CSV
+        </Button>
+      </div>
+
+      {loading ? (
+        <CenteredLoader />
+      ) : rows.length === 0 ? (
+        <EmptyNote text="No transactions match these filters." />
+      ) : (
+        <div className="space-y-2">
+          {rows.map((r) => (
+            <div key={r.id} className="flex items-center justify-between gap-3 bg-card border border-card-border rounded-xl p-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium truncate">
+                  {r.user_name ?? "Unknown"} <span className="text-muted-foreground font-normal">({r.user_id})</span>
+                </p>
+                <p className="text-[10px] text-muted-foreground truncate">
+                  {r.reason} · {new Date(r.created_at).toLocaleString()} · balance after: {r.balance_after}
+                </p>
+              </div>
+              <span className={`text-sm font-bold shrink-0 ${r.amount >= 0 ? "text-green-500" : "text-destructive"}`}>
+                {r.amount >= 0 ? "+" : ""}
+                {r.amount}
+              </span>
+              <button
+                onClick={() => handleDelete(r)}
+                disabled={deletingId === r.id}
+                className="w-7 h-7 rounded-lg bg-secondary flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors shrink-0 disabled:opacity-50"
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
+
+      <TablePagination page={page} setPage={setPage} pageSize={pageSize} setPageSize={setPageSize} totalCount={totalCount} />
     </div>
   );
 }
@@ -2078,6 +2175,290 @@ function AnnouncementsSection({ token, toast }: { token: string | null; toast: a
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ============================================================
+// Shared admin data-table utilities — used by both TransactionsSection
+// and SparksSection below, since they need identical pagination,
+// filtering, refresh, and CSV export behavior over two different
+// endpoints and row shapes.
+// ============================================================
+
+/** Manages page/pageSize/filters/fetch state against a paginated admin
+ *  endpoint following the {rows, totalCount, page, pageSize} response
+ *  shape both /admin/transactions and /admin/sparks/transactions use.
+ *  Automatically resets to page 1 whenever the filters actually change
+ *  (not on every render — filters is compared by JSON value, not
+ *  reference, so a caller re-creating the same filter object on every
+ *  render doesn't cause an infinite refetch loop). */
+function useAdminTable<T>({
+  endpoint,
+  token,
+  filters,
+}: {
+  endpoint: string;
+  token: string | null;
+  filters: Record<string, string | undefined>;
+}) {
+  const [rows, setRows] = useState<T[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [loading, setLoading] = useState(true);
+
+  const filtersKey = JSON.stringify(filters);
+  const prevFiltersKey = useRef(filtersKey);
+
+  useEffect(() => {
+    if (prevFiltersKey.current !== filtersKey) {
+      prevFiltersKey.current = filtersKey;
+      setPage(1);
+    }
+  }, [filtersKey]);
+
+  const fetchPage = useCallback(() => {
+    setLoading(true);
+    const params = new URLSearchParams();
+    params.set("page", String(page));
+    params.set("page_size", String(pageSize));
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value) params.set(key, value);
+    });
+    fetch(`${endpoint}?${params.toString()}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error ?? `Failed to load (${res.status})`);
+        setRows(body.rows ?? []);
+        setTotalCount(body.totalCount ?? 0);
+      })
+      .catch(() => {
+        setRows([]);
+        setTotalCount(0);
+      })
+      .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [endpoint, token, page, pageSize, filtersKey]);
+
+  useEffect(() => {
+    fetchPage();
+  }, [fetchPage]);
+
+  return { rows, totalCount, page, setPage, pageSize, setPageSize, loading, refetch: fetchPage };
+}
+
+/** Fetches a CSV export endpoint and triggers a browser download —
+ *  can't just navigate to the URL directly since it needs the auth
+ *  header, same reason every other admin fetch here does. */
+async function exportCsv(url: string, token: string | null, filename: string) {
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error("Export failed");
+  const blob = await res.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = downloadUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(downloadUrl);
+}
+
+function TablePagination({
+  page,
+  setPage,
+  pageSize,
+  setPageSize,
+  totalCount,
+}: {
+  page: number;
+  setPage: (p: number) => void;
+  pageSize: number;
+  setPageSize: (n: number) => void;
+  totalCount: number;
+}) {
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const from = totalCount === 0 ? 0 : (page - 1) * pageSize + 1;
+  const to = Math.min(page * pageSize, totalCount);
+
+  return (
+    <div className="flex items-center justify-between gap-3 flex-wrap text-xs text-muted-foreground pt-1">
+      <div className="flex items-center gap-2">
+        <span>Rows per page</span>
+        <select
+          value={pageSize}
+          onChange={(e) => setPageSize(Number(e.target.value))}
+          className="bg-card border border-card-border rounded-lg px-2 py-1 text-xs"
+        >
+          <option value={10}>10</option>
+          <option value={50}>50</option>
+          <option value={100}>100</option>
+        </select>
+      </div>
+      <div className="flex items-center gap-3">
+        <span>{totalCount === 0 ? "No results" : `${from}-${to} of ${totalCount}`}</span>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setPage(Math.max(1, page - 1))}
+            disabled={page <= 1}
+            className="w-7 h-7 rounded-lg bg-card border border-card-border flex items-center justify-center disabled:opacity-40"
+          >
+            <ChevronLeft size={14} />
+          </button>
+          <button
+            onClick={() => setPage(Math.min(totalPages, page + 1))}
+            disabled={page >= totalPages}
+            className="w-7 h-7 rounded-lg bg-card border border-card-border flex items-center justify-center disabled:opacity-40"
+          >
+            <ChevronRight size={14} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Transactions — real-money flow across Google Pay Sparks purchases,
+// PayFast Sparks purchases, and ID verification payments. See
+// migration_admin_transaction_views.sql for why Google Pay rows always
+// show a blank amount (Google Play never tells this backend the actual
+// ZAR charged) — package_label is shown specifically so an admin can
+// manually cross-reference the CURRENT bundle price in the Pricing tab.
+// ============================================================
+const TRANSACTION_TYPE_LABELS: Record<string, string> = {
+  google_pay_sparks: "Google Pay Sparks purchase",
+  payfast_sparks: "PayFast Sparks purchase",
+  id_verification: "ID verification",
+};
+
+function TransactionsSection({ token, toast }: { token: string | null; toast: any }) {
+  const [type, setType] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [search, setSearch] = useState("");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const filters = { type, date_from: dateFrom, date_to: dateTo, search };
+  const { rows, totalCount, page, setPage, pageSize, setPageSize, loading, refetch } = useAdminTable<
+    Record<string, any>
+  >({ endpoint: "/api/admin/transactions", token, filters });
+
+  const handleDelete = async (row: Record<string, any>) => {
+    // Plain window.confirm rather than a custom modal — matches this
+    // dashboard's existing convention of no confirmation step at all
+    // for other destructive actions (e.g. banning a user); this is
+    // already a step above that, appropriately, given this is a hard
+    // delete of a real financial record rather than an account-status
+    // change.
+    const confirmed = window.confirm(
+      `Permanently delete this ${TRANSACTION_TYPE_LABELS[row.transaction_type] ?? row.transaction_type} transaction for ${row.user_name ?? row.user_id}? This cannot be undone.`,
+    );
+    if (!confirmed) return;
+    setDeletingId(row.id);
+    try {
+      const res = await fetch(`/api/admin/transactions/${row.transaction_type}/${row.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to delete");
+      }
+      toast({ title: "Transaction deleted" });
+      refetch();
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to delete transaction.",
+        variant: "destructive",
+      });
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleExport = async () => {
+    try {
+      const params = new URLSearchParams();
+      if (type) params.set("type", type);
+      if (dateFrom) params.set("date_from", dateFrom);
+      if (dateTo) params.set("date_to", dateTo);
+      if (search) params.set("search", search);
+      await exportCsv(`/api/admin/transactions/export?${params.toString()}`, token, `transactions_${Date.now()}.csv`);
+    } catch {
+      toast({ title: "Error", description: "Failed to export CSV.", variant: "destructive" });
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        <select
+          value={type}
+          onChange={(e) => setType(e.target.value)}
+          className="bg-card border border-card-border rounded-lg px-2 py-1.5 text-xs h-8"
+        >
+          <option value="">All types</option>
+          <option value="google_pay_sparks">Google Pay Sparks purchase</option>
+          <option value="payfast_sparks">PayFast Sparks purchase</option>
+          <option value="id_verification">ID verification</option>
+        </select>
+        <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-8 w-36 text-xs" />
+        <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-8 w-36 text-xs" />
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search name or user_id..."
+          className="h-8 flex-1 min-w-[160px] text-xs"
+        />
+        <Button variant="outline" size="sm" onClick={refetch} className="h-8 gap-1.5">
+          <RefreshCw size={13} /> Refresh
+        </Button>
+        <Button variant="outline" size="sm" onClick={handleExport} className="h-8 gap-1.5">
+          Export CSV
+        </Button>
+      </div>
+
+      {loading ? (
+        <CenteredLoader />
+      ) : rows.length === 0 ? (
+        <EmptyNote text="No transactions match these filters." />
+      ) : (
+        <div className="space-y-2">
+          {rows.map((r) => (
+            <div
+              key={`${r.transaction_type}-${r.id}`}
+              className="flex items-center justify-between gap-3 bg-card border border-card-border rounded-xl p-3"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium truncate">
+                  {r.user_name ?? "Unknown"} <span className="text-muted-foreground font-normal">({r.user_id})</span>
+                </p>
+                <p className="text-[10px] text-muted-foreground truncate">
+                  {TRANSACTION_TYPE_LABELS[r.transaction_type] ?? r.transaction_type}
+                  {r.package_label ? ` — ${r.package_label}` : ""}
+                  {" · "}
+                  {new Date(r.transaction_date).toLocaleString()}
+                </p>
+              </div>
+              <span className="text-sm font-bold shrink-0">
+                {r.amount_zar !== null && r.amount_zar !== undefined ? `R${Number(r.amount_zar).toFixed(2)}` : "—"}
+              </span>
+              <button
+                onClick={() => handleDelete(r)}
+                disabled={deletingId === r.id}
+                className="w-7 h-7 rounded-lg bg-secondary flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors shrink-0 disabled:opacity-50"
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <TablePagination page={page} setPage={setPage} pageSize={pageSize} setPageSize={setPageSize} totalCount={totalCount} />
     </div>
   );
 }
