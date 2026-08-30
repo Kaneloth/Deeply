@@ -719,18 +719,26 @@ export default function ChatPage() {
   const maybeShowUnlockNotice = (action: string, sparksCharged: number) => {
     if (hasSeenUnlockNotice(userId, action)) return;
     markSeenUnlockNotice(userId, action);
+    // No mention of the underlying half-cost/split-payment mechanic —
+    // users don't need to know how the charge is internally divided
+    // between the two people, just what it cost them and what they get
+    // for it. "initiated" is the one exception that still needs a
+    // caveat: unlike "unlocked"/"revived", the chat ISN'T actually open
+    // yet at this point — the other person still has to reply within 48
+    // hours for it to unlock at all. Saying "free, always" here too
+    // would be factually wrong, not just simplified.
     const copy: Record<string, { title: string; description: string }> = {
       initiated: {
-        title: `${sparksCharged} Sparks — your half`,
-        description: "Starting a new conversation costs half the unlock fee. Your match pays the other half when they reply — or you're refunded if they don't within 48 hours.",
+        title: `${sparksCharged} Sparks`,
+        description: "You've started this conversation. If they reply within 48 hours, chatting stays open for free — always.",
       },
       unlocked: {
-        title: `${sparksCharged} Sparks — your half`,
-        description: "Replying to unlock a new conversation costs half the fee. This chat is now fully open — free to keep talking.",
+        title: `${sparksCharged} Sparks`,
+        description: "Chatting here is now unlocked — free to keep talking, always.",
       },
       revived: {
-        title: `${sparksCharged} Sparks — full cost`,
-        description: "Replying after the 48-hour window means covering the full unlock fee alone. The chat is now open either way.",
+        title: `${sparksCharged} Sparks`,
+        description: `No reply within 48 hours turns this into a missed connection — replying after that costs more to reopen. This time, that's ${sparksCharged} Sparks. Chatting here is now open — free to keep talking, always.`,
       },
     };
     const entry = copy[action];
