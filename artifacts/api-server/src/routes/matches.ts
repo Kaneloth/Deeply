@@ -228,12 +228,13 @@ router.get("/matches", requireAuth, async (req, res): Promise<void> => {
     ? new Date(viewerProfile.matches_last_viewed_at)
     : new Date(0);
 
-  const fetchRawMatches = () =>
-    supabase
-      .from("matches")
-      .select(MATCH_SELECT)
-      .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
-      .order("created_at", { ascending: false });
+  // RPC instead of .select() — see rpc_get_matches_for_user.sql for the
+  // full reasoning (a second, independent test of the same PostgREST-
+  // bypass hypothesis, from the list-endpoint angle rather than the
+  // single-match one). Same array-of-rows shape as before, so the
+  // sticky-cache cross-check below needs zero changes — only what it's
+  // checking changed.
+  const fetchRawMatches = () => supabase.rpc("get_matches_for_user", { p_user_id: userId });
 
   // Cross-check against the shared sticky-matched cache — if a partner
   // this cache confirms should be matched isn't in this read's results,
@@ -392,13 +393,11 @@ router.get("/matches/:matchId", requireAuth, async (req, res): Promise<void> => 
     : req.params.matchId;
   const userId = req.user!.id;
 
-  const fetchMatch = () =>
-    supabase
-      .from("matches")
-      .select(MATCH_SELECT)
-      .eq("id", matchId)
-      .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
-      .single();
+  // RPC instead of .select() — bypasses PostgREST's normal query path
+  // entirely (see rpc_get_match_by_id.sql for the full reasoning). Same
+  // {data, error} shape as before, so fetchMatchWithBackoff's retry
+  // logic below needs zero changes — only what it's retrying changed.
+  const fetchMatch = () => supabase.rpc("get_match_by_id", { p_match_id: matchId, p_user_id: userId });
 
   const { data: match, error } = await fetchMatchWithBackoff(fetchMatch, `userId=${userId} matchId=${matchId} lookup`);
 
