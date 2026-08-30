@@ -172,7 +172,7 @@ export default function ChatPage() {
   const matchId = params.matchId || "";
   const { token } = useAuth();
   const userId = getUserIdFromToken(token);
-  const { refresh: refreshSparksBadge } = useSparks();
+  const { refresh: refreshSparksBadge, suppressThresholdToast } = useSparks();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
 
@@ -739,7 +739,19 @@ export default function ChatPage() {
     // quick action like "Copied", so the default toast duration (tuned
     // for brief confirmations) wasn't giving anyone enough time to
     // actually read it before it disappeared.
-    if (entry) toast({ ...entry, duration: 12000 });
+    if (entry) {
+      // This spend can itself cross a low-Sparks warning threshold —
+      // when it does, refreshSparksBadge() (called right after this)
+      // fires SparksContext's own threshold toast almost immediately
+      // afterward, evicting this one from the single-toast slot before
+      // anyone can read it (confirmed happening in production). This
+      // toast already reports the Sparks spent as part of its own
+      // message, so suppressing the more generic warning for a moment
+      // costs nothing — it'll still show up reliably on the next
+      // balance check if the balance is still low then.
+      suppressThresholdToast();
+      toast({ ...entry, duration: 12000 });
+    }
   };
 
   const handleSend = async (e: React.FormEvent) => {
