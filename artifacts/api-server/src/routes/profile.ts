@@ -1691,16 +1691,15 @@ function applyTransactionFilters(
     // realistically search by whichever one they currently have on
     // screen (e.g. copying a user_id from a support ticket).
     //
-    // PostgREST's .or() uses a packed filter-string syntax where the
-    // wildcard character is *, not % — % only works when calling
-    // .ilike() as its own dedicated method, which translates it
-    // internally. Inside .or()'s raw string, % has no special meaning
-    // at all and is matched as a literal character — meaning this was
-    // silently searching for the literal text "%value%", which could
-    // never match real data. This never surfaced in isolated testing
-    // of .ilike() elsewhere in this app, since this specific packed-
-    // string form is only used here.
-    query = query.or(`user_name.ilike.*${params.search}*,user_id.ilike.*${params.search}*`);
+    // Reverted back to % after * also failed to fix this — % is
+    // actually what Supabase's own documented .or() examples use for
+    // ilike patterns, so the earlier "fix" to * was likely wrong, not
+    // right. TEMPORARY diagnostic logging added below since two
+    // guesses in a row failed — this will show the exact filter string
+    // being sent, so the next fix is based on real evidence.
+    const filterString = `user_name.ilike.%${params.search}%,user_id.ilike.%${params.search}%`;
+    console.error(`TRANSACTIONS SEARCH DEBUG: filter string = ${filterString}`);
+    query = query.or(filterString);
   }
   return query;
 }
@@ -1721,6 +1720,18 @@ router.get("/admin/transactions", requireAuth, requireAdminScope("manage_sparks"
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
   const { data, count, error } = await query.order("transaction_date", { ascending: false }).range(from, to);
+
+  // TEMPORARY — two guesses at the .or() wildcard syntax (%  then *)
+  // both failed to fix search, which means the problem likely isn't
+  // the wildcard character at all: if the filter syntax were genuinely
+  // malformed, PostgREST would return an error here, not silently zero
+  // rows — and the reported symptom is the empty-state UI, not an
+  // error toast, meaning `error` below is almost certainly falsy. This
+  // logs the real result so the next fix is based on evidence, not
+  // another guess.
+  if (search) {
+    console.error(`TRANSACTIONS SEARCH DEBUG: search="${search}" error=${error ? JSON.stringify(error) : "none"} rowCount=${data?.length ?? 0} totalCount=${count ?? 0}`);
+  }
 
   if (error) {
     res.status(500).json({ error: `Failed to load transactions: ${error.message}` });
@@ -1788,9 +1799,8 @@ function applySparksFilters(
   if (params.date_from) query = query.gte("created_at", params.date_from);
   if (params.date_to) query = query.lte("created_at", params.date_to);
   if (params.search) {
-    // Same fix as applyTransactionFilters above — .or()'s packed syntax
-    // uses * as its wildcard character, not %.
-    query = query.or(`user_name.ilike.*${params.search}*,user_id.ilike.*${params.search}*`);
+    // Reverted to % — see applyTransactionFilters's own comment above.
+    query = query.or(`user_name.ilike.%${params.search}%,user_id.ilike.%${params.search}%`);
   }
   return query;
 }
@@ -1813,6 +1823,12 @@ router.get("/admin/sparks/transactions", requireAuth, requireAdminScope("manage_
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
   const { data, count, error } = await query.order("created_at", { ascending: false }).range(from, to);
+
+  // TEMPORARY — same diagnostic as /admin/transactions above, same
+  // unresolved search bug.
+  if (search) {
+    console.error(`SPARKS TRANSACTIONS SEARCH DEBUG: search="${search}" error=${error ? JSON.stringify(error) : "none"} rowCount=${data?.length ?? 0} totalCount=${count ?? 0}`);
+  }
 
   if (error) {
     res.status(500).json({ error: `Failed to load transactions: ${error.message}` });
