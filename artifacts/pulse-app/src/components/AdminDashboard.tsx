@@ -1730,6 +1730,12 @@ function SparksSection({ token, toast }: { token: string | null; toast: any }) {
   const [search, setSearch] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  // Run once on mount only — same root cause as useAdminTable's own fix
+  // above: depending on [token] directly re-ran this on every
+  // background token refresh, unnecessarily refetching the dropdown
+  // options repeatedly. Less disruptive than the main table's version
+  // of this bug (it doesn't reset any user selection), but still the
+  // same unnecessary-refetch pattern, worth fixing the same way.
   useEffect(() => {
     fetch("/api/admin/sparks/transactions/reasons", { headers: { Authorization: `Bearer ${token}` } })
       .then((res) => (res.ok ? res.json() : []))
@@ -1738,7 +1744,8 @@ function SparksSection({ token, toast }: { token: string | null; toast: any }) {
         // Silent — the dropdown just shows "All reasons" only, not
         // worth a toast over a non-critical filter option failing.
       });
-  }, [token]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const filters = { reason, date_from: dateFrom, date_to: dateTo, search };
   const { rows, totalCount, page, setPage, pageSize, setPageSize, loading, refetch } = useAdminTable<
@@ -2208,6 +2215,20 @@ function useAdminTable<T>({
   const [pageSize, setPageSize] = useState(10);
   const [loading, setLoading] = useState(true);
 
+  // Read via a ref, NOT a dependency of fetchPage below — token gets a
+  // new reference every time AuthContext silently refreshes the session
+  // in the background, completely unrelated to anything the admin does
+  // on this page. Depending on it directly meant every one of those
+  // background refreshes recreated fetchPage, which retriggered the
+  // effect below and silently refetched the whole table — discarding
+  // whatever page/pageSize/filters the admin had just set, every few
+  // seconds. Same root cause and fix already established elsewhere in
+  // this exact file (see EconomySection's own comment on this).
+  const tokenRef = useRef(token);
+  useEffect(() => {
+    tokenRef.current = token;
+  }, [token]);
+
   const filtersKey = JSON.stringify(filters);
   const prevFiltersKey = useRef(filtersKey);
 
@@ -2226,7 +2247,7 @@ function useAdminTable<T>({
     Object.entries(filters).forEach(([key, value]) => {
       if (value) params.set(key, value);
     });
-    fetch(`${endpoint}?${params.toString()}`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${endpoint}?${params.toString()}`, { headers: { Authorization: `Bearer ${tokenRef.current}` } })
       .then(async (res) => {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error ?? `Failed to load (${res.status})`);
@@ -2239,7 +2260,8 @@ function useAdminTable<T>({
       })
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [endpoint, token, page, pageSize, filtersKey]);
+  }, [endpoint, page, pageSize, filtersKey]);
+  // token intentionally excluded above — see tokenRef comment
 
   useEffect(() => {
     fetchPage();
