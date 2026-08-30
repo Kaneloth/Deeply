@@ -44,7 +44,19 @@ const router: IRouter = Router();
 // these routes protects all of them, not just the one that happened to
 // see it.
 const MATCHES_RETRY_DELAY_MS = 400; // kept for the list/indicator retries below, unchanged
-const MATCH_LOOKUP_RETRY_SCHEDULE_MS = [400, 800, 1500]; // single-match lookup gets more chances specifically
+// Extended 2026-08-30, based on direct evidence from production logs: a
+// single account (e4541cc0...) hit the exact same match failing on
+// EVERY first attempt, 404 after exhausting the old 3-attempt schedule
+// (400/800/1500ms, ~2.7s total) — but a fresh request just 2-12 seconds
+// LATER consistently succeeded normally. The old schedule wasn't wrong,
+// it just wasn't waiting long enough: the underlying inconsistency
+// window is longer than 2.7s but reliably resolves within single-digit
+// seconds afterward. This trades a longer wait on the very first tap
+// (now up to ~10s worst case, with a loading state, not an error) for
+// eliminating the "fails, disappears, tap again to actually open it"
+// cycle entirely for most cases. Still a mitigation, not a fix — the
+// underlying cause is still an open question with Supabase.
+const MATCH_LOOKUP_RETRY_SCHEDULE_MS = [500, 1000, 2000, 3000, 3000]; // single-match lookup gets more chances specifically
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
