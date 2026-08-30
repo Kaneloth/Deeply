@@ -412,56 +412,80 @@ export default function ChatPage() {
     }
   };
 
-  const fetchMatch = useCallback(async () => {
-    if (!matchId) return;
-    const cached = getCachedMatchDetail<Match>(matchId);
-    // Only force the loading state when there's genuinely nothing to
-    // show yet — see matchDetailCache.ts for the full reasoning.
-    if (!cached) setMatchLoading(true);
-    try {
-      const res = await fetch(`/api/matches/${matchId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (res.status === 404) {
-        // Authoritative signal that this specific match is gone — same
-        // fix as MatchDetailPage.tsx's 404 handling. Previously this
-        // just fell through to the generic catch below, which showed a
-        // toast but never told MatchesPage's cache the match was
-        // actually deleted (as opposed to merely missing from one
-        // fetch) — so it kept reappearing there. Also navigates back to
-        // Matches rather than stranding the person on this dead-end
-        // "Match not found." screen with no way forward.
-        evictMatchFromCache(matchId);
-        removeMatchDetailCache(matchId);
-        removeMessagesCache(matchId);
-        toast({
-          title: "Match no longer available",
-          description: "This match has been removed.",
+  // silentOn404 exists specifically for the three call sites below that
+  // refresh the match immediately after a message send/unsend already
+  // SUCCEEDED against this exact matchId — that success is itself
+  // ironclad proof the match exists, moments ago. Production logs
+  // proved this mattered: the same match hit "all retries exhausted"
+  // NINE times in two minutes, each one evicting the cache and kicking
+  // the person back to /matches — while they were actively mid-
+  // conversation, message sends and all. The mount-time call (the one
+  // legitimate "does this match still exist" check, run once when this
+  // page is first opened) is the only one that should ever be allowed
+  // to conclude "gone" and act on it; a background chat_unlock_status
+  // refresh hitting the same transient read issue should just skip
+  // updating that one field silently, not treat it as news that the
+  // match itself might not exist.
+  const fetchMatch = useCallback(
+    async (options?: { silentOn404?: boolean }) => {
+      if (!matchId) return;
+      const cached = getCachedMatchDetail<Match>(matchId);
+      // Only force the loading state when there's genuinely nothing to
+      // show yet — see matchDetailCache.ts for the full reasoning.
+      if (!cached) setMatchLoading(true);
+      try {
+        const res = await fetch(`/api/matches/${matchId}`, {
+          headers: { Authorization: `Bearer ${token}` },
         });
-        setLocation("/matches");
-        return;
-      }
 
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? "Match not found");
-      setMatch(body);
-      updateMatchDetailCache(matchId, body);
-    } catch (err) {
-      // Same reasoning as MatchDetailPage.tsx — a cached version already
-      // on screen means a transient failure of this one background
-      // refresh isn't worth interrupting the person over.
-      if (!cached) {
-        toast({
-          title: "Error",
-          description: err instanceof Error ? err.message : "Failed to load match.",
-          variant: "destructive",
-        });
+        if (res.status === 404) {
+          if (options?.silentOn404) {
+            // Leave everything as-is — the match plainly still exists
+            // (we just wrote to it), this was just a bad read. The next
+            // background poll or the 3s message-poll cycle gets another
+            // chance to pick up the real chat_unlock_status.
+            return;
+          }
+          // Authoritative signal that this specific match is gone — same
+          // fix as MatchDetailPage.tsx's 404 handling. Previously this
+          // just fell through to the generic catch below, which showed a
+          // toast but never told MatchesPage's cache the match was
+          // actually deleted (as opposed to merely missing from one
+          // fetch) — so it kept reappearing there. Also navigates back to
+          // Matches rather than stranding the person on this dead-end
+          // "Match not found." screen with no way forward.
+          evictMatchFromCache(matchId);
+          removeMatchDetailCache(matchId);
+          removeMessagesCache(matchId);
+          toast({
+            title: "Match no longer available",
+            description: "This match has been removed.",
+          });
+          setLocation("/matches");
+          return;
+        }
+
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? "Match not found");
+        setMatch(body);
+        updateMatchDetailCache(matchId, body);
+      } catch (err) {
+        // Same reasoning as MatchDetailPage.tsx — a cached version already
+        // on screen means a transient failure of this one background
+        // refresh isn't worth interrupting the person over.
+        if (!cached) {
+          toast({
+            title: "Error",
+            description: err instanceof Error ? err.message : "Failed to load match.",
+            variant: "destructive",
+          });
+        }
+      } finally {
+        setMatchLoading(false);
       }
-    } finally {
-      setMatchLoading(false);
-    }
-  }, [matchId, token, toast, setLocation]);
+    },
+    [matchId, token, toast, setLocation],
+  );
 
   // Counts sends currently in flight (optimistic bubble shown, POST not
   // yet resolved). While non-zero, fetchMessages skips entirely — a full
@@ -845,9 +869,14 @@ export default function ChatPage() {
       // send — refresh the match itself so chat_unlock_status (and the
       // countdown it drives) reflects it immediately, rather than
       // waiting up to 3s for the next background poll to notice.
+      // silentOn404: true — this send just succeeded against this exact
+      // match, which is proof enough it exists; a transient bad read on
+      // this refresh must never evict the cache or kick the person out
+      // mid-conversation (see fetchMatch's own comment for the
+      // production evidence this fixes).
       if (body.chat_unlock_action && body.chat_unlock_action !== "none") {
         maybeShowUnlockNotice(body.chat_unlock_action, body.sparks_charged ?? 0);
-        fetchMatch();
+        fetchMatch({ silentOn404: true });
       }
       if (body.sparks_balance !== undefined) {
         refreshSparksBadge();
@@ -916,8 +945,10 @@ export default function ChatPage() {
         prev.map((m) => (m.id === tempId ? { ...(body as Message), renderKey: m.renderKey ?? tempId } : m)),
       );
       if (body.chat_unlock_action && body.chat_unlock_action !== "none") {
+        // silentOn404: true — same reasoning as the text-send handler
+        // above.
         maybeShowUnlockNotice(body.chat_unlock_action, body.sparks_charged ?? 0);
-        fetchMatch();
+        fetchMatch({ silentOn404: true });
       }
       if (body.sparks_balance !== undefined) {
         refreshSparksBadge();
@@ -1046,7 +1077,9 @@ export default function ChatPage() {
           title: "Chat unlock cancelled",
           description: "Your Sparks were refunded since your match hadn't replied yet.",
         });
-        fetchMatch();
+        // silentOn404: true — same reasoning as the send handlers above:
+        // this unsend just succeeded against this exact match.
+        fetchMatch({ silentOn404: true });
         refreshSparksBadge();
       }
     } catch (err) {
