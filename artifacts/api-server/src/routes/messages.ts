@@ -162,6 +162,22 @@ router.get("/matches/:matchId/messages", requireAuth, async (req, res): Promise<
       .then(() => {});
   }
 
+  // Separate from the is_read update above, and deliberately
+  // unconditional — this is purely personal bookkeeping for the
+  // CURRENT VIEWER's own unread-indicator purposes (bottom-nav dot,
+  // per-match "has_unread" in GET /matches), and was never meant to be
+  // tied to their share_read_receipts preference. Before this existed,
+  // turning read receipts off meant is_read never got written at all,
+  // which meant this same person's OWN unread indicator could never
+  // clear either — a real bug, not an intentional trade-off. Also
+  // best-effort/non-blocking, same reasoning as the is_read update.
+  const viewerColumn = match.user1_id === userId ? "user1_last_viewed_at" : "user2_last_viewed_at";
+  supabase
+    .from("matches")
+    .update({ [viewerColumn]: new Date().toISOString() })
+    .eq("id", matchId)
+    .then(() => {});
+
   res.json(combined);
 });
 
