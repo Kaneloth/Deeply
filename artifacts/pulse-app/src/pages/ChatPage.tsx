@@ -13,6 +13,8 @@ import ReactionPicker from "emoji-picker-react";
 import { ReportBlockModal } from "@/components/ReportBlockModal";
 import { MediaPicker } from "@/components/MediaPicker";
 import { evictMatchFromCache } from "./MatchesPage";
+import { getCachedMatchDetail, updateMatchDetailCache, removeMatchDetailCache } from "@/lib/matchDetailCache";
+import { readPersistentCache, writePersistentCache, registerCacheResetter } from "@/lib/persistentCache";
 
 interface MatchedUser {
   id: string;
@@ -72,6 +74,34 @@ interface Message {
   sent_at: string;
   reactions: Reaction[];
   reply_to: ReplyPreview | null;
+}
+
+// Local to this page (unlike the shared match-detail cache in
+// matchDetailCache.ts) — only ChatPage needs cached message history.
+// Same motivation: opening a chat you've already been in before shows
+// the last-known messages instantly instead of starting from a
+// genuinely empty list while the first fetch (subject to the same
+// backend retry delays as everything else) resolves. The existing
+// merge-not-replace logic in fetchMessages below already protects
+// against a lagged poll dropping a just-confirmed real message — this
+// only changes what's shown before the very first fetch of a session
+// completes, not the ongoing polling behavior.
+const MESSAGES_CACHE_KEY = "chat_messages_cache";
+let cachedMessagesByMatch: Record<string, Message[]> =
+  readPersistentCache<Record<string, Message[]>>(MESSAGES_CACHE_KEY) ?? {};
+registerCacheResetter(() => {
+  cachedMessagesByMatch = {};
+});
+function updateMessagesCache(matchId: string, messages: Message[]) {
+  cachedMessagesByMatch = { ...cachedMessagesByMatch, [matchId]: messages };
+  writePersistentCache(MESSAGES_CACHE_KEY, cachedMessagesByMatch);
+}
+function removeMessagesCache(matchId: string) {
+  if (!(matchId in cachedMessagesByMatch)) return;
+  const next = { ...cachedMessagesByMatch };
+  delete next[matchId];
+  cachedMessagesByMatch = next;
+  writePersistentCache(MESSAGES_CACHE_KEY, cachedMessagesByMatch);
 }
 
 // Raw characters for the compact row we build ourselves (exact-fit, no
@@ -146,9 +176,9 @@ export default function ChatPage() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
 
-  const [match, setMatch] = useState<Match | null>(null);
-  const [matchLoading, setMatchLoading] = useState(true);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [match, setMatch] = useState<Match | null>(() => getCachedMatchDetail<Match>(matchId));
+  const [matchLoading, setMatchLoading] = useState(() => getCachedMatchDetail<Match>(matchId) === null);
+  const [messages, setMessages] = useState<Message[]>(() => cachedMessagesByMatch[matchId] ?? []);
   const [input, setInput] = useState("");
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showMediaPicker, setShowMediaPicker] = useState(false);
@@ -384,7 +414,10 @@ export default function ChatPage() {
 
   const fetchMatch = useCallback(async () => {
     if (!matchId) return;
-    setMatchLoading(true);
+    const cached = getCachedMatchDetail<Match>(matchId);
+    // Only force the loading state when there's genuinely nothing to
+    // show yet — see matchDetailCache.ts for the full reasoning.
+    if (!cached) setMatchLoading(true);
     try {
       const res = await fetch(`/api/matches/${matchId}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -400,6 +433,8 @@ export default function ChatPage() {
         // Matches rather than stranding the person on this dead-end
         // "Match not found." screen with no way forward.
         evictMatchFromCache(matchId);
+        removeMatchDetailCache(matchId);
+        removeMessagesCache(matchId);
         toast({
           title: "Match no longer available",
           description: "This match has been removed.",
@@ -411,12 +446,18 @@ export default function ChatPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Match not found");
       setMatch(body);
+      updateMatchDetailCache(matchId, body);
     } catch (err) {
-      toast({
-        title: "Error",
-        description: err instanceof Error ? err.message : "Failed to load match.",
-        variant: "destructive",
-      });
+      // Same reasoning as MatchDetailPage.tsx — a cached version already
+      // on screen means a transient failure of this one background
+      // refresh isn't worth interrupting the person over.
+      if (!cached) {
+        toast({
+          title: "Error",
+          description: err instanceof Error ? err.message : "Failed to load match.",
+          variant: "destructive",
+        });
+      }
     } finally {
       setMatchLoading(false);
     }
@@ -490,6 +531,12 @@ export default function ChatPage() {
         // appended at the end could be out of place if it was actually
         // sent before something the server response did include.
         merged.sort((a, b) => new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime());
+        // Cache the MERGED result, not the raw server body — this is
+        // the actual best-known state (server data plus anything
+        // locally retained via the merge-not-replace protection above),
+        // so a future cache read reflects the same safety net rather
+        // than a potentially incomplete raw response.
+        updateMessagesCache(matchId, merged);
         return merged;
       });
     } catch {

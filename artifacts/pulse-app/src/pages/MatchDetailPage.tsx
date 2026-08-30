@@ -8,6 +8,7 @@ import { ChevronLeft, MessageCircle, UserX, MoreVertical, Flag } from "lucide-re
 import { useToast } from "@/hooks/use-toast";
 import { ReportBlockModal } from "@/components/ReportBlockModal";
 import { evictMatchFromCache } from "./MatchesPage";
+import { getCachedMatchDetail, updateMatchDetailCache, removeMatchDetailCache } from "@/lib/matchDetailCache";
 
 interface Match {
   id: string;
@@ -22,8 +23,8 @@ export default function MatchDetailPage() {
   const { token } = useAuth();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
-  const [match, setMatch] = useState<Match | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [match, setMatch] = useState<Match | null>(() => getCachedMatchDetail<Match>(matchId));
+  const [isLoading, setIsLoading] = useState(() => getCachedMatchDetail<Match>(matchId) === null);
   const [showUnmatchConfirm, setShowUnmatchConfirm] = useState(false);
   const [isUnmatching, setIsUnmatching] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -32,7 +33,12 @@ export default function MatchDetailPage() {
 
   const fetchMatch = useCallback(async () => {
     if (!matchId) return;
-    setIsLoading(true);
+    const cached = getCachedMatchDetail<Match>(matchId);
+    // Only force the loading skeleton when there's genuinely nothing to
+    // show yet — if a cached version already exists, keep showing it
+    // (isLoading may already be false) while this refresh runs quietly
+    // underneath it, rather than yanking it away for the retry window.
+    if (!cached) setIsLoading(true);
     try {
       const res = await fetch(`/api/matches/${matchId}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -40,6 +46,7 @@ export default function MatchDetailPage() {
 
       if (res.status === 404) {
         evictMatchFromCache(matchId);
+        removeMatchDetailCache(matchId);
         toast({
           title: "Match no longer available",
           description: "This match has been removed.",
@@ -51,12 +58,20 @@ export default function MatchDetailPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to load match");
       setMatch(body);
+      updateMatchDetailCache(matchId, body);
     } catch (err) {
-      toast({
-        title: "Error",
-        description: err instanceof Error ? err.message : "Failed to load match.",
-        variant: "destructive",
-      });
+      // If a cached version is already on screen, a transient failure of
+      // THIS specific background refresh isn't worth interrupting the
+      // person with an error toast over — they're already looking at
+      // reasonable data. Only surface the error when there was nothing
+      // to fall back on in the first place.
+      if (!cached) {
+        toast({
+          title: "Error",
+          description: err instanceof Error ? err.message : "Failed to load match.",
+          variant: "destructive",
+        });
+      }
     } finally {
       setIsLoading(false);
     }
@@ -87,6 +102,7 @@ export default function MatchDetailPage() {
         throw new Error(body.error ?? "Failed to unmatch");
       }
       evictMatchFromCache(matchId);
+      removeMatchDetailCache(matchId);
       toast({ title: "Unmatched", description: "This match has been removed." });
       setLocation("/matches");
     } catch (err) {
@@ -118,6 +134,7 @@ export default function MatchDetailPage() {
         throw new Error(body.error ?? "Failed to block");
       }
       evictMatchFromCache(matchId);
+      removeMatchDetailCache(matchId);
       toast({ title: `${profile.name} has been blocked` });
       setLocation("/matches");
     } catch (err) {
@@ -201,6 +218,7 @@ export default function MatchDetailPage() {
           onClose={() => setShowReportModal(false)}
           onSuccess={() => {
             evictMatchFromCache(matchId);
+            removeMatchDetailCache(matchId);
             setLocation("/matches");
           }}
         />
