@@ -1691,15 +1691,16 @@ function applyTransactionFilters(
     // realistically search by whichever one they currently have on
     // screen (e.g. copying a user_id from a support ticket).
     //
-    // Reverted back to % after * also failed to fix this — % is
-    // actually what Supabase's own documented .or() examples use for
-    // ilike patterns, so the earlier "fix" to * was likely wrong, not
-    // right. TEMPORARY diagnostic logging added below since two
-    // guesses in a row failed — this will show the exact filter string
-    // being sent, so the next fix is based on real evidence.
-    const filterString = `user_name.ilike.%${params.search}%,user_id.ilike.%${params.search}%`;
-    console.error(`TRANSACTIONS SEARCH DEBUG: filter string = ${filterString}`);
-    query = query.or(filterString);
+    // The actual bug (confirmed via diagnostic logging, not guessed):
+    // user_id is a uuid column, and Postgres's ILIKE operator (~~*) is
+    // not defined for uuid at all — "operator does not exist: uuid ~~*
+    // unknown". This is why search always silently returned zero rows
+    // regardless of wildcard character (% vs *, both tried first) —
+    // the query was failing before the wildcard even mattered.
+    // ::text explicitly casts the column so ILIKE has something valid
+    // to operate on. % is correct here — matches Supabase's own
+    // documented .or() examples for ilike patterns.
+    query = query.or(`user_name.ilike.%${params.search}%,user_id::text.ilike.%${params.search}%`);
   }
   return query;
 }
@@ -1720,18 +1721,6 @@ router.get("/admin/transactions", requireAuth, requireAdminScope("manage_sparks"
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
   const { data, count, error } = await query.order("transaction_date", { ascending: false }).range(from, to);
-
-  // TEMPORARY — two guesses at the .or() wildcard syntax (%  then *)
-  // both failed to fix search, which means the problem likely isn't
-  // the wildcard character at all: if the filter syntax were genuinely
-  // malformed, PostgREST would return an error here, not silently zero
-  // rows — and the reported symptom is the empty-state UI, not an
-  // error toast, meaning `error` below is almost certainly falsy. This
-  // logs the real result so the next fix is based on evidence, not
-  // another guess.
-  if (search) {
-    console.error(`TRANSACTIONS SEARCH DEBUG: search="${search}" error=${error ? JSON.stringify(error) : "none"} rowCount=${data?.length ?? 0} totalCount=${count ?? 0}`);
-  }
 
   if (error) {
     res.status(500).json({ error: `Failed to load transactions: ${error.message}` });
@@ -1799,8 +1788,9 @@ function applySparksFilters(
   if (params.date_from) query = query.gte("created_at", params.date_from);
   if (params.date_to) query = query.lte("created_at", params.date_to);
   if (params.search) {
-    // Reverted to % — see applyTransactionFilters's own comment above.
-    query = query.or(`user_name.ilike.%${params.search}%,user_id.ilike.%${params.search}%`);
+    // Same fix as applyTransactionFilters above — user_id is uuid, and
+    // ILIKE isn't defined for it without an explicit ::text cast.
+    query = query.or(`user_name.ilike.%${params.search}%,user_id::text.ilike.%${params.search}%`);
   }
   return query;
 }
@@ -1823,12 +1813,6 @@ router.get("/admin/sparks/transactions", requireAuth, requireAdminScope("manage_
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
   const { data, count, error } = await query.order("created_at", { ascending: false }).range(from, to);
-
-  // TEMPORARY — same diagnostic as /admin/transactions above, same
-  // unresolved search bug.
-  if (search) {
-    console.error(`SPARKS TRANSACTIONS SEARCH DEBUG: search="${search}" error=${error ? JSON.stringify(error) : "none"} rowCount=${data?.length ?? 0} totalCount=${count ?? 0}`);
-  }
 
   if (error) {
     res.status(500).json({ error: `Failed to load transactions: ${error.message}` });
