@@ -276,16 +276,43 @@ router.get("/matches", requireAuth, async (req, res): Promise<void> => {
     return !blockedIds.has(partnerId);
   });
 
+  // Deliberately NOT is_read-based — see migration_match_last_viewed.sql
+  // and messages.ts's own comment for why. is_read is the privacy-gated
+  // read-receipts signal (skipped entirely when the reader has share_
+  // read_receipts off), so it could never reliably answer "does THIS
+  // viewer personally have anything unread in this match" — someone
+  // with receipts off could read every message and this dot would never
+  // clear. user1_last_viewed_at/user2_last_viewed_at (available here
+  // automatically via to_jsonb(m) in the RPC, no query change needed)
+  // are purely personal bookkeeping, written unconditionally regardless
+  // of that setting.
   const matchIds = matches.map((m) => m.id);
   let unreadMatchIds = new Set<string>();
   if (matchIds.length > 0) {
-    const { data: unreadRows } = await supabase
+    const { data: incoming } = await supabase
       .from("messages")
-      .select("match_id")
+      .select("match_id, sent_at")
       .in("match_id", matchIds)
-      .eq("is_read", false)
-      .neq("sender_id", userId);
-    unreadMatchIds = new Set((unreadRows ?? []).map((r) => r.match_id));
+      .neq("sender_id", userId)
+      .eq("is_unsent", false);
+
+    const latestIncomingByMatch = new Map<string, number>();
+    for (const row of incoming ?? []) {
+      const sentAtMs = new Date(row.sent_at).getTime();
+      const current = latestIncomingByMatch.get(row.match_id);
+      if (current === undefined || sentAtMs > current) {
+        latestIncomingByMatch.set(row.match_id, sentAtMs);
+      }
+    }
+
+    for (const m of matches as Record<string, any>[]) {
+      const latestIncomingAt = latestIncomingByMatch.get(m.id);
+      if (latestIncomingAt === undefined) continue;
+      const myLastViewedAt = m.user1_id === userId ? m.user1_last_viewed_at : m.user2_last_viewed_at;
+      if (!myLastViewedAt || latestIncomingAt > new Date(myLastViewedAt).getTime()) {
+        unreadMatchIds.add(m.id);
+      }
+    }
   }
 
   // Lazily catches any 48h-expired unlock attempts across the WHOLE
@@ -344,7 +371,7 @@ router.get("/matches/indicator-status", requireAuth, async (req, res): Promise<v
   const fetchMyMatches = () =>
     supabase
       .from("matches")
-      .select("id, created_at, user1_id, user2_id")
+      .select("id, created_at, user1_id, user2_id, user1_last_viewed_at, user2_last_viewed_at")
       .or(`user1_id.eq.${userId},user2_id.eq.${userId}`);
 
   const partnerIdOf = (m: Record<string, any>) => (m.user1_id === userId ? m.user2_id : m.user1_id);
@@ -364,23 +391,46 @@ router.get("/matches/indicator-status", requireAuth, async (req, res): Promise<v
       `userId=${userId} indicator-status`,
     ),
   ]);
-  const myMatches = matchesResult.data;
+  const myMatches = matchesResult.data ?? [];
 
   const lastViewedAt = viewerProfile?.matches_last_viewed_at
     ? new Date(viewerProfile.matches_last_viewed_at)
     : new Date(0);
-  const hasNewMatch = (myMatches ?? []).some((m) => new Date(m.created_at) > lastViewedAt);
+  const hasNewMatch = myMatches.some((m) => new Date(m.created_at) > lastViewedAt);
 
-  const matchIds = (myMatches ?? []).map((m) => m.id);
+  // Deliberately NOT is_read-based — see migration_match_last_viewed.sql
+  // and messages.ts's own comment for why. is_read is the privacy-gated
+  // read-receipts signal (skipped entirely when the reader has share_
+  // read_receipts off), so it could never reliably answer "does THIS
+  // viewer personally have anything unread" — someone with receipts off
+  // could read every message and this indicator would never clear.
+  // user1_last_viewed_at/user2_last_viewed_at are purely personal
+  // bookkeeping, written unconditionally regardless of that setting.
+  const matchIds = myMatches.map((m) => m.id);
   let hasUnreadMessage = false;
   if (matchIds.length > 0) {
-    const { count } = await supabase
+    const { data: incoming } = await supabase
       .from("messages")
-      .select("id", { count: "exact", head: true })
+      .select("match_id, sent_at")
       .in("match_id", matchIds)
-      .eq("is_read", false)
-      .neq("sender_id", userId);
-    hasUnreadMessage = (count ?? 0) > 0;
+      .neq("sender_id", userId)
+      .eq("is_unsent", false);
+
+    const latestIncomingByMatch = new Map<string, number>();
+    for (const row of incoming ?? []) {
+      const sentAtMs = new Date(row.sent_at).getTime();
+      const current = latestIncomingByMatch.get(row.match_id);
+      if (current === undefined || sentAtMs > current) {
+        latestIncomingByMatch.set(row.match_id, sentAtMs);
+      }
+    }
+
+    hasUnreadMessage = myMatches.some((m) => {
+      const latestIncomingAt = latestIncomingByMatch.get(m.id);
+      if (latestIncomingAt === undefined) return false;
+      const myLastViewedAt = m.user1_id === userId ? m.user1_last_viewed_at : m.user2_last_viewed_at;
+      return !myLastViewedAt || latestIncomingAt > new Date(myLastViewedAt).getTime();
+    });
   }
 
   res.json({ indicator: hasNewMatch || hasUnreadMessage });
