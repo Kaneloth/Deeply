@@ -1644,19 +1644,238 @@ router.post("/admin/users/:userId/sparks", requireAuth, requireAdminScope("manag
   res.json({ balance: newBalance });
 });
 
-/** GET /api/admin/sparks/transactions — recent ledger, optionally filtered
- *  by user. */
-router.get("/admin/sparks/transactions", requireAuth, requireAdminScope("manage_sparks"), async (req, res): Promise<void> => {
-  const { userId } = req.query as { userId?: string };
-  let query = supabase.from("sparks_transactions").select("*").order("created_at", { ascending: false }).limit(200);
-  if (userId) query = query.eq("user_id", userId);
-  const { data, error } = await query;
+// ============================================================
+// Admin financial reporting — Transactions (real-money flow) and
+// Sparks Transactions (usage ledger). Both support pagination, filters,
+// CSV export, and row deletion, per the same shape/conventions.
+// ============================================================
+
+function csvEscape(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  const str = String(value);
+  if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+const PAGE_SIZES = [10, 50, 100] as const;
+function parsePagination(query: Record<string, unknown>): { page: number; pageSize: number } {
+  const page = Math.max(1, parseInt(String(query.page ?? "1"), 10) || 1);
+  const requestedSize = parseInt(String(query.page_size ?? "10"), 10);
+  const pageSize = (PAGE_SIZES as readonly number[]).includes(requestedSize) ? requestedSize : 10;
+  return { page, pageSize };
+}
+
+// Each source table's real primary key column, confirmed directly
+// against the actual schema — google_play_purchases and
+// payfast_transactions do NOT have a column literally called "id"
+// (they use purchase_token and m_payment_id respectively as their sole
+// primary key); only identity_verification_payments does. See
+// migration_admin_transaction_views.sql for the same finding.
+const TRANSACTION_TABLE_BY_TYPE: Record<string, { table: string; idColumn: string }> = {
+  google_pay_sparks: { table: "google_play_purchases", idColumn: "purchase_token" },
+  payfast_sparks: { table: "payfast_transactions", idColumn: "m_payment_id" },
+  id_verification: { table: "identity_verification_payments", idColumn: "id" },
+};
+
+function applyTransactionFilters(
+  query: any,
+  params: { type?: string; date_from?: string; date_to?: string; search?: string },
+) {
+  if (params.type) query = query.eq("transaction_type", params.type);
+  if (params.date_from) query = query.gte("transaction_date", params.date_from);
+  if (params.date_to) query = query.lte("transaction_date", params.date_to);
+  if (params.search) {
+    // Matches either the display name or a pasted user_id — admins
+    // realistically search by whichever one they currently have on
+    // screen (e.g. copying a user_id from a support ticket).
+    query = query.or(`user_name.ilike.%${params.search}%,user_id.ilike.%${params.search}%`);
+  }
+  return query;
+}
+
+/** GET /api/admin/transactions — paginated, filterable view over every
+ *  real-money transaction (Google Pay Sparks purchases, PayFast Sparks
+ *  purchases, ID verification payments). See
+ *  migration_admin_transaction_views.sql for why Google Pay rows always
+ *  have a null amount_zar — that's a genuine gap in what Google Play
+ *  tells this backend, not a bug here. */
+router.get("/admin/transactions", requireAuth, requireAdminScope("manage_sparks"), async (req, res): Promise<void> => {
+  const { page, pageSize } = parsePagination(req.query as Record<string, unknown>);
+  const { type, date_from, date_to, search } = req.query as Record<string, string | undefined>;
+
+  let query = supabase.from("admin_transactions_view").select("*", { count: "exact" });
+  query = applyTransactionFilters(query, { type, date_from, date_to, search });
+
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+  const { data, count, error } = await query.order("transaction_date", { ascending: false }).range(from, to);
+
   if (error) {
     res.status(500).json({ error: `Failed to load transactions: ${error.message}` });
     return;
   }
-  res.json(data ?? []);
+  res.json({ rows: data ?? [], totalCount: count ?? 0, page, pageSize });
 });
+
+/** GET /api/admin/transactions/export — same filters as above, no
+ *  pagination, full CSV of the filtered set. */
+router.get("/admin/transactions/export", requireAuth, requireAdminScope("manage_sparks"), async (req, res): Promise<void> => {
+  const { type, date_from, date_to, search } = req.query as Record<string, string | undefined>;
+
+  let query = supabase.from("admin_transactions_view").select("*");
+  query = applyTransactionFilters(query, { type, date_from, date_to, search });
+
+  const { data, error } = await query.order("transaction_date", { ascending: false });
+  if (error) {
+    res.status(500).json({ error: `Failed to export transactions: ${error.message}` });
+    return;
+  }
+
+  const header = "id,user_id,user_name,transaction_type,transaction_date,amount_zar,package_label";
+  const rows = (data ?? []).map((r: Record<string, any>) =>
+    [r.id, r.user_id, csvEscape(r.user_name), r.transaction_type, r.transaction_date, r.amount_zar ?? "", csvEscape(r.package_label)].join(","),
+  );
+  const csv = [header, ...rows].join("\n");
+
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename="transactions_export_${Date.now()}.csv"`);
+  res.send(csv);
+});
+
+/** DELETE /api/admin/transactions/:type/:id — hard delete, per explicit
+ *  admin decision (understanding this permanently removes a real
+ *  payment record — see this route's own history for the reasoning).
+ *  :type identifies which underlying table :id actually belongs to,
+ *  since admin_transactions_view merges three separate tables whose id
+ *  values are not globally unique across each other. */
+router.delete(
+  "/admin/transactions/:type/:id",
+  requireAuth,
+  requireAdminScope("manage_sparks"),
+  async (req, res): Promise<void> => {
+    const { type, id } = req.params;
+    const mapping = TRANSACTION_TABLE_BY_TYPE[type];
+    if (!mapping) {
+      res.status(400).json({ error: "Invalid transaction type" });
+      return;
+    }
+    const { error } = await supabase.from(mapping.table).delete().eq(mapping.idColumn, id);
+    if (error) {
+      res.status(500).json({ error: `Failed to delete transaction: ${error.message}` });
+      return;
+    }
+    res.sendStatus(204);
+  },
+);
+
+function applySparksFilters(
+  query: any,
+  params: { reason?: string; date_from?: string; date_to?: string; search?: string },
+) {
+  if (params.reason) query = query.eq("reason", params.reason);
+  if (params.date_from) query = query.gte("created_at", params.date_from);
+  if (params.date_to) query = query.lte("created_at", params.date_to);
+  if (params.search) {
+    query = query.or(`user_name.ilike.%${params.search}%,user_id.ilike.%${params.search}%`);
+  }
+  return query;
+}
+
+/** GET /api/admin/sparks/transactions — paginated, filterable Sparks
+ *  usage ledger. Replaces the previous unpaginated, unfiltered version
+ *  (plain array response, hardcoded 200-row limit) — kept the same
+ *  path since nothing about the underlying data changed, just what this
+ *  endpoint can now do with it. Response shape did change (now
+ *  {rows, totalCount, page, pageSize} instead of a bare array), which
+ *  is why AdminDashboard.tsx's SparksSection needed updating alongside
+ *  this. */
+router.get("/admin/sparks/transactions", requireAuth, requireAdminScope("manage_sparks"), async (req, res): Promise<void> => {
+  const { page, pageSize } = parsePagination(req.query as Record<string, unknown>);
+  const { reason, date_from, date_to, search } = req.query as Record<string, string | undefined>;
+
+  let query = supabase.from("admin_sparks_transactions_view").select("*", { count: "exact" });
+  query = applySparksFilters(query, { reason, date_from, date_to, search });
+
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+  const { data, count, error } = await query.order("created_at", { ascending: false }).range(from, to);
+
+  if (error) {
+    res.status(500).json({ error: `Failed to load transactions: ${error.message}` });
+    return;
+  }
+  res.json({ rows: data ?? [], totalCount: count ?? 0, page, pageSize });
+});
+
+/** GET /api/admin/sparks/transactions/reasons — distinct reason values
+ *  currently in use, to populate the filter dropdown without hardcoding
+ *  every reason string ever passed to spendSparks/addPaidSparks (which
+ *  changes as features are added/removed). */
+router.get(
+  "/admin/sparks/transactions/reasons",
+  requireAuth,
+  requireAdminScope("manage_sparks"),
+  async (req, res): Promise<void> => {
+    const { data, error } = await supabase.rpc("get_distinct_sparks_reasons");
+    if (error) {
+      res.status(500).json({ error: `Failed to load reasons: ${error.message}` });
+      return;
+    }
+    res.json((data ?? []).map((r: { reason: string }) => r.reason));
+  },
+);
+
+/** GET /api/admin/sparks/transactions/export — same filters as the list
+ *  route, no pagination, full CSV of the filtered set. */
+router.get(
+  "/admin/sparks/transactions/export",
+  requireAuth,
+  requireAdminScope("manage_sparks"),
+  async (req, res): Promise<void> => {
+    const { reason, date_from, date_to, search } = req.query as Record<string, string | undefined>;
+
+    let query = supabase.from("admin_sparks_transactions_view").select("*");
+    query = applySparksFilters(query, { reason, date_from, date_to, search });
+
+    const { data, error } = await query.order("created_at", { ascending: false });
+    if (error) {
+      res.status(500).json({ error: `Failed to export transactions: ${error.message}` });
+      return;
+    }
+
+    const header = "id,user_id,user_name,amount,reason,balance_after,created_at";
+    const rows = (data ?? []).map((r: Record<string, any>) =>
+      [r.id, r.user_id, csvEscape(r.user_name), r.amount, csvEscape(r.reason), r.balance_after, r.created_at].join(","),
+    );
+    const csv = [header, ...rows].join("\n");
+
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="sparks_transactions_export_${Date.now()}.csv"`);
+    res.send(csv);
+  },
+);
+
+/** DELETE /api/admin/sparks/transactions/:id — hard delete. Per explicit
+ *  admin decision, this table's deletion leaves a gap in the
+ *  balance_after sequence for that user's later transactions — the
+ *  admin dashboard warns about this specifically at the point of
+ *  deletion, every time, rather than a one-time notice. */
+router.delete(
+  "/admin/sparks/transactions/:id",
+  requireAuth,
+  requireAdminScope("manage_sparks"),
+  async (req, res): Promise<void> => {
+    const { id } = req.params;
+    const { error } = await supabase.from("sparks_transactions").delete().eq("id", id);
+    if (error) {
+      res.status(500).json({ error: `Failed to delete transaction: ${error.message}` });
+      return;
+    }
+    res.sendStatus(204);
+  },
+);
 
 /** GET /api/admin/announcements — full list for admin management */
 router.get("/admin/announcements", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
