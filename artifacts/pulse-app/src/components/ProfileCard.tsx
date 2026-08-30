@@ -284,39 +284,6 @@ export function ProfileCard({
         <div className="relative w-full h-full min-h-full bg-muted">
           <PhotoCarousel photos={photos} name={profile.name} active={active} />
 
-          {/* Voice Question — deliberately placed on the photo itself,
-              near the top, not folded away below the details section
-              like the older static audio_prompts. The whole point of
-              this feature is to feel alive and be seen immediately,
-              not discovered only after scrolling past the photo.
-              top-14 (not top-3) is deliberate: pages that host
-              ProfileCard in an expanded/detail view (confirmed in
-              SearchPage's ProfileDetailOverlay, likely true elsewhere
-              too) commonly place their own back button at top-3 left-3
-              with a higher z-index — this sat in the exact same spot
-              and rendered underneath it, invisible and unreachable. */}
-          {profile.voice_question && (
-            <div className="absolute top-14 left-3 right-3 z-10 flex items-center gap-2">
-              <button
-                onClick={togglePlayVoiceQuestion}
-                className="flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-full bg-black/50 backdrop-blur-sm text-white text-xs font-semibold"
-              >
-                <span className="w-6 h-6 rounded-full bg-gradient-accent flex items-center justify-center shrink-0">
-                  {isPlayingVoiceQuestion ? <Pause size={11} /> : <Play size={11} />}
-                </span>
-                Voice Question
-              </button>
-              {canReplyToVoiceQuestion && onReplyToVoiceQuestion && (
-                <button
-                  onClick={() => setShowReplyRecorder(true)}
-                  className="flex items-center gap-1.5 pl-2.5 pr-3 py-1.5 rounded-full bg-gradient-accent text-white text-xs font-semibold shrink-0"
-                >
-                  <Mic size={13} /> Reply
-                </button>
-              )}
-            </div>
-          )}
-
           <div
             className="absolute bottom-0 left-0 right-0 h-32 pointer-events-none"
             style={{
@@ -369,6 +336,36 @@ export function ProfileCard({
               <div className="flex items-center gap-1 text-white/70 text-xs mt-0.5">
                 <Search size={12} />
                 <span className="text-white/90 font-medium">{relationshipLabel}</span>
+              </div>
+            )}
+            {/* Voice Question — moved here (grouped with the other
+                at-a-glance info at the bottom) after it previously sat
+                as its own separate floating element nearer the top,
+                which competed with the photo itself for attention and
+                looked disconnected from everything else on the card.
+                pointer-events-auto opts back into clicks here, since
+                the whole bottom-overlay container above is
+                pointer-events-none (so taps normally pass through to
+                the photo/carousel underneath it). */}
+            {profile.voice_question && (
+              <div className="flex items-center gap-2 mt-2 pointer-events-auto">
+                <button
+                  onClick={togglePlayVoiceQuestion}
+                  className="flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-full bg-black/50 backdrop-blur-sm text-white text-xs font-semibold"
+                >
+                  <span className="w-6 h-6 rounded-full bg-gradient-accent flex items-center justify-center shrink-0">
+                    {isPlayingVoiceQuestion ? <Pause size={11} /> : <Play size={11} />}
+                  </span>
+                  Voice Question
+                </button>
+                {canReplyToVoiceQuestion && onReplyToVoiceQuestion && (
+                  <button
+                    onClick={() => setShowReplyRecorder(true)}
+                    className="flex items-center gap-1.5 pl-2.5 pr-3 py-1.5 rounded-full bg-gradient-accent text-white text-xs font-semibold shrink-0"
+                  >
+                    <Mic size={13} /> Reply
+                  </button>
+                )}
               </div>
             )}
           </div>
