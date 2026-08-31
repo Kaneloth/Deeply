@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
+import { UpdateBanner } from "@/components/UpdateBanner";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { TextSizeProvider } from "@/contexts/TextSizeContext";
 import { DiscoverControlsProvider } from "@/contexts/DiscoverControlsContext";
@@ -197,6 +198,7 @@ function AppShellInner({ children }: AppShellProps) {
   return (
     <div className="w-full max-w-[430px] mx-auto h-[100dvh] bg-background relative flex flex-col overflow-hidden overscroll-y-none">
       <TopBar />
+      <UpdateBanner />
       <AnnouncementBanner />
 
       {/* overscroll-y-none is the fix for a real glitch: without it, the
