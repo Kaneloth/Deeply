@@ -6,10 +6,10 @@ import { Input } from "@/components/ui/input";
 import {
   X, Users, Flag, Coins, Megaphone, LayoutDashboard, Loader2, Search,
   Ban, ShieldOff, Crown, Plus, Trash2, CheckCircle2, XCircle, ChevronLeft,
-  ChevronRight, ShieldCheck, AlertTriangle, RefreshCw, Sliders, Receipt,
+  ChevronRight, ShieldCheck, AlertTriangle, RefreshCw, Sliders, Receipt, Mail,
 } from "lucide-react";
 
-type Section = "overview" | "reports" | "users" | "sparks" | "transactions" | "economy" | "announcements" | "verification";
+type Section = "overview" | "reports" | "users" | "sparks" | "transactions" | "economy" | "announcements" | "verification" | "waitlist";
 type AdminScope = "manage_reports" | "manage_users" | "manage_sparks" | "view_analytics";
 
 const SECTIONS: { key: Section; label: string; icon: any; scope: AdminScope }[] = [
@@ -21,13 +21,14 @@ const SECTIONS: { key: Section; label: string; icon: any; scope: AdminScope }[] 
   { key: "transactions", label: "Transactions", icon: Receipt, scope: "manage_sparks" },
   { key: "economy", label: "Pricing", icon: Sliders, scope: "manage_sparks" },
   { key: "announcements", label: "Announcements", icon: Megaphone, scope: "manage_users" },
+  { key: "waitlist", label: "Waiting List", icon: Mail, scope: "manage_users" },
 ];
 
 const NAV_GROUPS: { label: string; keys: Section[] }[] = [
   { label: "Overview", keys: ["overview"] },
   { label: "People & Safety", keys: ["reports", "users", "verification"] },
   { label: "Money", keys: ["sparks", "transactions", "economy"] },
-  { label: "Communication", keys: ["announcements"] },
+  { label: "Communication", keys: ["announcements", "waitlist"] },
 ];
 
 const MODERATION_REASONS = [
@@ -70,6 +71,7 @@ export function AdminDashboard({ access, onClose }: { access: AdminAccess; onClo
       {section === "economy" && <EconomySection token={token} toast={toast} />}
       {section === "verification" && <AdminVerificationSection token={token} toast={toast} />}
       {section === "announcements" && <AnnouncementsSection token={token} toast={toast} />}
+      {section === "waitlist" && <WaitlistSection token={token} toast={toast} />}
     </>
   );
 
@@ -2187,7 +2189,182 @@ function AnnouncementsSection({ token, toast }: { token: string | null; toast: a
 }
 
 // ============================================================
-// Shared admin data-table utilities — used by both TransactionsSection
+// Waiting list — shows who's signed up per city, and sends launch
+// notifications (email via Brevo, SMS via BulkSMS) to everyone in a
+// chosen city, via whichever method each person picked when they
+// joined. Deliberately doesn't touch any "is this city live" flag or
+// remove anyone from the list — that's a separate, larger city-gating
+// concern for the app itself that doesn't exist yet. This is purely
+// the notification-sending piece.
+// ============================================================
+function WaitlistSection({ token, toast }: { token: string | null; toast: any }) {
+  const [cities, setCities] = useState<{ city: string; count: number }[]>([]);
+  const [citiesLoading, setCitiesLoading] = useState(true);
+  const [selectedCity, setSelectedCity] = useState("");
+  const [members, setMembers] = useState<any[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [lastResult, setLastResult] = useState<{ sent: number; failed: number; failures: { email: string; reason: string }[] } | null>(null);
+
+  const fetchCities = useCallback(async () => {
+    setCitiesLoading(true);
+    try {
+      const res = await fetch("/api/admin/waitlist/cities", { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (res.ok) setCities(data ?? []);
+    } finally {
+      setCitiesLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Run once on mount only — same reasoning as every other section in
+  // this file (AnnouncementsSection, EconomySection, etc.): depending
+  // on [token] directly re-ran this on every background token refresh.
+  useEffect(() => {
+    fetchCities();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const viewCity = async (city: string) => {
+    setSelectedCity(city);
+    setLastResult(null);
+    setMembersLoading(true);
+    try {
+      const res = await fetch(`/api/admin/waitlist?city=${encodeURIComponent(city)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok) setMembers(data ?? []);
+    } catch {
+      toast({ title: "Error", description: "Failed to load waitlist members.", variant: "destructive" });
+    } finally {
+      setMembersLoading(false);
+    }
+  };
+
+  const sendNotifications = async () => {
+    if (!selectedCity) return;
+    const confirmed = window.confirm(
+      `Send a launch notification to all ${members.length} waitlist member(s) in ${selectedCity}? This actually sends real emails/SMS right now — not a preview.`,
+    );
+    if (!confirmed) return;
+
+    setSending(true);
+    setLastResult(null);
+    try {
+      const res = await fetch("/api/admin/waitlist/notify", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ city: selectedCity }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to send notifications");
+      setLastResult(data);
+      toast({
+        title: "Notifications sent",
+        description: `${data.sent} sent, ${data.failed} failed.`,
+        variant: data.failed > 0 ? "destructive" : "default",
+      });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to send notifications.",
+        variant: "destructive",
+      });
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-muted-foreground">
+          Sends a real notification right now to everyone on the waiting list for the selected city — via email
+          (Brevo) or SMS (BulkSMS), whichever they chose when signing up.
+        </p>
+        <Button variant="outline" size="sm" onClick={fetchCities} className="h-8 gap-1.5 shrink-0 ml-3">
+          <RefreshCw size={13} /> Refresh
+        </Button>
+      </div>
+
+      {citiesLoading ? (
+        <CenteredLoader />
+      ) : cities.length === 0 ? (
+        <EmptyNote text="No one has joined the waiting list yet." />
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {cities.map((c) => (
+            <button
+              key={c.city}
+              onClick={() => viewCity(c.city)}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                selectedCity === c.city
+                  ? "bg-gradient-accent text-white border-transparent"
+                  : "bg-card border-card-border text-foreground hover:border-primary"
+              }`}
+            >
+              {c.city} ({c.count})
+            </button>
+          ))}
+        </div>
+      )}
+
+      {selectedCity && (
+        <div className="bg-card border border-card-border rounded-xl p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="font-['Syne'] font-bold text-sm">{selectedCity}</h3>
+            <Button
+              size="sm"
+              onClick={sendNotifications}
+              disabled={sending || membersLoading || members.length === 0}
+              className="h-8 gap-1.5"
+            >
+              <Mail size={13} />
+              {sending ? "Sending..." : `Notify ${members.length} member${members.length === 1 ? "" : "s"}`}
+            </Button>
+          </div>
+
+          {membersLoading ? (
+            <CenteredLoader />
+          ) : members.length === 0 ? (
+            <EmptyNote text="No one on the waiting list for this city." />
+          ) : (
+            <div className="space-y-1.5 max-h-60 overflow-y-auto">
+              {members.map((m) => (
+                <div key={m.id} className="flex items-center justify-between text-xs py-1.5 border-b border-card-border last:border-0">
+                  <span className="truncate">{m.email}</span>
+                  <span className="text-muted-foreground shrink-0 ml-2">
+                    {m.notification_method === "sms" ? `SMS · ${m.phone}` : "Email"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {lastResult && (
+            <div className="pt-2 border-t border-card-border text-xs space-y-1">
+              <p className={lastResult.failed > 0 ? "text-destructive font-semibold" : "text-green-500 font-semibold"}>
+                {lastResult.sent} sent, {lastResult.failed} failed
+              </p>
+              {lastResult.failures.map((f, i) => (
+                <p key={i} className="text-muted-foreground">
+                  {f.email}: {f.reason}
+                </p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 // and SparksSection below, since they need identical pagination,
 // filtering, refresh, and CSV export behavior over two different
 // endpoints and row shapes.

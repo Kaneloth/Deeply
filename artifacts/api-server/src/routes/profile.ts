@@ -3057,4 +3057,156 @@ router.put("/admin/economy-config", requireAuth, requireAdminScope("manage_spark
   res.sendStatus(204);
 });
 
+// ============================================================
+// Admin — waiting list management & launch notifications. Reads/writes
+// the same `waitlist` table the landing page's public form inserts
+// into (via the anon key, RLS-restricted to insert-only there). This
+// backend's `supabase` client uses the service-role key, which bypasses
+// RLS entirely — that's what makes SELECT actually possible here,
+// unlike the landing page's own client-side calls.
+// ============================================================
+
+const BREVO_API_KEY = process.env.BREVO_API_KEY;
+const BULKSMS_TOKEN_ID = process.env.BULKSMS_TOKEN_ID;
+const BULKSMS_TOKEN_SECRET = process.env.BULKSMS_TOKEN_SECRET;
+
+/** South African numbers are collected on the landing page in local
+ *  format (e.g. "082 123 4567") — BulkSMS needs international format
+ *  for reliable delivery. Converts a leading "0" to "+27"; leaves
+ *  anything already starting with "+" untouched. Not a full phone
+ *  validation library, just enough to handle the realistic input this
+ *  specific form actually produces. */
+function toE164SouthAfrica(raw: string): string {
+  const trimmed = raw.replace(/[\s-]/g, "");
+  if (trimmed.startsWith("+")) return trimmed;
+  if (trimmed.startsWith("0")) return `+27${trimmed.slice(1)}`;
+  return trimmed;
+}
+
+async function sendWaitlistEmail(toEmail: string, city: string): Promise<void> {
+  const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "api-key": BREVO_API_KEY ?? "",
+    },
+    body: JSON.stringify({
+      sender: { name: "Deeply", email: "support@deeplydating.co.za" },
+      to: [{ email: toEmail }],
+      subject: `Deeply is now live in ${city}! 🎉`,
+      htmlContent: `<p>Great news — Deeply is officially live in ${city}!</p><p>You're among the first to know. <a href="https://app.deeplydating.co.za">Create your account</a> and start connecting.</p><p>See you on the app,<br/>The Deeply Team</p>`,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Brevo error ${res.status}: ${body}`);
+  }
+}
+
+async function sendWaitlistSms(toPhone: string, city: string): Promise<void> {
+  const auth = Buffer.from(`${BULKSMS_TOKEN_ID}:${BULKSMS_TOKEN_SECRET}`).toString("base64");
+  const res = await fetch("https://api.bulksms.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Basic ${auth}`,
+    },
+    body: JSON.stringify({
+      to: toE164SouthAfrica(toPhone),
+      body: `Deeply is now live in ${city}! Create your account: https://app.deeplydating.co.za`,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`BulkSMS error ${res.status}: ${body}`);
+  }
+}
+
+/** GET /api/admin/waitlist/cities — distinct cities currently on the
+ *  waitlist with a count each, so the admin dashboard can show "Cape
+ *  Town (14)" style options rather than a blind text input. */
+router.get("/admin/waitlist/cities", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const { data, error } = await supabase.from("waitlist").select("city");
+
+  if (error) {
+    res.status(500).json({ error: `Failed to load waitlist cities: ${error.message}` });
+    return;
+  }
+
+  const counts = new Map<string, number>();
+  for (const row of data ?? []) {
+    const city = row.city ?? "Unspecified";
+    counts.set(city, (counts.get(city) ?? 0) + 1);
+  }
+
+  const cities = Array.from(counts.entries())
+    .map(([city, count]) => ({ city, count }))
+    .sort((a, b) => b.count - a.count);
+
+  res.json(cities);
+});
+
+/** GET /api/admin/waitlist — full waitlist, optionally filtered by
+ *  city, for reviewing before sending. */
+router.get("/admin/waitlist", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const { city } = req.query as { city?: string };
+
+  let query = supabase.from("waitlist").select("*").order("created_at", { ascending: false });
+  if (city) query = query.eq("city", city);
+
+  const { data, error } = await query;
+  if (error) {
+    res.status(500).json({ error: `Failed to load waitlist: ${error.message}` });
+    return;
+  }
+
+  res.json(data ?? []);
+});
+
+/** POST /api/admin/waitlist/notify — sends a launch notification to
+ *  every waitlist member in the given city, via their own chosen
+ *  method (email through Brevo, SMS through BulkSMS). Does not remove
+ *  anyone from the waitlist or flip any "city is live" flag — this is
+ *  purely the notification-sending piece, deliberately scoped that way
+ *  so it can be tested and used independently of any larger
+ *  city-gating system on the app itself, which doesn't exist yet. */
+router.post("/admin/waitlist/notify", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const { city } = req.body as { city?: string };
+  if (!city) {
+    res.status(400).json({ error: "city is required" });
+    return;
+  }
+
+  const { data: members, error } = await supabase.from("waitlist").select("*").eq("city", city);
+  if (error) {
+    res.status(500).json({ error: `Failed to load waitlist for ${city}: ${error.message}` });
+    return;
+  }
+
+  const results: { sent: number; failed: number; failures: { email: string; reason: string }[] } = {
+    sent: 0,
+    failed: 0,
+    failures: [],
+  };
+
+  for (const member of members ?? []) {
+    try {
+      if (member.notification_method === "sms" && member.phone) {
+        await sendWaitlistSms(member.phone, city);
+      } else {
+        await sendWaitlistEmail(member.email, city);
+      }
+      results.sent++;
+    } catch (err) {
+      results.failed++;
+      results.failures.push({
+        email: member.email,
+        reason: err instanceof Error ? err.message : "Unknown error",
+      });
+    }
+  }
+
+  res.json(results);
+});
+
 export default router;
