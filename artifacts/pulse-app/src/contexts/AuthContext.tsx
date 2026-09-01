@@ -20,27 +20,6 @@ const EXPIRES_AT_KEY = "deeply_expires_at";
 // registered refresh token gets rotated out from under it.
 const BIOMETRIC_REFRESH_TOKEN_KEY = "deeply_biometric_refresh_token";
 const SIGNIN_METHOD_KEY = "deeply_signin_method";
-const GOOGLE_WEB_CLIENT_ID = "994284965352-vhmhm0pv3jt451b3nemha4119uj2vbr4.apps.googleusercontent.com";
-
-// GoogleSignIn.initialize() is asynchronous. Keep one shared promise so
-// AuthPage can safely await it even when the user taps Google immediately
-// after the native login screen appears.
-let googleSignInInitialization: Promise<void> | null = null;
-
-export function initializeGoogleSignIn(): Promise<void> {
-  if (!Capacitor.isNativePlatform()) return Promise.resolve();
-  if (!googleSignInInitialization) {
-    googleSignInInitialization = GoogleSignIn.initialize({
-      // This must be the Web OAuth client ID on Android too; the plugin uses
-      // it as the server client ID for the credential returned to Supabase.
-      clientId: GOOGLE_WEB_CLIENT_ID,
-    }).catch((error) => {
-      googleSignInInitialization = null;
-      throw error;
-    });
-  }
-  return googleSignInInitialization;
-}
 
 // Refresh this many ms before actual expiry, so we never hand out a token
 // that's about to die mid-request.
@@ -59,7 +38,9 @@ interface AuthContextType {
   // Once true, stays true permanently — onboarding completion is a
   // one-way transition, so there's never a need to re-verify an
   // already-onboarded account. While false (or null), ProtectedRoute
-  // re-checks fresh on every navigation to a guarded route.
+  // re-checks fresh on every navigation to a guarded route, which is
+  // what lets it pick up a just-completed onboarding immediately
+  // without OnboardingPage needing to explicitly announce it.
   onboardingCompleted: boolean | null;
   checkOnboardingStatus: () => Promise<void>;
 }
@@ -95,6 +76,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(EXPIRES_AT_KEY);
     setAuthTokenGetter(() => null);
     setToken(null);
+    // Without this, the NEXT account to log in on this device would
+    // briefly inherit whatever onboarding state the PREVIOUS account
+    // left behind — the exact same class of cross-account leak
+    // queryClient.clear() below exists to prevent, just for this one
+    // new field specifically.
     setOnboardingCompleted(null);
     setSentryUser(null);
     if (Capacitor.isNativePlatform()) {
@@ -112,23 +98,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // stale query still says onboarding_completed: false) and a real
     // cross-account data leak risk.
     queryClient.clear();
+    // Same reasoning as queryClient.clear() above, for the separate
+    // localStorage-backed persistent cache used by Search, Invites,
+    // Matches, Preferences, and Profile to show instant content across
+    // full app restarts — without this, that cache is exactly the same
+    // cross-account data leak risk queryClient.clear() exists to prevent,
+    // just via a different storage mechanism.
     clearAllPersistentCaches();
     setLocation("/");
   };
 
-  // Fetch the current onboarding status with the active session token.
+  // Fetches the current onboarding_completed value fresh from the
+  // profile endpoint. Deliberately does NOT trust any cached value on
+  // the way in — ProtectedRoute is the one responsible for skipping
+  // this call once onboardingCompleted is already true, since once
+  // true it can never legitimately become false again for the same
+  // account. This function's own job is simple: go find out, right
+  // now, using whatever the current token is.
   const checkOnboardingStatus = async () => {
     const currentToken = localStorage.getItem(ACCESS_TOKEN_KEY);
     if (!currentToken) {
       setOnboardingCompleted(null);
       return;
     }
-
     try {
       const res = await fetch("/api/profile/me", {
         headers: { Authorization: `Bearer ${currentToken}` },
       });
       if (!res.ok) {
+        // Leave it null (unknown) rather than assuming either true or
+        // false on a failed check — ProtectedRoute treats null as
+        // "still verifying" and will simply try again on the next
+        // navigation, rather than either wrongly locking someone out
+        // or wrongly letting them through because of a transient
+        // network blip.
         setOnboardingCompleted(null);
         return;
       }
@@ -303,7 +306,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // on AuthPage itself.
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
-    initializeGoogleSignIn().catch((err) => {
+    GoogleSignIn.initialize({
+      // The WEB client ID from Google Cloud Console — NOT the Android
+      // client ID. Android's Credential Manager verifies the calling
+      // app via the separate Android OAuth client (package name + SHA-1
+      // fingerprint), but the token it returns asserts this Web client
+      // as its audience, which is what Supabase's signInWithIdToken
+      // expects to see.
+      clientId: "994284965352-vhmhm0pv3jt451b3nemha4119uj2vbr4.apps.googleusercontent.com",
+    }).catch((err) => {
       console.error("Failed to initialize GoogleSignIn:", err);
     });
   }, []);
