@@ -7,6 +7,7 @@ import {
   getSignInMethod,
   disableBiometricSignIn,
   loadBiometricRefreshToken,
+  initializeGoogleSignIn,
 } from "@/contexts/AuthContext";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
@@ -134,6 +135,7 @@ const loginSchema = z.object({
 
 const signupSchema = loginSchema
   .extend({
+    name: z.string().min(2, { message: "Name is required" }),
     confirmPassword: z.string().min(6, { message: "Please confirm your password" }),
   })
   .refine((data) => data.password === data.confirmPassword, {
@@ -245,7 +247,7 @@ export default function AuthPage() {
 
   const signupForm = useForm<z.infer<typeof signupSchema>>({
     resolver: zodResolver(signupSchema),
-    defaultValues: { email: "", password: "", confirmPassword: "" },
+    defaultValues: { email: "", password: "", confirmPassword: "", name: "" },
   });
 
   const onLoginSubmit = async (data: z.infer<typeof loginSchema>) => {
@@ -265,13 +267,6 @@ export default function AuthPage() {
 
       if (!res.ok) throw new Error(body.error ?? "Login failed");
       login(body.access_token, body.refresh_token, body.expires_in);
-      // Previously this always went straight to /discover, unlike
-      // biometric and Google login (both already check this) — so an
-      // account that never finished onboarding for any reason would
-      // silently land in Discover via password login instead of being
-      // sent back to finish onboarding, masking the account's real
-      // state rather than fixing it. Password login should behave the
-      // same as every other login method.
       try {
         const profileRes = await fetch("/api/profile/me", {
           headers: { Authorization: `Bearer ${body.access_token}` },
@@ -296,8 +291,7 @@ export default function AuthPage() {
     setIsLoading(true);
     try {
       // confirmPassword only exists for client-side validation — the
-      // backend just needs email and password. Name is collected during
-      // onboarding instead, not at signup — see OnboardingPage.tsx.
+      // backend just needs email, password, and name.
       const { confirmPassword, ...payload } = data;
       const res = await fetch("/api/auth/signup", {
         method: "POST",
@@ -418,6 +412,10 @@ export default function AuthPage() {
     // lose track of in the first place.
     if (Capacitor.isNativePlatform()) {
       try {
+        // AuthContext starts initialization on mount, but the user can tap
+        // immediately. The plugin requires initialize() to have completed
+        // before signIn(), so await the shared promise here as well.
+        await initializeGoogleSignIn();
         const result = await GoogleSignIn.signIn();
         if (!result?.idToken) {
           throw new Error("No ID token returned from Google.");
@@ -453,7 +451,14 @@ export default function AuthPage() {
         // Don't show a scary error toast just because someone backed out
         // of the native account picker.
         const code = (err as { code?: string } | undefined)?.code;
-        if (code !== "canceled" && code !== "cancelled") {
+        const message = err instanceof Error ? err.message.toLowerCase() : "";
+        const wasCancelled =
+          code === "SIGN_IN_CANCELED" ||
+          code === "canceled" ||
+          code === "cancelled" ||
+          message.includes("user cancelled") ||
+          message.includes("user canceled");
+        if (!wasCancelled) {
           toast({
             title: "Error",
             description: err instanceof Error ? err.message : "Google sign-in failed.",
@@ -742,6 +747,19 @@ export default function AuthPage() {
             >
               <Form {...signupForm}>
                 <form onSubmit={signupForm.handleSubmit(onSignupSubmit)} className="space-y-4">
+                  <FormField
+                    control={signupForm.control}
+                    name="name"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>First Name</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Alex" {...field} className="bg-card border-card-border" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
                   <FormField
                     control={signupForm.control}
                     name="email"
