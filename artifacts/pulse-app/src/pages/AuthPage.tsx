@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Capacitor } from "@capacitor/core";
-import { GoogleSignIn } from "@capawesome/capacitor-google-sign-in";
+import { GoogleSignIn, ErrorCode as GoogleSignInErrorCode } from "@capawesome/capacitor-google-sign-in";
 import { BiometricAuth, AndroidBiometryStrength } from "@aparajita/capacitor-biometric-auth";
 import {
   useAuth,
@@ -21,6 +21,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Eye, EyeOff, Fingerprint } from "lucide-react";
 import { BlockedAccountScreen, type BlockInfo } from "@/components/BlockedAccountScreen";
 import { supabaseClient } from "@/lib/supabaseClient";
+import { captureError } from "@/lib/sentry";
 
 // Runs the OS-level (or WebAuthn) fingerprint prompt, then exchanges the
 // biometric-gated refresh token for a fresh session via the same
@@ -450,16 +451,47 @@ export default function AuthPage() {
           setLocation("/discover");
         }
       } catch (err) {
-        // Don't show a scary error toast just because someone backed out
-        // of the native account picker.
-        const code = (err as { code?: string } | undefined)?.code;
-        if (code !== "canceled" && code !== "cancelled") {
-          toast({
-            title: "Error",
-            description: err instanceof Error ? err.message : "Google sign-in failed.",
-            variant: "destructive",
-          });
+        const code = (err as { code?: GoogleSignInErrorCode } | undefined)?.code;
+
+        // A genuine cancellation (the person backed out of the native
+        // account picker) is the one case that should stay completely
+        // silent — no toast, no Sentry report, since nothing actually
+        // went wrong.
+        //
+        // Previously this compared code against the plain strings
+        // "canceled"/"cancelled", which never matched the plugin's
+        // actual ErrorCode.SignInCanceled value — meaning this check
+        // never worked, and every single error (including harmless
+        // cancellations) fell through to the toast below regardless.
+        // Comparing against the plugin's real enum value fixes that.
+        if (code === GoogleSignInErrorCode.SignInCanceled) {
+          return;
         }
+
+        let description = err instanceof Error ? err.message : "Google sign-in failed.";
+        if (code === GoogleSignInErrorCode.NoCredentialAvailable) {
+          description = "No Google account is available on this device. Add a Google account in your device settings and try again.";
+        } else if (code === GoogleSignInErrorCode.ProviderConfigurationError) {
+          description = "Google Play services isn't available or needs updating on this device.";
+        }
+
+        // Sent to Sentry so this is diagnosable from the Sentry
+        // dashboard on any computer — no USB debugging or physical
+        // device access needed. Includes the real code and message
+        // exactly as the plugin/Android reported them, which is what
+        // actually distinguishes "missing Android OAuth client
+        // registration" from every other possible failure here.
+        captureError(err, {
+          context: "onGoogleSignIn",
+          code: code ?? "unknown",
+          message: err instanceof Error ? err.message : String(err),
+        });
+
+        toast({
+          title: "Error",
+          description,
+          variant: "destructive",
+        });
       } finally {
         setIsGoogleLoading(false);
       }
