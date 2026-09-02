@@ -453,17 +453,25 @@ export default function AuthPage() {
       } catch (err) {
         const code = (err as { code?: GoogleSignInErrorCode } | undefined)?.code;
 
-        // A genuine cancellation (the person backed out of the native
-        // account picker) is the one case that should stay completely
-        // silent — no toast, no Sentry report, since nothing actually
-        // went wrong.
-        //
-        // Previously this compared code against the plain strings
-        // "canceled"/"cancelled", which never matched the plugin's
-        // actual ErrorCode.SignInCanceled value — meaning this check
-        // never worked, and every single error (including harmless
-        // cancellations) fell through to the toast below regardless.
-        // Comparing against the plugin's real enum value fixes that.
+        // IMPORTANT correction from the previous version of this fix:
+        // SignInCanceled does NOT reliably mean a genuine, harmless
+        // cancellation. Per the plugin's own documented FAQ, Google
+        // Play Services reports a MISSING/MISMATCHED Android OAuth
+        // client registration as this exact same code — the picker
+        // opens, an account gets picked, and it fails immediately
+        // after, indistinguishable from a real cancellation by code
+        // alone. Silently swallowing this entirely (as the previous
+        // version of this fix did) hid the exact diagnostic data
+        // needed to tell these two cases apart. Still no scary toast
+        // for the common, genuinely-harmless case, but this is now
+        // ALWAYS reported to Sentry so real registration failures
+        // remain visible there instead of vanishing silently.
+        captureError(err, {
+          context: "onGoogleSignIn",
+          code: code ?? "unknown",
+          message: err instanceof Error ? err.message : String(err),
+        });
+
         if (code === GoogleSignInErrorCode.SignInCanceled) {
           return;
         }
@@ -474,18 +482,6 @@ export default function AuthPage() {
         } else if (code === GoogleSignInErrorCode.ProviderConfigurationError) {
           description = "Google Play services isn't available or needs updating on this device.";
         }
-
-        // Sent to Sentry so this is diagnosable from the Sentry
-        // dashboard on any computer — no USB debugging or physical
-        // device access needed. Includes the real code and message
-        // exactly as the plugin/Android reported them, which is what
-        // actually distinguishes "missing Android OAuth client
-        // registration" from every other possible failure here.
-        captureError(err, {
-          context: "onGoogleSignIn",
-          code: code ?? "unknown",
-          message: err instanceof Error ? err.message : String(err),
-        });
 
         toast({
           title: "Error",
