@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Capacitor } from "@capacitor/core";
+import { Device } from "@capacitor/device";
 import { GoogleSignIn, ErrorCode as GoogleSignInErrorCode } from "@capawesome/capacitor-google-sign-in";
 import { BiometricAuth, AndroidBiometryStrength } from "@aparajita/capacitor-biometric-auth";
 import {
@@ -300,10 +301,29 @@ export default function AuthPage() {
       // backend just needs email and password. Name is collected during
       // onboarding instead, not at signup — see OnboardingPage.tsx.
       const { confirmPassword, ...payload } = data;
+
+      // Native-only — there's no equally reliable device identifier on
+      // web, so this is simply omitted there (undefined, never sent as
+      // an empty string or fabricated value). This feeds the grant-
+      // abuse cooldown check in sparks-helper.ts; a missing value there
+      // just means that specific defense doesn't apply to this signup,
+      // not an error.
+      let device_id: string | undefined;
+      if (Capacitor.isNativePlatform()) {
+        try {
+          const info = await Device.getId();
+          device_id = info.identifier;
+        } catch {
+          // Non-fatal — signup should never be blocked by a failure to
+          // read a device identifier that's only used for abuse
+          // detection, not required for the account to function.
+        }
+      }
+
       const res = await fetch("/api/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...payload, device_id }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Signup failed");

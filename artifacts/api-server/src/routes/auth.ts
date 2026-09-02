@@ -4,11 +4,49 @@ import { requireAuth } from "../middlewares/auth";
 
 const router: IRouter = Router();
 
+// ============================================================
+// Grant abuse prevention — normalizes an email to catch the common
+// "infinite email addresses" trick most providers unintentionally
+// support: Gmail (and Googlemail) ignore dots in the local part
+// entirely, and virtually every major provider (Gmail, Outlook,
+// Yahoo, iCloud, etc.) supports "+tag" addressing where everything
+// after a "+" is stripped by the provider but still delivers to the
+// same real inbox. Both let someone register what looks like dozens
+// of unique addresses that are all actually the same mailbox — this
+// normalization collapses them back to one canonical form so the
+// grant-cooldown check in sparks-helper.ts can actually catch that.
+//
+// This is deliberately a simple, best-effort normalization, not a
+// full email-provider-aware library — it specifically targets the
+// two tricks that are trivial for anyone to discover and repeat, not
+// every possible provider-specific quirk.
+function normalizeEmail(email: string): string {
+  const trimmed = email.toLowerCase().trim();
+  const atIndex = trimmed.lastIndexOf("@");
+  if (atIndex === -1) return trimmed;
+
+  const localPart = trimmed.slice(0, atIndex);
+  const domain = trimmed.slice(atIndex + 1);
+
+  const withoutPlusTag = localPart.split("+")[0];
+
+  const isGmail = domain === "gmail.com" || domain === "googlemail.com";
+  const finalLocalPart = isGmail ? withoutPlusTag.replace(/\./g, "") : withoutPlusTag;
+  const finalDomain = isGmail ? "gmail.com" : domain; // treat googlemail.com as identical to gmail.com
+
+  return `${finalLocalPart}@${finalDomain}`;
+}
+
 /** POST /api/auth/signup */
 router.post("/auth/signup", async (req, res): Promise<void> => {
-  const { email, password } = req.body as {
+  const { email, password, device_id } = req.body as {
     email?: string;
     password?: string;
+    // Native-only (see AuthPage.tsx) — Capacitor's Device.getId(),
+    // absent entirely for web signups. Optional throughout this whole
+    // route; a missing value just means this specific defense doesn't
+    // apply to this signup, not an error.
+    device_id?: string;
   };
 
   if (!email || !password) {
@@ -39,6 +77,21 @@ router.post("/auth/signup", async (req, res): Promise<void> => {
     res.status(400).json({ error: "Signup failed" });
     return;
   }
+
+  // Stored as soon as the auth user exists, before the email-confirmed
+  // check below — a profiles row for this user id already exists by
+  // this point (created via the on_auth_user_created trigger), and
+  // these two values need to be captured regardless of whether this
+  // signup still needs email confirmation, so the grant-cooldown check
+  // in sparks-helper.ts has them available from this account's very
+  // first monthly grant, whenever that ends up happening.
+  await supabase
+    .from("profiles")
+    .update({
+      signup_device_id: device_id ?? null,
+      normalized_email: normalizeEmail(email),
+    })
+    .eq("id", data.user.id);
 
   if (!data.session) {
     res.status(201).json({
