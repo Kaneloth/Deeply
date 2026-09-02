@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
-import { AppUpdate, AppUpdateAvailability } from "@capawesome/capacitor-app-update";
+import {
+  AppUpdate,
+  AppUpdateAvailability,
+  AppUpdateResultCode,
+  FlexibleUpdateInstallStatus,
+} from "@capawesome/capacitor-app-update";
+import { App as CapacitorApp } from "@capacitor/app";
 import { X, Download, RefreshCw } from "lucide-react";
 
 // This is a genuinely native-only concept — there's no "update
@@ -29,19 +35,9 @@ export function UpdateBanner() {
   const [phase, setPhase] = useState<"idle" | "available" | "downloading" | "downloaded">("idle");
   const [dismissed, setDismissed] = useState(false);
   const listenerHandleRef = useRef<{ remove: () => Promise<void> } | null>(null);
+  const resumeListenerRef = useRef<{ remove: () => Promise<void> } | null>(null);
 
-  useEffect(() => {
-    if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== "android") {
-      // iOS has no equivalent in-app flexible update mechanism at all
-      // (Apple doesn't allow background-downloading an update from
-      // within the app) — the standard pattern there is directing
-      // someone to the App Store page instead, which is a different
-      // enough UX that it's deliberately out of scope here rather than
-      // half-built and untested against a platform this app isn't
-      // even shipping to yet.
-      return;
-    }
-
+  const checkForUpdate = () => {
     AppUpdate.getAppUpdateInfo()
       .then((info) => {
         if (
@@ -56,9 +52,57 @@ export function UpdateBanner() {
         // failing to even check shouldn't interrupt anyone's session
         // with an error they can't do anything about.
       });
+  };
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== "android") {
+      // iOS has no equivalent in-app flexible update mechanism at all
+      // (Apple doesn't allow background-downloading an update from
+      // within the app) — the standard pattern there is directing
+      // someone to the App Store page instead, which is a different
+      // enough UX that it's deliberately out of scope here rather than
+      // half-built and untested against a platform this app isn't
+      // even shipping to yet.
+      return;
+    }
+
+    checkForUpdate();
+
+    // Fallback safety net: if this component is sitting in
+    // "downloading" when the app comes back to the foreground,
+    // re-check the real installStatus directly via getAppUpdateInfo()
+    // rather than trusting only the onFlexibleUpdateStateChange
+    // listener. Play's own consent UI briefly takes over the
+    // foreground during startFlexibleUpdate(), and a JS event listener
+    // in a backgrounded WebView can miss an event fired during that
+    // window — this catches DOWNLOADED (or FAILED/CANCELED) even if
+    // the listener callback never ran.
+    CapacitorApp.addListener("resume", () => {
+      setPhase((current) => {
+        if (current !== "downloading") return current;
+        AppUpdate.getAppUpdateInfo().then((info) => {
+          if (info.installStatus === FlexibleUpdateInstallStatus.DOWNLOADED) {
+            setPhase("downloaded");
+            setDismissed(false);
+          } else if (
+            info.installStatus === FlexibleUpdateInstallStatus.FAILED ||
+            info.installStatus === FlexibleUpdateInstallStatus.CANCELED
+          ) {
+            setPhase("available");
+          }
+          // Any other status (PENDING, DOWNLOADING, INSTALLING) means
+          // it's still genuinely in progress — leave it showing
+          // "downloading" as-is.
+        });
+        return current;
+      });
+    }).then((handle) => {
+      resumeListenerRef.current = handle;
+    });
 
     return () => {
       listenerHandleRef.current?.remove();
+      resumeListenerRef.current?.remove();
     };
   }, []);
 
@@ -67,17 +111,35 @@ export function UpdateBanner() {
     setDismissed(false);
     try {
       const handle = await AppUpdate.addListener("onFlexibleUpdateStateChange", (state) => {
-        if (state.installStatus === "DOWNLOADED") {
+        if (state.installStatus === FlexibleUpdateInstallStatus.DOWNLOADED) {
           setPhase("downloaded");
           setDismissed(false);
+        } else if (
+          state.installStatus === FlexibleUpdateInstallStatus.FAILED ||
+          state.installStatus === FlexibleUpdateInstallStatus.CANCELED
+        ) {
+          // Previously unhandled entirely — this is what left the
+          // banner stuck showing "downloading" forever whenever the
+          // download itself failed or got canceled partway through,
+          // since nothing ever moved the phase off "downloading" in
+          // that case.
+          setPhase("available");
         }
       });
       listenerHandleRef.current = handle;
-      await AppUpdate.startFlexibleUpdate();
-      // Deliberately no immediate phase change here — this only means
-      // Play's own update flow started, not that it's done. The
-      // listener above is what actually reports real progress; this
-      // call resolving just confirms the download has begun.
+
+      const result = await AppUpdate.startFlexibleUpdate();
+
+      // Previously unchecked entirely. startFlexibleUpdate() resolves
+      // successfully (does not throw) even when the user dismisses
+      // Play's own consent sheet or the update can't start for some
+      // other reason — the outcome is only reflected in this result
+      // code, not in whether the promise rejected. Treating any
+      // non-OK code as "nothing actually started" avoids sitting in
+      // "downloading" for a download that never began.
+      if (result.code !== AppUpdateResultCode.OK) {
+        setPhase("available");
+      }
     } catch {
       // The user may have dismissed Play's own permission/consent
       // sheet, or genuinely have no connectivity right now — either
