@@ -1,0 +1,10 @@
+[33m239fa82[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m Add files via upload
+[33m1bd820a[m Add capacitor-app-update plugin
+[33m3eedd27[m Add files via upload
+[33mf189243[m Fix search logic for UUIDs in transaction filters
+[33mfd4c9aa[m Fix search query for user_id uuid handling
+[33m849e692[m Fix wildcard syntax in search queries and add logging
+[33m792d8b5[m Fix wildcard syntax in search queries
+[33m095fbba[m Refactor token handling in AdminDashboard
+[33m5e1fa52[m Add transactions section to AdminDashboard
+[33mf2f9323[m Enhance admin transactions and sparks routes
