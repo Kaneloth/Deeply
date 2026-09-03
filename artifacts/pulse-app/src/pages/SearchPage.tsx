@@ -379,7 +379,7 @@ export default function SearchPage() {
   // AppShell's gesture handler and be misread as a pull-to-refresh —
   // see usePullToRefresh's own comment on the `enabled` param for the
   // full history of why this is the fix, not a smarter gesture handler.
-  usePullToRefresh(fetchCategories, !selectedProfile && !composeFor);
+  usePullToRefresh(fetchCategories, !selectedProfile && !composeFor && !activeCategory);
 
   // Capture device location here too, not just on Discover — otherwise
   // anyone who opens Search before ever visiting Discover has no
@@ -631,8 +631,14 @@ export default function SearchPage() {
   };
 
   return (
-    <div className="min-h-full px-4 pb-6 pt-6">
-      <PageHeader title="Search" />
+    <div
+      className={
+        activeCategory
+          ? "h-full overflow-hidden px-2 pb-1 pt-2 flex flex-col"
+          : "min-h-full px-4 pb-6 pt-6"
+      }
+    >
+      {!activeCategory && <PageHeader title="Search" />}
 
       {results === null && (
         <div className="mb-6 space-y-6">
@@ -793,8 +799,11 @@ export default function SearchPage() {
           // Single card-shaped skeleton for the swipe-stack, matching
           // DiscoverPage.tsx's own loading skeleton — not the 3-row
           // list skeleton below, which would look like the wrong kind
-          // of content is about to load.
-          <Skeleton className="h-[65vh] w-full rounded-3xl" />
+          // of content is about to load. Wrapped the same way the real
+          // stack below is, so it occupies the identical space.
+          <div className="flex-1 relative min-h-0">
+            <Skeleton className="absolute inset-0 rounded-3xl" />
+          </div>
         ) : (
           <div className="space-y-3">
             {[1, 2, 3].map((i) => (
@@ -816,8 +825,8 @@ export default function SearchPage() {
         (() => {
           const visibleCards = results.slice(0, 3);
           return (
-            <div className="flex flex-col">
-              <div className="relative h-[65vh]">
+            <div className="flex-1 flex flex-col min-h-0">
+              <div className="flex-1 relative min-h-0">
                 <AnimatePresence>
                   {visibleCards.map((r, i) => (
                     <ResultSwipeCard
