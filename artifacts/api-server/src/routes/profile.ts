@@ -277,6 +277,44 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
         updates.is_founder = true;
         updates.founder_rank = rank;
         updates.free_verification = true;
+
+        // Corrects a real ordering bug, not a hypothetical one: a brand
+        // new profile's next_spark_grant_at is already due immediately,
+        // so this account has already received its FIRST monthly grant
+        // via the normal sparks-check flow — necessarily calculated
+        // BEFORE is_founder could possibly exist yet, since that only
+        // happens here, during onboarding completion, a separate and
+        // later request than signup. That first grant was therefore
+        // always the standard, non-doubled amount, for every founder,
+        // every time — not an edge case.
+        //
+        // Rather than restructure when the very first grant fires (a
+        // bigger, riskier change), this simply tops the balance up by
+        // one more base grant's worth the one time founder status is
+        // newly discovered, bringing this month's total to the correct
+        // doubled amount regardless of whether any of it was already
+        // spent in the meantime.
+        const { data: currentBalance } = await supabase
+          .from("profiles")
+          .select("free_sparks_balance, paid_sparks_balance")
+          .eq("id", req.user!.id)
+          .single();
+
+        if (currentBalance) {
+          const { sparks_monthly_grant: baseGrantAmount } = await getEconomyConfig();
+          const toppedUpFree = currentBalance.free_sparks_balance + baseGrantAmount;
+          updates.free_sparks_balance = toppedUpFree;
+
+          supabase
+            .from("sparks_transactions")
+            .insert({
+              user_id: req.user!.id,
+              amount: baseGrantAmount,
+              reason: "Founder status granted — Sparks top-up to 2x",
+              balance_after: toppedUpFree + currentBalance.paid_sparks_balance,
+            })
+            .then(() => {});
+        }
       }
     }
   }

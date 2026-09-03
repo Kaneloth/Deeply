@@ -3,7 +3,7 @@ import { logger } from "./logger";
 import { createNotification } from "./notifications-helper";
 import { getEconomyConfig } from "./economy-config";
 
-const LOW_BALANCE_THRESHOLD = 30;
+const LOW_BALANCE_PERCENTAGE = 0.25; // notify once 75% of the grant is used, i.e. 25% remains
 const GRANT_ABUSE_COOLDOWN_DAYS = 30;
 
 interface SparksProfile {
@@ -250,6 +250,23 @@ export async function spendSparks(
     })
     .then(() => {});
 
+  // Threshold is now a PERCENTAGE of this specific user's actual grant
+  // amount, not a flat hardcoded number. Previously this was a fixed
+  // 30, which was fine back when the monthly grant was 300 (10%) but
+  // became badly wrong the moment the admin changed the grant to 60 —
+  // 30 out of 60 is 50% remaining, firing this "running low" warning
+  // for every single new user almost immediately after signup.
+  //
+  // Also accounts for founder status specifically: a founder's actual
+  // grant is double the base (see checkAndApplyMonthlyGrant above), so
+  // their own meaningful "75% used" point is a different absolute
+  // number than a non-founder's — computing this relative to each
+  // person's own real grant keeps it correct for both, rather than
+  // silently wrong for one group whenever founder status is involved.
+  const { sparks_monthly_grant: baseGrantAmount } = await getEconomyConfig();
+  const effectiveGrantAmount = profile.is_founder ? baseGrantAmount * 2 : baseGrantAmount;
+  const lowBalanceThreshold = effectiveGrantAmount * LOW_BALANCE_PERCENTAGE;
+
   // Only fire on the actual crossing (was above threshold, now at/below
   // it) — not on every subsequent spend while already low, which would
   // spam a notification per message sent.
@@ -261,7 +278,7 @@ export async function spendSparks(
   // written; the user's real balance keeps moving with every subsequent
   // spend, so a stored "You have X Sparks left" reliably goes stale and
   // shows a wrong figure by the time it's actually read.
-  if (total > LOW_BALANCE_THRESHOLD && newTotal <= LOW_BALANCE_THRESHOLD) {
+  if (total > lowBalanceThreshold && newTotal <= lowBalanceThreshold) {
     createNotification(
       userId,
       "spark_low",

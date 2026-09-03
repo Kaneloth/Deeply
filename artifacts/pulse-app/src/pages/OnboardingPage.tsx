@@ -292,8 +292,9 @@ export default function OnboardingPage() {
         <h1 className="text-3xl font-['Syne'] font-bold mb-3">You're a Founder!</h1>
         <p className="text-muted-foreground max-w-xs">
           You're one of the first 112 people to join Deeply. You've earned the{" "}
-          <span className="text-foreground font-semibold">Founders Badge</span> and{" "}
-          <span className="text-foreground font-semibold">free ID verification</span> — no charge, ever.
+          <span className="text-foreground font-semibold">Founders Badge</span>,{" "}
+          <span className="text-foreground font-semibold">free ID verification</span> — no charge, ever —{" "}
+          and <span className="text-foreground font-semibold">double monthly Sparks</span>, for as long as you're on Deeply.
         </p>
         <Button
           onClick={() => setLocation("/discover")}
