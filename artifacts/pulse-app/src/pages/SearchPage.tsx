@@ -689,18 +689,6 @@ export default function SearchPage() {
         </div>
       )}
 
-      {activeCategory && (
-        <div className="flex items-center gap-2 mb-4 px-2">
-          <button
-            onClick={closeCategory}
-            className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ChevronLeft size={16} />
-          </button>
-          <h2 className="font-['Syne'] font-bold text-lg">{activeCategory.label}</h2>
-        </div>
-      )}
-
       {!activeCategory && (
         <form onSubmit={handleSearch} className="space-y-3 mb-6">
           <div className="flex gap-2">
@@ -840,6 +828,16 @@ export default function SearchPage() {
                     />
                   ))}
                 </AnimatePresence>
+                {/* Overlaid directly on the card, matching
+                    ProfileDetailOverlay's exact back-button styling
+                    below for visual consistency between the two —
+                    z-20 keeps it above the top card's own z-10. */}
+                <button
+                  onClick={closeCategory}
+                  className="absolute top-3 left-3 z-20 w-8 h-8 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center text-white border border-white/10"
+                >
+                  <ChevronLeft size={16} />
+                </button>
               </div>
 
               <div className="flex items-center justify-center gap-2.5 mt-3">
