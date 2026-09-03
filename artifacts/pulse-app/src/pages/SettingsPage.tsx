@@ -139,6 +139,12 @@ export default function SettingsPage() {
   const [, setLocation] = useLocation();
 
   const [email, setEmail] = useState<string | null>(null);
+  // Defaults true (the existing "has a password, needs current
+  // password to change it" behavior) until the real value arrives —
+  // safer default than assuming Google-only, since briefly showing an
+  // unnecessary current-password field for a split second is much less
+  // costly than briefly hiding a genuinely required one.
+  const [hasPassword, setHasPassword] = useState(true);
   const [adminAccess, setAdminAccess] = useState<{ isAdmin: boolean; isSuperAdmin: boolean; scopes: string[] } | null>(null);
 
   const [signInMethod, setSignInMethodState] = useState<SignInMethod>("password");
@@ -407,7 +413,10 @@ export default function SettingsPage() {
   useEffect(() => {
     fetch("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } })
       .then((res) => (res.ok ? res.json() : null))
-      .then((body) => setEmail(body?.email ?? null))
+      .then((body) => {
+        setEmail(body?.email ?? null);
+        if (typeof body?.has_password === "boolean") setHasPassword(body.has_password);
+      })
       .catch(() => {});
   }, [token]);
 
@@ -472,7 +481,7 @@ export default function SettingsPage() {
 
   const handleChangePassword = async () => {
     setPasswordError("");
-    if (!currentPassword || !newPassword || !confirmPassword) {
+    if ((hasPassword && !currentPassword) || !newPassword || !confirmPassword) {
       setPasswordError("Fill in all fields");
       return;
     }
@@ -493,16 +502,21 @@ export default function SettingsPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ currentPassword, newPassword }),
+        body: JSON.stringify(hasPassword ? { currentPassword, newPassword } : { newPassword }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? "Failed to update password");
 
-      toast({ title: "Password updated" });
+      toast({ title: hasPassword ? "Password updated" : "Password created" });
       setShowPasswordForm(false);
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
+      // A password now genuinely exists for this account going
+      // forward (even if it started as Google-only) — without this,
+      // reopening the form immediately after would still incorrectly
+      // show "Create password" until the next full /auth/me refetch.
+      setHasPassword(true);
     } catch (err) {
       setPasswordError(err instanceof Error ? err.message : "Failed to update password");
     } finally {
@@ -511,7 +525,7 @@ export default function SettingsPage() {
   };
 
   const handleDeleteAccount = async () => {
-    if (deleteConfirmText !== "DELETE" || !deletePassword) return;
+    if (deleteConfirmText !== "DELETE" || (hasPassword && !deletePassword)) return;
     setIsDeleting(true);
     try {
       const res = await fetch("/api/auth/account", {
@@ -520,7 +534,7 @@ export default function SettingsPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ password: deletePassword }),
+        body: JSON.stringify(hasPassword ? { password: deletePassword } : {}),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -648,8 +662,14 @@ export default function SettingsPage() {
               <div className="flex items-center gap-3">
                 <Lock size={18} className="text-muted-foreground" />
                 <div className="text-left">
-                  <p className="text-sm font-medium">Change Password</p>
-                  <p className="text-xs text-muted-foreground">{showPasswordForm ? "Hide form" : "Update your password"}</p>
+                  <p className="text-sm font-medium">{hasPassword ? "Change Password" : "Create Password"}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {showPasswordForm
+                      ? "Hide form"
+                      : hasPassword
+                        ? "Update your password"
+                        : "Set a password so you can also sign in with email"}
+                  </p>
                 </div>
               </div>
               <ChevronRight size={16} className={`text-muted-foreground transition-transform ${showPasswordForm ? "rotate-90" : ""}`} />
@@ -657,18 +677,20 @@ export default function SettingsPage() {
 
             {showPasswordForm && (
               <div className="mt-4 pt-4 border-t border-border space-y-3">
-                <div className="relative">
-                  <Input
-                    type={showCurrentPw ? "text" : "password"}
-                    placeholder="Current password"
-                    value={currentPassword}
-                    onChange={(e) => setCurrentPassword(e.target.value)}
-                    className="bg-background border-card-border h-11 rounded-xl pr-10"
-                  />
-                  <button type="button" onClick={() => setShowCurrentPw((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-                    {showCurrentPw ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
+                {hasPassword && (
+                  <div className="relative">
+                    <Input
+                      type={showCurrentPw ? "text" : "password"}
+                      placeholder="Current password"
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                      className="bg-background border-card-border h-11 rounded-xl pr-10"
+                    />
+                    <button type="button" onClick={() => setShowCurrentPw((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                      {showCurrentPw ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                )}
                 <div className="relative">
                   <Input
                     type={showNewPw ? "text" : "password"}
@@ -695,7 +717,7 @@ export default function SettingsPage() {
                 </div>
                 {passwordError && <p className="text-xs text-destructive">{passwordError}</p>}
                 <Button onClick={handleChangePassword} disabled={isChangingPassword} className="w-full h-11 rounded-xl bg-gradient-accent border-0">
-                  {isChangingPassword ? "Updating..." : "Update Password"}
+                  {isChangingPassword ? (hasPassword ? "Updating..." : "Creating...") : hasPassword ? "Update Password" : "Create Password"}
                 </Button>
               </div>
             )}
@@ -1113,23 +1135,45 @@ export default function SettingsPage() {
                   value={deleteConfirmText}
                   onChange={(e) => setDeleteConfirmText(e.target.value)}
                   placeholder="DELETE"
+                  autoComplete="off"
+                  // Browsers/WebViews commonly treat a plain text input
+                  // sitting right above a password field as a
+                  // "username" field and autofill both from saved
+                  // credentials for this site — exactly the bug being
+                  // fixed here. A distinct, unusual `name` (not
+                  // something generic like "confirm" or "text") plus
+                  // autoComplete="off" together is more reliable in
+                  // practice than autoComplete alone, which some
+                  // browsers ignore specifically for anything that
+                  // resembles a login form.
+                  name="delete-confirm-text"
                   className="bg-background border-destructive/30 h-11 rounded-xl"
                 />
               </div>
-              <div className="space-y-1">
-                <label className="text-xs text-muted-foreground">Your password</label>
-                <Input
-                  type="password"
-                  value={deletePassword}
-                  onChange={(e) => setDeletePassword(e.target.value)}
-                  placeholder="Password"
-                  className="bg-background border-destructive/30 h-11 rounded-xl"
-                />
-              </div>
+              {hasPassword && (
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">Your password</label>
+                  <Input
+                    type="password"
+                    value={deletePassword}
+                    onChange={(e) => setDeletePassword(e.target.value)}
+                    placeholder="Password"
+                    // "new-password" (not "current-password") is
+                    // deliberate — this isn't a login form, and browsers
+                    // reliably treat "new-password" as a signal to
+                    // never autofill from saved credentials, unlike a
+                    // bare autoComplete="off" on a password-type input,
+                    // which several major browsers ignore outright.
+                    autoComplete="new-password"
+                    name="delete-confirm-password"
+                    className="bg-background border-destructive/30 h-11 rounded-xl"
+                  />
+                </div>
+              )}
 
               <Button
                 onClick={handleDeleteAccount}
-                disabled={deleteConfirmText !== "DELETE" || !deletePassword || isDeleting}
+                disabled={deleteConfirmText !== "DELETE" || (hasPassword && !deletePassword) || isDeleting}
                 className="w-full h-11 rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90"
               >
                 {isDeleting ? "Deleting..." : "Permanently Delete My Account"}

@@ -274,18 +274,27 @@ router.post("/auth/logout", async (req, res): Promise<void> => {
 });
 
 /** GET /api/auth/me — basic account info (email) for Settings, since
- *  profiles doesn't store email itself. */
+ *  profiles doesn't store email itself. Also reports has_password —
+ *  Google-only sign-ins have no email/password identity at all, so
+ *  there's nothing for them to "change" the first time; the frontend
+ *  uses this to show "Create password" instead of "Change password"
+ *  and skip asking for a current password that was never set. */
 router.get("/auth/me", requireAuth, async (req, res): Promise<void> => {
   const { data, error } = await supabase.auth.admin.getUserById(req.user!.id);
   if (error || !data.user) {
     res.status(404).json({ error: "Account not found" });
     return;
   }
-  res.json({ id: data.user.id, email: data.user.email });
+  const hasPassword = !!data.user.identities?.some((i) => i.provider === "email");
+  res.json({ id: data.user.id, email: data.user.email, has_password: hasPassword });
 });
 
 /** PUT /api/auth/change-password — requires the current password to be
- *  correct before allowing the change. */
+ *  correct before allowing the change, UNLESS this account has never
+ *  had one (Google-only sign-in) — in that case currentPassword is
+ *  never even sent by the frontend, and there's genuinely nothing
+ *  correct/incorrect to verify it against, so this sets the new
+ *  password directly instead. */
 router.put("/auth/change-password", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
   const { currentPassword, newPassword } = req.body as {
@@ -293,8 +302,8 @@ router.put("/auth/change-password", requireAuth, async (req, res): Promise<void>
     newPassword?: string;
   };
 
-  if (!currentPassword || !newPassword) {
-    res.status(400).json({ error: "currentPassword and newPassword are required" });
+  if (!newPassword) {
+    res.status(400).json({ error: "newPassword is required" });
     return;
   }
   if (newPassword.length < 6) {
@@ -308,13 +317,21 @@ router.put("/auth/change-password", requireAuth, async (req, res): Promise<void>
     return;
   }
 
-  const { error: signInError } = await supabase.auth.signInWithPassword({
-    email: userData.user.email,
-    password: currentPassword,
-  });
-  if (signInError) {
-    res.status(401).json({ error: "Current password is incorrect" });
-    return;
+  const hasExistingPassword = !!userData.user.identities?.some((i) => i.provider === "email");
+
+  if (hasExistingPassword) {
+    if (!currentPassword) {
+      res.status(400).json({ error: "currentPassword is required" });
+      return;
+    }
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: userData.user.email,
+      password: currentPassword,
+    });
+    if (signInError) {
+      res.status(401).json({ error: "Current password is incorrect" });
+      return;
+    }
   }
 
   const { error: updateError } = await supabase.auth.admin.updateUserById(userId, { password: newPassword });
@@ -329,15 +346,14 @@ router.put("/auth/change-password", requireAuth, async (req, res): Promise<void>
 /** DELETE /api/auth/account — permanently deletes the profile, the
  *  underlying auth account, and the user's uploaded storage files
  *  (photos, video clips, audio prompts). Requires the current password
- *  to confirm. */
+ *  to confirm — UNLESS this is a Google-only account with no password
+ *  at all, in which case there's nothing to verify and the frontend's
+ *  own "type DELETE to confirm" step is the only safeguard available,
+ *  same reasoning as change-password above. Without this exception,
+ *  a Google-only user could never delete their own account at all. */
 router.delete("/auth/account", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
   const { password } = req.body as { password?: string };
-
-  if (!password) {
-    res.status(400).json({ error: "password is required to confirm account deletion" });
-    return;
-  }
 
   const { data: userData, error: getUserError } = await supabase.auth.admin.getUserById(userId);
   if (getUserError || !userData.user?.email) {
@@ -345,13 +361,21 @@ router.delete("/auth/account", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
-  const { error: signInError } = await supabase.auth.signInWithPassword({
-    email: userData.user.email,
-    password,
-  });
-  if (signInError) {
-    res.status(401).json({ error: "Incorrect password" });
-    return;
+  const hasExistingPassword = !!userData.user.identities?.some((i) => i.provider === "email");
+
+  if (hasExistingPassword) {
+    if (!password) {
+      res.status(400).json({ error: "password is required to confirm account deletion" });
+      return;
+    }
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: userData.user.email,
+      password,
+    });
+    if (signInError) {
+      res.status(401).json({ error: "Incorrect password" });
+      return;
+    }
   }
 
   // Clean up storage files (photos, video clips, audio prompts) before
