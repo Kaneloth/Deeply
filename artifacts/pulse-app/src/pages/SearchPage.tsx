@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, memo } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/contexts/AuthContext";
 import { getUserIdFromToken } from "@/lib/tokenUtils";
 import { useSparks } from "@/contexts/SparksContext";
@@ -114,12 +115,14 @@ function renderCategoryTile(cat: Category, onOpen: (cat: Category) => void) {
       className={`relative h-28 rounded-2xl overflow-hidden border border-card-border text-left disabled:opacity-40 disabled:pointer-events-none bg-gradient-to-br ${style.gradient}`}
     >
       {cat.preview_photos.length > 0 && (
-        <div className="absolute inset-0 flex">
-          {cat.preview_photos.slice(0, 3).map((url, i) => (
-            <div key={i} className="flex-1 relative">
-              <img src={url} alt="" className="w-full h-full object-cover opacity-30" />
-            </div>
-          ))}
+        // Deliberately only the FIRST preview photo, full-bleed — not a
+        // 3-way split collage of different people's faces. The category
+        // grid is meant to tease "there are people in here," not reveal
+        // who, which is the whole point of the swipe-stack behind it:
+        // you shouldn't know who's coming next until you actually open
+        // the category and start swiping.
+        <div className="absolute inset-0">
+          <img src={cat.preview_photos[0]} alt="" className="w-full h-full object-cover opacity-30" />
         </div>
       )}
       <div className="absolute inset-0 bg-gradient-to-t from-background/90 via-background/40 to-background/10" />
@@ -135,6 +138,79 @@ function renderCategoryTile(cat: Category, onOpen: (cat: Category) => void) {
     </button>
   );
 }
+
+type SwipeDirection = "like" | "pass" | "super_like";
+
+// Mirrors DiscoverPage.tsx's EXIT_VARIANTS exactly, for visual
+// consistency between the two swipe-stack experiences in this app.
+const EXIT_VARIANTS: Record<SwipeDirection, { x?: number; y?: number; opacity: number; rotate?: number; scale?: number }> = {
+  like: { x: 400, opacity: 0, rotate: 20 },
+  pass: { x: -400, opacity: 0, rotate: -20 },
+  super_like: { y: -400, opacity: 0, scale: 1.05 },
+};
+
+/** Category/filter results swipe-stack card — deliberately mirrors
+ *  DiscoverPage.tsx's SwipeCard as closely as possible, since the whole
+ *  point of this change is that browsing a filter should feel like the
+ *  same "you don't know who's next" experience as Discover itself,
+ *  not a visually different mechanism that happens to also hide names.
+ *  Kept as a separate component (rather than importing DiscoverPage's)
+ *  since Result and Candidate are two independently-defined types even
+ *  though their shapes overlap heavily, and this page has its own
+ *  reply-to-voice-question wiring already built around Result. */
+const ResultSwipeCard = memo(
+  function ResultSwipeCard({
+    result,
+    isTop,
+    isExiting,
+    exitDirection,
+    stackIndex,
+    onReplyToVoiceQuestion,
+  }: {
+    result: Result;
+    isTop: boolean;
+    isExiting: boolean;
+    exitDirection: SwipeDirection | null;
+    stackIndex: number;
+    onReplyToVoiceQuestion: (blob: Blob) => Promise<void>;
+  }) {
+    return (
+      <motion.div
+        className="absolute inset-0"
+        style={{ zIndex: 10 - stackIndex }}
+        // Same reasoning as DiscoverPage.tsx: no entry animation at all,
+        // since even a subtle scale/opacity transform causes native
+        // WebViews to re-composite the card while the photo is still
+        // decoding, which reads as a brief blink right after mount.
+        initial={false}
+        animate={
+          isExiting && exitDirection
+            ? EXIT_VARIANTS[exitDirection]
+            : { scale: 1, opacity: 1, x: 0, y: 0, rotate: 0 }
+        }
+        transition={isExiting ? { duration: 0.3, ease: "easeOut" } : { duration: 0 }}
+      >
+        <ProfileCard
+          profile={result}
+          active={isTop}
+          enablePullReveal={isTop}
+          canReplyToVoiceQuestion={isTop}
+          onReplyToVoiceQuestion={onReplyToVoiceQuestion}
+        />
+      </motion.div>
+    );
+  },
+  // Same custom comparator reasoning as DiscoverPage.tsx's SwipeCard —
+  // result is a fresh object reference on every fetch, and this page
+  // also has independent background polls (Sparks, notifications) that
+  // could otherwise cause a pointless re-render/blink here.
+  (prev, next) =>
+    prev.result.id === next.result.id &&
+    prev.isTop === next.isTop &&
+    prev.isExiting === next.isExiting &&
+    prev.exitDirection === next.exitDirection &&
+    prev.stackIndex === next.stackIndex,
+);
 
 function ProfileDetailOverlay({
   profile,
@@ -241,6 +317,10 @@ export default function SearchPage() {
   const [results, setResults] = useState<Result[] | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [actioningId, setActioningId] = useState<string | null>(null);
+  // Tracks which card in the CATEGORY swipe-stack is currently animating
+  // out — separate from actioningId above, which the existing list-view
+  // swipe buttons already use for their own disabled/loading state.
+  const [exiting, setExiting] = useState<{ id: string; direction: SwipeDirection } | null>(null);
   const [selectedProfile, setSelectedProfile] = useState<Result | null>(null);
   const [matchCelebration, setMatchCelebration] = useState<{ name: string; matchId: string; photoUrl?: string | null } | null>(null);
   const [composeFor, setComposeFor] = useState<Result | null>(null);
@@ -371,8 +451,19 @@ export default function SearchPage() {
     }
   };
 
-  const handleSwipe = async (targetId: string, direction: "like" | "pass" | "super_like") => {
+  const handleSwipe = async (
+    targetId: string,
+    direction: "like" | "pass" | "super_like",
+    // Only used by the category swipe-stack view below — the existing
+    // list view never sets this, and behaves exactly as it always has.
+    // When true, sets `exiting` first so ResultSwipeCard can play its
+    // exit animation, then waits for it to finish before actually
+    // removing the card from `results` — same 300ms pattern as
+    // DiscoverPage.tsx's handleDecision.
+    animateExit = false,
+  ) => {
     setActioningId(targetId);
+    if (animateExit) setExiting({ id: targetId, direction });
     try {
       const res = await fetch("/api/discover/swipe", {
         method: "POST",
@@ -393,6 +484,7 @@ export default function SearchPage() {
           description: "Recharge now or wait for your next monthly grant to send more invites today.",
           variant: "destructive",
         });
+        if (animateExit) setExiting(null);
         return;
       }
 
@@ -400,8 +492,13 @@ export default function SearchPage() {
       if (!res.ok) throw new Error(body.error ?? "Failed to record swipe");
 
       const swipedProfile = results?.find((r) => r.id === targetId) ?? selectedProfile;
+
+      if (animateExit) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
       setResults((prev) => (prev ? prev.filter((r) => r.id !== targetId) : prev));
       setSelectedProfile((prev) => (prev?.id === targetId ? null : prev));
+      if (animateExit) setExiting(null);
 
       if (direction === "like" && body.sparksCharged) {
         if (!localStorage.getItem(`deeply_seen_invite_quota_cost_notice_${userId}`)) {
@@ -427,6 +524,7 @@ export default function SearchPage() {
         description: err instanceof Error ? err.message : "Something went wrong.",
         variant: "destructive",
       });
+      if (animateExit) setExiting(null);
     } finally {
       setActioningId(null);
     }
@@ -691,15 +789,83 @@ export default function SearchPage() {
           <p className="max-w-[240px] text-sm">Search by name, or use filters to narrow down by age, city, or interests.</p>
         </div>
       ) : isSearching ? (
-        <div className="space-y-3">
-          {[1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-24 w-full rounded-2xl" />
-          ))}
-        </div>
+        activeCategory ? (
+          // Single card-shaped skeleton for the swipe-stack, matching
+          // DiscoverPage.tsx's own loading skeleton — not the 3-row
+          // list skeleton below, which would look like the wrong kind
+          // of content is about to load.
+          <Skeleton className="h-[65vh] w-full rounded-3xl" />
+        ) : (
+          <div className="space-y-3">
+            {[1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-24 w-full rounded-2xl" />
+            ))}
+          </div>
+        )
       ) : results.length === 0 ? (
         <div className="flex flex-col items-center text-center px-4 mt-6 text-muted-foreground">
           <p className="text-sm">{activeCategory ? "No one here right now." : "No profiles match your search."}</p>
         </div>
+      ) : activeCategory ? (
+        // Category/filter results: a swipe-stack, same mystery-browse
+        // experience as Discover — you see the top card only, never
+        // the full lineup of who's in this category before you get
+        // there. Name search below keeps the list view, since looking
+        // for a specific known person isn't a "browse and be
+        // surprised" interaction in the first place.
+        (() => {
+          const visibleCards = results.slice(0, 3);
+          return (
+            <div className="flex flex-col">
+              <div className="relative h-[65vh]">
+                <AnimatePresence>
+                  {visibleCards.map((r, i) => (
+                    <ResultSwipeCard
+                      key={r.id}
+                      result={r}
+                      isTop={i === 0}
+                      stackIndex={i}
+                      isExiting={exiting?.id === r.id}
+                      exitDirection={exiting?.id === r.id ? exiting.direction : null}
+                      onReplyToVoiceQuestion={(blob) => handleReplyToVoiceQuestion(r.id, blob)}
+                    />
+                  ))}
+                </AnimatePresence>
+              </div>
+
+              <div className="flex items-center justify-center gap-2.5 mt-3">
+                <button
+                  onClick={() => handleSwipe(results[0].id, "pass", true)}
+                  disabled={actioningId === results[0]?.id}
+                  className="w-12 h-12 rounded-full bg-card border border-card-border flex items-center justify-center text-muted-foreground hover:border-destructive hover:text-destructive transition-colors shadow-lg active:scale-95"
+                >
+                  <X size={20} />
+                </button>
+                <button
+                  onClick={() => setComposeFor(results[0])}
+                  disabled={actioningId === results[0]?.id}
+                  className="w-9 h-9 rounded-full bg-card border border-card-border flex items-center justify-center text-accent hover:border-accent transition-colors shadow-lg active:scale-95"
+                >
+                  <MessageCircle size={16} />
+                </button>
+                <button
+                  onClick={() => handleSwipe(results[0].id, "like", true)}
+                  disabled={actioningId === results[0]?.id}
+                  className="w-12 h-12 rounded-full bg-gradient-accent flex items-center justify-center text-white shadow-[0_8px_20px_rgba(225,29,72,0.3)] active:scale-95 transition-transform"
+                >
+                  <Heart size={20} className="fill-current" />
+                </button>
+                <button
+                  onClick={() => handleSwipe(results[0].id, "super_like", true)}
+                  disabled={actioningId === results[0]?.id}
+                  className="w-9 h-9 rounded-full bg-card border border-card-border flex items-center justify-center text-sky-400 hover:border-sky-400 transition-colors shadow-lg active:scale-95"
+                >
+                  <Star size={15} className="fill-current" />
+                </button>
+              </div>
+            </div>
+          );
+        })()
       ) : (
         <div className="space-y-3">
           {results.map((r) => (
