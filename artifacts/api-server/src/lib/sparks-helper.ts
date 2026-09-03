@@ -293,11 +293,13 @@ export async function spendSparks(
 export async function getSparksSummary(userId: string): Promise<{
   balance: number;
   next_grant_at: string;
+  is_founder: boolean;
 }> {
   const profile = await checkAndApplyMonthlyGrant(userId);
   return {
     balance: profile.free_sparks_balance + profile.paid_sparks_balance,
     next_grant_at: profile.next_spark_grant_at,
+    is_founder: profile.is_founder,
   };
 }
 

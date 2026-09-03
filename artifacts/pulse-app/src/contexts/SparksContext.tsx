@@ -5,7 +5,13 @@ import { useRefetchOnAppResume } from "@/hooks/useRefetchOnAppResume";
 
 // Thresholds are computed against the monthly free grant, matching the
 // airtime-style notifications: "You have 75 Sparks left", etc.
-const MONTHLY_GRANT = 300;
+// Previously hardcoded to 300 here — went stale the moment the admin
+// changed the actual grant to 60, since every new user starts BELOW
+// the resulting 75-Sparks 25% cutoff and got "Getting low" on their
+// very first app open. Now read live from /api/sparks below, which
+// also already accounts for founder status (2x), matching the same
+// fix already applied server-side in sparks-helper.ts's own
+// low-balance check.
 
 const THRESHOLDS = [
   {
@@ -54,11 +60,11 @@ export function SparksProvider({ children }: { children: ReactNode }) {
   const suppressUntilRef = useRef<number>(0);
 
   const checkThresholds = useCallback(
-    (newBalance: number) => {
+    (newBalance: number, monthlyGrant: number) => {
       const prev = prevBalance.current;
 
       for (const t of THRESHOLDS) {
-        const cutoff = Math.floor(MONTHLY_GRANT * t.fraction);
+        const cutoff = Math.floor(monthlyGrant * t.fraction);
         const crossedDown = prev !== null && prev > cutoff && newBalance <= cutoff;
         const alreadyLowOnFirstLoad = prev === null && newBalance <= cutoff;
 
@@ -118,7 +124,7 @@ export function SparksProvider({ children }: { children: ReactNode }) {
       const body = await res.json();
       setBalance(body.balance);
       setNextGrantAt(body.next_grant_at);
-      checkThresholds(body.balance);
+      checkThresholds(body.balance, body.monthly_grant_amount);
     } catch {
       // Silent — a failed background balance check shouldn't interrupt the user.
     }

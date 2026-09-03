@@ -47,13 +47,23 @@ async function getBundlesWithPrices() {
  *  live admin-configured grant amount (sparks_monthly_grant) — the
  *  frontend previously hardcoded this number in its own copy instead of
  *  reading it from here, so an admin changing it in the dashboard never
- *  actually reached the Sparks modal. */
+ *  actually reached the Sparks modal.
+ *
+ *  monthly_grant_amount returned here is the EFFECTIVE amount for this
+ *  specific user — doubled if they're a founder — not just the raw
+ *  base config value. This matters beyond display: SparksContext.tsx
+ *  uses this exact number to compute its own low-balance toast
+ *  thresholds (25%/10%/0% of the grant), so a founder's genuinely
+ *  correct 25%-remaining point is a different absolute number than a
+ *  non-founder's, and returning only the base value here would make
+ *  that threshold wrong specifically for founders. */
 router.get("/sparks", requireAuth, async (req, res): Promise<void> => {
   const [summary, { sparks_monthly_grant }] = await Promise.all([
     getSparksSummary(req.user!.id),
     getEconomyConfig(),
   ]);
-  res.json({ ...summary, monthly_grant_amount: sparks_monthly_grant });
+  const effectiveGrantAmount = summary.is_founder ? sparks_monthly_grant * 2 : sparks_monthly_grant;
+  res.json({ ...summary, monthly_grant_amount: effectiveGrantAmount });
 });
 
 /** GET /api/sparks/history */
