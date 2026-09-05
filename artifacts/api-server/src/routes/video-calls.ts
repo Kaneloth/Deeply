@@ -112,6 +112,54 @@ function otherParticipant(match: { user1_id: string; user2_id: string }, userId:
   return match.user1_id === userId ? match.user2_id : match.user1_id;
 }
 
+// A ring genuinely stuck stale past this point (RPC/network failure
+// preventing the requester's own 45s missed-timeout from ever
+// registering, exactly what happened in the incident that motivated
+// this) is treated as no longer blocking — this is a safety net, not
+// the primary mechanism (the 45s client-side timeout + /missed
+// endpoint is), so it's set generously longer than any real ring
+// should ever last.
+const STALE_RINGING_MINUTES = 5;
+
+/** Checks whether a NEW request/call for this match should be blocked
+ *  by something already pending/ringing/active. Deliberately ignores
+ *  a stale ringing row past STALE_RINGING_MINUTES rather than letting
+ *  it block new calls forever — see the incident this was added for:
+ *  a failed /decline (itself caused by the same read-consistency
+ *  issue this file's RPC calls now guard against) left a call
+ *  permanently stuck as "ringing," and every subsequent call attempt
+ *  correctly-but-uselessly kept getting blocked by it with no way out
+ *  short of a manual database fix. pending_request and active are NOT
+ *  given this same staleness exemption — a genuinely still-open
+ *  request can sit unanswered for a long time completely normally
+ *  (someone might not open the chat for hours), and an active call
+ *  lasting a while is also entirely normal, so only "ringing"
+ *  specifically — which by design should always resolve within
+ *  seconds — gets this treatment. */
+async function hasBlockingCall(matchId: string): Promise<boolean> {
+  // This specific read is NOT RPC-bypassed like the action routes
+  // above — deliberately. If this particular check has a rare,
+  // momentary miss, the worst outcome is a second call row briefly
+  // existing alongside the first, which resolves on its own (both
+  // independently reach a terminal state) — a minor, self-healing
+  // issue, unlike the permanently-stuck state a missed read caused in
+  // the actual incident this file was fixed for. Not worth a third RPC
+  // function for this specific lower-stakes case.
+  const { data: candidates } = await supabase
+    .from("video_calls")
+    .select("id, status, requested_at")
+    .eq("match_id", matchId)
+    .in("status", ["pending_request", "ringing", "active"]);
+
+  if (!candidates || candidates.length === 0) return false;
+
+  const staleCutoff = Date.now() - STALE_RINGING_MINUTES * 60 * 1000;
+  return candidates.some((c) => {
+    if (c.status !== "ringing") return true; // pending_request/active always block
+    return new Date(c.requested_at).getTime() > staleCutoff; // ringing only blocks if recent
+  });
+}
+
 /** POST /api/video-calls/request — the one-time, first-ever ask for a
  *  given match. Only reachable before video_calls_enabled; once
  *  enabled, the eligible party uses POST /video-calls/call instead. */
@@ -140,13 +188,7 @@ router.post("/video-calls/request", requireAuth, async (req, res): Promise<void>
     return;
   }
 
-  const { data: existing } = await supabase
-    .from("video_calls")
-    .select("id")
-    .eq("match_id", matchId)
-    .in("status", ["pending_request", "ringing", "active"])
-    .maybeSingle();
-  if (existing) {
+  if (await hasBlockingCall(matchId)) {
     res.status(409).json({ error: "There's already a pending or active call for this match." });
     return;
   }
@@ -159,6 +201,7 @@ router.post("/video-calls/request", requireAuth, async (req, res): Promise<void>
     .single();
 
   if (error || !created) {
+    logger.error({ matchId, userId, error }, "Failed to create video call request");
     res.status(500).json({ error: "Failed to create video call request" });
     return;
   }
@@ -211,7 +254,12 @@ router.post("/video-calls/:id/accept", requireAuth, async (req, res): Promise<vo
   const userId = req.user!.id;
   const { id } = req.params;
 
-  const { data: call } = await supabase.from("video_calls").select("*").eq("id", id).single();
+  const { data: call } = await supabase.rpc("get_video_call_by_id", { p_call_id: id });
+  // See rpc_video_calls.sql — bypasses the same confirmed PostgREST
+  // read-consistency issue that affected /status, applied here too
+  // since every one of these action routes had the identical
+  // vulnerable pattern. This specific gap is what let a failed
+  // decline leave a call permanently stuck as "ringing."
   if (!call || call.acceptor_id !== userId || call.status !== "pending_request") {
     res.status(404).json({ error: "Request not found or already handled" });
     return;
@@ -251,7 +299,12 @@ router.post("/video-calls/:id/decline", requireAuth, async (req, res): Promise<v
   const userId = req.user!.id;
   const { id } = req.params;
 
-  const { data: call } = await supabase.from("video_calls").select("*").eq("id", id).single();
+  const { data: call } = await supabase.rpc("get_video_call_by_id", { p_call_id: id });
+  // See rpc_video_calls.sql — bypasses the same confirmed PostgREST
+  // read-consistency issue that affected /status, applied here too
+  // since every one of these action routes had the identical
+  // vulnerable pattern. This specific gap is what let a failed
+  // decline leave a call permanently stuck as "ringing."
   if (!call || call.acceptor_id !== userId) {
     res.status(404).json({ error: "Call not found" });
     return;
@@ -296,13 +349,7 @@ router.post("/video-calls/call", requireAuth, async (req, res): Promise<void> =>
     return;
   }
 
-  const { data: existing } = await supabase
-    .from("video_calls")
-    .select("id")
-    .eq("match_id", matchId)
-    .in("status", ["pending_request", "ringing", "active"])
-    .maybeSingle();
-  if (existing) {
+  if (await hasBlockingCall(matchId)) {
     res.status(409).json({ error: "There's already a pending or active call for this match." });
     return;
   }
@@ -315,6 +362,7 @@ router.post("/video-calls/call", requireAuth, async (req, res): Promise<void> =>
     .single();
 
   if (error || !created) {
+    logger.error({ matchId, userId, error }, "Failed to start direct video call");
     res.status(500).json({ error: "Failed to start video call" });
     return;
   }
@@ -334,7 +382,12 @@ router.post("/video-calls/:id/answer", requireAuth, async (req, res): Promise<vo
   const userId = req.user!.id;
   const { id } = req.params;
 
-  const { data: call } = await supabase.from("video_calls").select("*").eq("id", id).single();
+  const { data: call } = await supabase.rpc("get_video_call_by_id", { p_call_id: id });
+  // See rpc_video_calls.sql — bypasses the same confirmed PostgREST
+  // read-consistency issue that affected /status, applied here too
+  // since every one of these action routes had the identical
+  // vulnerable pattern. This specific gap is what let a failed
+  // decline leave a call permanently stuck as "ringing."
   if (!call || call.acceptor_id !== userId || call.status !== "ringing") {
     res.status(404).json({ error: "Call not found or no longer ringing" });
     return;
@@ -376,7 +429,12 @@ router.post("/video-calls/:id/missed", requireAuth, async (req, res): Promise<vo
   const userId = req.user!.id;
   const { id } = req.params;
 
-  const { data: call } = await supabase.from("video_calls").select("*").eq("id", id).single();
+  const { data: call } = await supabase.rpc("get_video_call_by_id", { p_call_id: id });
+  // See rpc_video_calls.sql — bypasses the same confirmed PostgREST
+  // read-consistency issue that affected /status, applied here too
+  // since every one of these action routes had the identical
+  // vulnerable pattern. This specific gap is what let a failed
+  // decline leave a call permanently stuck as "ringing."
   if (!call || call.requester_id !== userId || call.status !== "ringing") {
     res.status(404).json({ error: "Call not found or no longer ringing" });
     return;
@@ -400,7 +458,12 @@ router.post("/video-calls/:id/end", requireAuth, async (req, res): Promise<void>
   const userId = req.user!.id;
   const { id } = req.params;
 
-  const { data: call } = await supabase.from("video_calls").select("*").eq("id", id).single();
+  const { data: call } = await supabase.rpc("get_video_call_by_id", { p_call_id: id });
+  // See rpc_video_calls.sql — bypasses the same confirmed PostgREST
+  // read-consistency issue that affected /status, applied here too
+  // since every one of these action routes had the identical
+  // vulnerable pattern. This specific gap is what let a failed
+  // decline leave a call permanently stuck as "ringing."
   if (!call || (call.requester_id !== userId && call.acceptor_id !== userId) || call.status !== "active") {
     res.status(404).json({ error: "Call not found or not active" });
     return;
