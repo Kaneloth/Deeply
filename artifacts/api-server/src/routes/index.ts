@@ -10,6 +10,7 @@ import supportRouter from "./support";
 import gifsRouter from "./gifs";
 import phoneVerificationRouter from "./phone-verification";
 import blockedContactsRouter from "./blocked-contacts";
+import videoCallsRouter from "./video-calls";
 
 const router: IRouter = Router();
 
@@ -24,5 +25,6 @@ router.use(supportRouter);
 router.use(gifsRouter);
 router.use(phoneVerificationRouter);
 router.use(blockedContactsRouter);
+router.use(videoCallsRouter);
 
 export default router;

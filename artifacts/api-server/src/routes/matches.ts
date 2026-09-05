@@ -174,6 +174,11 @@ async function formatMatch(m: Record<string, any>, viewerId: string) {
     chat_unlock_status: m.chat_unlock_status,
     chat_unlock_initiator_id: m.chat_unlock_initiator_id,
     chat_unlock_initiated_at: m.chat_unlock_initiated_at,
+    // Permanent, one-time gate for video calling — see video-calls.ts.
+    // Available here for free since the RPC's to_jsonb(m) already
+    // includes every column on the match row automatically; no change
+    // needed to the RPC function itself.
+    video_calls_enabled: !!m.video_calls_enabled,
   };
 }
 
@@ -205,6 +210,7 @@ async function formatMatchesBatch(rawMatches: Record<string, any>[], viewerId: s
       chat_unlock_status: m.chat_unlock_status,
       chat_unlock_initiator_id: m.chat_unlock_initiator_id,
       chat_unlock_initiated_at: m.chat_unlock_initiated_at,
+      video_calls_enabled: !!m.video_calls_enabled,
     };
   });
 }

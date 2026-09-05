@@ -6,7 +6,7 @@ import { useSparks } from "@/contexts/SparksContext";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, Send, Undo2, Eye, CheckCheck, Smile, ImagePlus, X, MoreVertical, UserX, Flag, Copy, Trash2, Reply, Loader2, Lock, Clock, HeartCrack } from "lucide-react";
+import { ChevronLeft, Send, Undo2, Eye, CheckCheck, Smile, ImagePlus, X, MoreVertical, UserX, Flag, Copy, Trash2, Reply, Loader2, Lock, Clock, HeartCrack, Video, Phone, PhoneOff } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { EmojiPicker } from "@/components/EmojiPicker";
 import ReactionPicker from "emoji-picker-react";
@@ -200,6 +200,31 @@ export default function ChatPage() {
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
+
+  // Video calling — see video-calls.ts for the full backend state
+  // machine this mirrors. myGender determines whether the request/call
+  // button shows at all (only non-men can initiate); videoCall holds
+  // whatever the current pending/ringing/active attempt is for this
+  // match, polled the same way messages already are on this page.
+  const [myGender, setMyGender] = useState<string | null | undefined>(undefined);
+  const [videoCallsEnabled, setVideoCallsEnabled] = useState(false);
+  const [videoCall, setVideoCall] = useState<{
+    id: string;
+    requester_id: string;
+    acceptor_id: string;
+    status: "pending_request" | "ringing" | "active";
+    channel_name: string | null;
+    accepted_at: string | null;
+    used_free_call: boolean;
+  } | null>(null);
+  const [freeVideoCallsRemaining, setFreeVideoCallsRemaining] = useState(0);
+  const [isStartingCall, setIsStartingCall] = useState(false);
+  const [isRespondingToCall, setIsRespondingToCall] = useState(false);
+  // Tracks the specific call id a "missed" timeout has already fired
+  // for, so a re-render (or the next poll tick landing before the
+  // interval fires) can't accidentally schedule a second timeout for
+  // the same ringing call.
+  const missedTimeoutFiredForRef = useRef<string | null>(null);
   const [showReportModal, setShowReportModal] = useState(false);
   const [isBlocking, setIsBlocking] = useState(false);
   const [receiptsUnlocked, setReceiptsUnlocked] = useState(false);
@@ -412,6 +437,123 @@ export default function ChatPage() {
     }
   };
 
+  // ============================================================
+  // Video calling handlers — see video-calls.ts for the full backend
+  // state machine. canRequestCall mirrors the backend's own check
+  // exactly (only "man" is excluded, confirmed against real stored
+  // data — not the Title Case shown in onboarding).
+  // ============================================================
+  const canRequestVideoCall = myGender !== "man";
+
+  const handleRequestCall = async () => {
+    setIsStartingCall(true);
+    try {
+      const res = await fetch("/api/video-calls/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ matchId }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to send video call request");
+      setVideoCall({
+        id: body.id,
+        requester_id: userId!,
+        acceptor_id: match?.matched_user?.id ?? "",
+        status: "pending_request",
+        channel_name: null,
+        accepted_at: null,
+        used_free_call: false,
+      });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to send video call request.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsStartingCall(false);
+    }
+  };
+
+  const handleDirectCall = async () => {
+    setIsStartingCall(true);
+    try {
+      const res = await fetch("/api/video-calls/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ matchId }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to start video call");
+      setVideoCall({
+        id: body.id,
+        requester_id: userId!,
+        acceptor_id: match?.matched_user?.id ?? "",
+        status: "ringing",
+        channel_name: body.channel_name,
+        accepted_at: null,
+        used_free_call: false,
+      });
+      // TODO: once the actual call screen exists, this is where the
+      // caller joins the Agora channel immediately (body.token,
+      // body.agora_app_id, body.uid) while it rings on the other end.
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to start video call.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsStartingCall(false);
+    }
+  };
+
+  // Shared by both the one-time request and a direct-call ring — the
+  // backend branches on the call's current status internally, so the
+  // frontend doesn't need two separate accept endpoints to call.
+  const handleAcceptOrAnswerCall = async () => {
+    if (!videoCall) return;
+    setIsRespondingToCall(true);
+    const endpoint = videoCall.status === "pending_request" ? "accept" : "answer";
+    try {
+      const res = await fetch(`/api/video-calls/${videoCall.id}/${endpoint}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Failed to join the call");
+      setVideoCallsEnabled(true);
+      setVideoCall((prev) => (prev ? { ...prev, status: "active", channel_name: body.channel_name, used_free_call: body.used_free_call } : prev));
+      // TODO: once the actual call screen exists, this is where the
+      // acceptor joins the Agora channel using body.token,
+      // body.agora_app_id, body.uid.
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to join the call.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRespondingToCall(false);
+    }
+  };
+
+  const handleDeclineCall = async () => {
+    if (!videoCall) return;
+    setIsRespondingToCall(true);
+    try {
+      await fetch(`/api/video-calls/${videoCall.id}/decline`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      // Silent — the next poll tick reconciles regardless.
+    } finally {
+      setVideoCall(null);
+      setIsRespondingToCall(false);
+    }
+  };
+
   // silentOn404 exists specifically for the three call sites below that
   // refresh the match immediately after a message send/unsend already
   // SUCCEEDED against this exact matchId — that success is itself
@@ -613,6 +755,68 @@ export default function ChatPage() {
     }, 3000);
     return () => clearInterval(interval);
   }, [matchId, token]);
+
+  // Fetched once — this doesn't change over the lifetime of the page,
+  // unlike everything else here that's genuinely live. Small, dedicated
+  // fetch rather than extending AuthContext.tsx's own profile check,
+  // which is narrowly scoped to onboarding status specifically and
+  // isn't guaranteed to run reliably enough for this page to depend on.
+  useEffect(() => {
+    fetch("/api/profile/me", { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => setMyGender(body?.gender ?? null))
+      .catch(() => setMyGender(null));
+  }, [token]);
+
+  // Polls in place of a push notification — this app deliberately has
+  // no push infrastructure, so an incoming request/ringing call can
+  // only ever be noticed by someone with this exact chat open. Same 3s
+  // cadence as messages/match polling above, for consistency.
+  useEffect(() => {
+    if (!matchId) return;
+    const fetchVideoCallStatus = async () => {
+      try {
+        const res = await fetch(`/api/video-calls/status?matchId=${matchId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const body = await res.json();
+        setVideoCallsEnabled(!!body.video_calls_enabled);
+        setVideoCall(body.call ?? null);
+        setFreeVideoCallsRemaining(body.free_video_calls_remaining ?? 0);
+      } catch {
+        // Silent — same reasoning as the other polls on this page.
+      }
+    };
+    fetchVideoCallStatus();
+    const interval = setInterval(fetchVideoCallStatus, 3000);
+    return () => clearInterval(interval);
+  }, [matchId, token]);
+
+  // Auto-marks an outgoing call as missed after 45s of no answer — only
+  // the requester ever does this (the backend rejects /missed from
+  // anyone else), and only once per call id, guarded by the ref so a
+  // poll tick landing right before this fires can't schedule a
+  // duplicate timeout for the same call.
+  useEffect(() => {
+    if (!videoCall || videoCall.status !== "ringing" || videoCall.requester_id !== userId) return;
+    if (missedTimeoutFiredForRef.current === videoCall.id) return;
+
+    const timeoutId = setTimeout(async () => {
+      missedTimeoutFiredForRef.current = videoCall.id;
+      try {
+        await fetch(`/api/video-calls/${videoCall.id}/missed`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch {
+        // Silent — the next poll tick will reconcile the actual state
+        // regardless of whether this specific call succeeded.
+      }
+    }, 45000);
+
+    return () => clearTimeout(timeoutId);
+  }, [videoCall, userId, token]);
 
   // Ticks the live countdown once a second while — and only while — the
   // match is actually 'awaiting_reply'. Recomputed from scratch each
@@ -1112,7 +1316,7 @@ export default function ChatPage() {
   const status = match.chat_unlock_status ?? "unlocked";
 
   return (
-    <div className="flex flex-col h-full overflow-hidden w-full max-w-[430px] mx-auto bg-background">
+    <div className="relative flex flex-col h-full overflow-hidden w-full max-w-[430px] mx-auto bg-background">
       {/* Header — AppShell's persistent top bar already reserves the
           safe-area/status-bar space, so this header just needs normal
           padding, not its own extra top offset. */}
@@ -1142,6 +1346,17 @@ export default function ChatPage() {
           </div>
 
           <div className="flex items-center gap-2 shrink-0 relative">
+            {canRequestVideoCall && !videoCall && (
+              <button
+                onClick={videoCallsEnabled ? handleDirectCall : handleRequestCall}
+                disabled={isStartingCall}
+                title={videoCallsEnabled ? "Start a video call" : "Request a video call"}
+                className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center text-foreground hover:text-primary transition-colors shrink-0 disabled:opacity-50"
+              >
+                {isStartingCall ? <Loader2 size={16} className="animate-spin" /> : <Video size={16} />}
+              </button>
+            )}
+
             {!receiptsUnlocked && (
               <button
                 onClick={handleUnlockReceipts}
@@ -1217,6 +1432,107 @@ export default function ChatPage() {
           </div>
         )}
       </header>
+
+      {/* Video calling overlays — see video-calls.ts for the full state
+          machine. Each of these corresponds to exactly one videoCall
+          status, from whichever side (requester/acceptor) is looking
+          at it right now. */}
+
+      {videoCall?.status === "pending_request" && videoCall.acceptor_id === userId && (
+        <div className="absolute inset-x-4 top-20 z-40 bg-card border border-card-border rounded-2xl shadow-lg p-4 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary shrink-0">
+            <Video size={18} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold">{match.matched_user?.name} wants to video call you</p>
+            <p className="text-xs text-muted-foreground">
+              {freeVideoCallsRemaining > 0 ? "This will use one of your free calls" : "This will use your Sparks balance if it runs long"}
+            </p>
+          </div>
+          <button
+            onClick={handleDeclineCall}
+            disabled={isRespondingToCall}
+            className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center text-muted-foreground shrink-0 disabled:opacity-50"
+          >
+            <X size={16} />
+          </button>
+          <button
+            onClick={handleAcceptOrAnswerCall}
+            disabled={isRespondingToCall}
+            className="w-9 h-9 rounded-full bg-gradient-accent flex items-center justify-center text-white shrink-0 disabled:opacity-50"
+          >
+            <Phone size={16} />
+          </button>
+        </div>
+      )}
+
+      {videoCall?.status === "ringing" && videoCall.acceptor_id === userId && (
+        <div className="absolute inset-x-4 top-20 z-40 bg-card border border-card-border rounded-2xl shadow-lg p-4 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary shrink-0 animate-pulse">
+            <Phone size={18} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold">{match.matched_user?.name} is calling...</p>
+          </div>
+          <button
+            onClick={handleDeclineCall}
+            disabled={isRespondingToCall}
+            className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center text-muted-foreground shrink-0 disabled:opacity-50"
+          >
+            <PhoneOff size={16} />
+          </button>
+          <button
+            onClick={handleAcceptOrAnswerCall}
+            disabled={isRespondingToCall}
+            className="w-9 h-9 rounded-full bg-gradient-accent flex items-center justify-center text-white shrink-0 disabled:opacity-50"
+          >
+            <Phone size={16} />
+          </button>
+        </div>
+      )}
+
+      {videoCall?.status === "ringing" && videoCall.requester_id === userId && (
+        <div className="absolute inset-x-4 top-20 z-40 bg-card border border-card-border rounded-2xl shadow-lg p-4 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary shrink-0 animate-pulse">
+            <Phone size={18} />
+          </div>
+          <p className="flex-1 text-sm font-semibold">Ringing {match.matched_user?.name}...</p>
+          <button
+            onClick={handleDeclineCall}
+            className="w-9 h-9 rounded-full bg-destructive/20 flex items-center justify-center text-destructive shrink-0"
+          >
+            <PhoneOff size={16} />
+          </button>
+        </div>
+      )}
+
+      {videoCall?.status === "active" && (
+        // Placeholder until the actual Agora call screen is built —
+        // this is deliberately NOT a finished feature yet. End Call is
+        // fully wired to the real backend endpoint (billing included),
+        // but there's no video rendering here at all.
+        <div className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center gap-6 text-white">
+          <p className="text-sm opacity-60">Video call screen coming soon</p>
+          <p className="text-lg font-semibold">{match.matched_user?.name}</p>
+          <button
+            onClick={async () => {
+              try {
+                await fetch(`/api/video-calls/${videoCall.id}/end`, {
+                  method: "POST",
+                  headers: { Authorization: `Bearer ${token}` },
+                });
+              } catch {
+                // Silent — the next poll tick reconciles regardless.
+              } finally {
+                setVideoCall(null);
+              }
+            }}
+            className="w-14 h-14 rounded-full bg-destructive flex items-center justify-center"
+          >
+            <PhoneOff size={22} />
+          </button>
+        </div>
+      )}
 
       {showReportModal && match?.matched_user && (
         <ReportBlockModal
