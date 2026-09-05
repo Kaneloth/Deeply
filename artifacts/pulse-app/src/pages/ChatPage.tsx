@@ -491,9 +491,34 @@ export default function ChatPage() {
     }
   };
 
+  // Requests camera/mic access directly, as close to the actual button
+  // tap as possible, then immediately releases it — before Agora's own
+  // createMicrophoneAndCameraTracks() call later inside
+  // VideoCallScreen.tsx, which only happens after an intervening
+  // network request, React re-render, and component mount. That gap
+  // could plausibly put Agora's own request outside whatever "user
+  // activation" window Android's WebView enforces for getUserMedia();
+  // once permission is actually granted here, though, it persists for
+  // the rest of the session regardless of activation timing, so
+  // Agora's later call should succeed against an already-granted
+  // permission rather than needing its own fresh activation context.
+  // Deliberately swallows any failure — if this doesn't work, Agora's
+  // own call surfaces the real error (already reported to Sentry)
+  // exactly as it does today; this is a best-effort mitigation layered
+  // in front of that, not a replacement for it.
+  const primeMediaPermissions = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      stream.getTracks().forEach((t) => t.stop());
+    } catch {
+      // Silent — see comment above.
+    }
+  };
+
   const handleDirectCall = async () => {
     setIsStartingCall(true);
     try {
+      await primeMediaPermissions();
       const res = await fetch("/api/video-calls/call", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -530,6 +555,7 @@ export default function ChatPage() {
     setIsRespondingToCall(true);
     const endpoint = videoCall.status === "pending_request" ? "accept" : "answer";
     try {
+      await primeMediaPermissions();
       const res = await fetch(`/api/video-calls/${videoCall.id}/${endpoint}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
