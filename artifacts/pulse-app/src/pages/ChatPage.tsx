@@ -220,6 +220,13 @@ export default function ChatPage() {
   const [freeVideoCallsRemaining, setFreeVideoCallsRemaining] = useState(0);
   const [isStartingCall, setIsStartingCall] = useState(false);
   const [isRespondingToCall, setIsRespondingToCall] = useState(false);
+  // Distinct from actually declining — someone might tap X just
+  // because they can't take the call right now, not because they mean
+  // to refuse it outright. The request stays genuinely pending on the
+  // backend either way (this is purely a client-side "hide the banner
+  // for now" state); a small header button reappears so it can be
+  // reopened later without the other person needing to send a new one.
+  const [dismissedRequestId, setDismissedRequestId] = useState<string | null>(null);
   // Tracks the specific call id a "missed" timeout has already fired
   // for, so a re-render (or the next poll tick landing before the
   // interval fires) can't accidentally schedule a second timeout for
@@ -1387,6 +1394,24 @@ export default function ChatPage() {
               </button>
             )}
 
+            {/* Reopens a request that was dismissed (not declined) —
+                the pending_request banner above stays hidden while
+                videoCall.id === dismissedRequestId, so this is the only
+                way back to it without the other person sending a new
+                one. Distinct pink/primary styling (rather than the
+                plain secondary button above) since this specifically
+                means "someone's still waiting on you," not just "you
+                can start a call if you want to." */}
+            {videoCall?.status === "pending_request" && videoCall.acceptor_id === userId && videoCall.id === dismissedRequestId && (
+              <button
+                onClick={() => setDismissedRequestId(null)}
+                title={`${match.matched_user?.name} is still waiting for you to respond`}
+                className="w-9 h-9 rounded-full bg-primary/20 flex items-center justify-center text-primary shrink-0 animate-pulse"
+              >
+                <Video size={16} />
+              </button>
+            )}
+
             {!receiptsUnlocked && (
               <button
                 onClick={handleUnlockReceipts}
@@ -1468,31 +1493,49 @@ export default function ChatPage() {
           status, from whichever side (requester/acceptor) is looking
           at it right now. */}
 
-      {videoCall?.status === "pending_request" && videoCall.acceptor_id === userId && (
-        <div className="absolute inset-x-4 top-20 z-40 bg-card border border-card-border rounded-2xl shadow-lg p-4 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary shrink-0">
-            <Video size={18} />
+      {videoCall?.status === "pending_request" && videoCall.acceptor_id === userId && videoCall.id !== dismissedRequestId && (
+        <div className="absolute inset-x-4 top-20 z-40 bg-card border border-card-border rounded-2xl shadow-lg p-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary shrink-0">
+              <Video size={18} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold">{match.matched_user?.name} is requesting a video call</p>
+              <p className="text-xs text-muted-foreground">
+                {freeVideoCallsRemaining > 0 ? "This will use one of your free calls" : "This will use your Sparks balance if it runs long"}
+              </p>
+            </div>
+            {/* Dismiss — just hides this banner for now (no backend
+                call, request stays pending). Someone might tap this
+                simply because they can't take the call right this
+                moment, not because they mean to refuse it — that's
+                what the separate "Decline" button below is for. A
+                small header button (see the header above) reappears
+                so this can be reopened later without a new request. */}
+            <button
+              onClick={() => setDismissedRequestId(videoCall.id)}
+              title="Not right now — I'll come back to this"
+              className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-muted-foreground shrink-0"
+            >
+              <X size={14} />
+            </button>
           </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold">{match.matched_user?.name} is requesting a video call</p>
-            <p className="text-xs text-muted-foreground">
-              {freeVideoCallsRemaining > 0 ? "This will use one of your free calls" : "This will use your Sparks balance if it runs long"}
-            </p>
+          <div className="flex items-center gap-2 mt-3">
+            <button
+              onClick={handleDeclineCall}
+              disabled={isRespondingToCall}
+              className="flex-1 h-9 rounded-full bg-secondary text-sm font-semibold text-muted-foreground disabled:opacity-50"
+            >
+              Decline
+            </button>
+            <button
+              onClick={handleAcceptOrAnswerCall}
+              disabled={isRespondingToCall}
+              className="flex-1 h-9 rounded-full bg-gradient-accent text-sm font-semibold text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
+            >
+              <Phone size={14} /> Accept
+            </button>
           </div>
-          <button
-            onClick={handleDeclineCall}
-            disabled={isRespondingToCall}
-            className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center text-muted-foreground shrink-0 disabled:opacity-50"
-          >
-            <X size={16} />
-          </button>
-          <button
-            onClick={handleAcceptOrAnswerCall}
-            disabled={isRespondingToCall}
-            className="w-9 h-9 rounded-full bg-gradient-accent flex items-center justify-center text-white shrink-0 disabled:opacity-50"
-          >
-            <Phone size={16} />
-          </button>
         </div>
       )}
 
