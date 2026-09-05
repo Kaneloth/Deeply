@@ -186,14 +186,14 @@ router.get("/video-calls/status", requireAuth, async (req, res): Promise<void> =
     return;
   }
 
-  const { data: call } = await supabase
-    .from("video_calls")
-    .select("id, requester_id, acceptor_id, status, channel_name, accepted_at, used_free_call")
-    .eq("match_id", matchId)
-    .in("status", ["pending_request", "ringing", "active"])
-    .order("requested_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  // RPC instead of .select() — confirmed via direct DB inspection that
+  // a genuinely still-pending row can intermittently, persistently fail
+  // to show up via PostgREST's normal query path here, exactly the same
+  // symptom matches.ts hit before. See rpc_get_pending_video_call.sql.
+  const { data: call } = await supabase.rpc("get_pending_video_call", {
+    p_match_id: matchId,
+    p_user_id: userId,
+  });
 
   const freeCallsRemaining = await checkAndApplyVideoCallGrant(userId);
 
