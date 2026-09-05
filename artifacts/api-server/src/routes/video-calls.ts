@@ -95,10 +95,10 @@ async function checkAndApplyVideoCallGrant(userId: string): Promise<number> {
 async function getMatchParticipants(
   matchId: string,
   userId: string,
-): Promise<{ user1_id: string; user2_id: string; video_calls_enabled: boolean } | null> {
+): Promise<{ user1_id: string; user2_id: string; video_calls_enabled: boolean; video_call_payer_id: string | null } | null> {
   const { data: match } = await supabase
     .from("matches")
-    .select("user1_id, user2_id, video_calls_enabled")
+    .select("user1_id, user2_id, video_calls_enabled, video_call_payer_id")
     .eq("id", matchId)
     .single();
 
@@ -230,7 +230,7 @@ router.post("/video-calls/:id/accept", requireAuth, async (req, res): Promise<vo
   const channelName = `vcall_${call.id}`;
   await supabase
     .from("matches")
-    .update({ video_calls_enabled: true })
+    .update({ video_calls_enabled: true, video_call_payer_id: userId })
     .eq("id", call.match_id);
 
   await supabase
@@ -280,12 +280,12 @@ router.post("/video-calls/call", requireAuth, async (req, res): Promise<void> =>
     return;
   }
 
-  const { data: profile } = await supabase.from("profiles").select("gender").eq("id", userId).single();
-  if (!canRequestCall(profile?.gender)) {
-    res.status(403).json({ error: "Only women can start a video call." });
-    return;
-  }
-
+  // No gender check here, deliberately — that restriction only applies
+  // to the one-time initial request (POST /video-calls/request above).
+  // Once a match is enabled, either party can start a direct call; who
+  // actually pays is decided by matches.video_call_payer_id (set once,
+  // permanently, at the original accept), never by who happens to
+  // initiate or answer any individual later call.
   const match = await getMatchParticipants(matchId, userId);
   if (!match) {
     res.status(404).json({ error: "Match not found" });
@@ -340,14 +340,23 @@ router.post("/video-calls/:id/answer", requireAuth, async (req, res): Promise<vo
     return;
   }
 
-  const freeCallsRemaining = await checkAndApplyVideoCallGrant(userId);
+  // Deliberately checks the match's permanent payer, not userId (the
+  // person answering this specific call) — those are the same person
+  // in the common case (woman calls, man answers), but diverge the
+  // moment the payer himself initiates a call and the other party
+  // answers it. The free-call allowance being consumed must always be
+  // the payer's own, regardless of who technically picks up.
+  const { data: matchRow } = await supabase.from("matches").select("video_call_payer_id").eq("id", call.match_id).single();
+  const payerId = matchRow?.video_call_payer_id ?? userId; // fallback shouldn't happen in practice, but never leaves this unset
+
+  const freeCallsRemaining = await checkAndApplyVideoCallGrant(payerId);
   const useFreeCall = freeCallsRemaining > 0;
 
   if (useFreeCall) {
     await supabase
       .from("profiles")
       .update({ free_video_calls_remaining: freeCallsRemaining - 1 })
-      .eq("id", userId);
+      .eq("id", payerId);
   }
 
   await supabase
@@ -405,12 +414,18 @@ router.post("/video-calls/:id/end", requireAuth, async (req, res): Promise<void>
   const billableSeconds = Math.max(0, elapsedSeconds - freeSeconds);
   const sparksOwed = Math.ceil(billableSeconds / 30) * SPARKS_PER_30_SECONDS;
 
+  // Deliberately the match's permanently-recorded payer, not
+  // call.acceptor_id — those match in the common case (woman calls,
+  // man answers), but diverge once the payer himself initiates a call
+  // and the other party answers it. Billing must always follow the
+  // one fixed payer for this match, never whoever technically
+  // answered this one specific call attempt.
+  const { data: matchRowForBilling } = await supabase.from("matches").select("video_call_payer_id").eq("id", call.match_id).single();
+  const payerId = matchRowForBilling?.video_call_payer_id ?? call.acceptor_id; // fallback shouldn't happen in practice
+
   let sparksCharged = 0;
   if (sparksOwed > 0) {
-    // The acceptor always pays, per the actual product rule — always a
-    // man in a hetero match (since only non-men can ever be the
-    // requester), or whichever woman accepted in a same-sex match.
-    const result = await spendSparks(call.acceptor_id, sparksOwed, `Video call charge (${Math.ceil(billableSeconds / 60)} min beyond free allowance)`);
+    const result = await spendSparks(payerId, sparksOwed, `Video call charge (${Math.ceil(billableSeconds / 60)} min beyond free allowance)`);
     if (result.success) {
       sparksCharged = sparksOwed;
     } else {
@@ -421,7 +436,7 @@ router.post("/video-calls/:id/end", requireAuth, async (req, res): Promise<void>
       // can't be un-happened, so recording it as ended with a partial
       // charge is more honest than blocking on a payment that can't
       // fully go through anyway.
-      const partial = await spendSparks(call.acceptor_id, result.balance, "Video call charge (partial — insufficient balance)");
+      const partial = await spendSparks(payerId, result.balance, "Video call charge (partial — insufficient balance)");
       if (partial.success) sparksCharged = result.balance;
       logger.error({ callId: id, sparksOwed, actuallyCharged: sparksCharged }, "Video call ended with insufficient Sparks to cover full duration");
     }

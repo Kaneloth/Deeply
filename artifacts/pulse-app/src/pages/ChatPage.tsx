@@ -1383,7 +1383,13 @@ export default function ChatPage() {
           </div>
 
           <div className="flex items-center gap-2 shrink-0 relative">
-            {canRequestVideoCall && !videoCall && (
+            {/* Gender only gates the one-time initial request
+                (canRequestVideoCall, used when !videoCallsEnabled).
+                Once enabled, either party can start a direct call —
+                who actually pays is decided once, permanently, by the
+                backend's own stored payer, independent of who
+                initiates or answers any individual call. */}
+            {(videoCallsEnabled || canRequestVideoCall) && !videoCall && (
               <button
                 onClick={videoCallsEnabled ? handleDirectCall : handleRequestCall}
                 disabled={isStartingCall}
