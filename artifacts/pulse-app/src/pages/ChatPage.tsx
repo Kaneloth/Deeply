@@ -541,6 +541,7 @@ export default function ChatPage() {
   const handleDeclineCall = async () => {
     if (!videoCall) return;
     setIsRespondingToCall(true);
+    dismissedCallIdsRef.current.add(videoCall.id);
     try {
       await fetch(`/api/video-calls/${videoCall.id}/decline`, {
         method: "POST",
@@ -772,6 +773,24 @@ export default function ChatPage() {
   // no push infrastructure, so an incoming request/ringing call can
   // only ever be noticed by someone with this exact chat open. Same 3s
   // cadence as messages/match polling above, for consistency.
+  //
+  // consecutiveNullPollsRef guards against exactly the read-consistency
+  // lag this app has hit before (matches, invite_reveals) — a just-
+  // written row can briefly not show up on the very next read. Without
+  // this, a single transient null poll would clear a genuinely-still-
+  // pending request/call, making the banner flash and disappear even
+  // though nothing was actually declined or ended. Requires 2
+  // consecutive nulls (~6s) before actually clearing, which rides out
+  // that lag while still clearing promptly if the call genuinely ended
+  // via the other party's own action.
+  const consecutiveNullPollsRef = useRef(0);
+  // Guards the symmetric case: right after explicitly declining/ending
+  // a call, the very next poll could still see the old, not-yet-
+  // propagated status (same underlying lag, opposite direction) and
+  // incorrectly resurrect a banner the person just dismissed. Once a
+  // call id is in here, polling never shows it again regardless of
+  // what any individual read happens to return.
+  const dismissedCallIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!matchId) return;
     const fetchVideoCallStatus = async () => {
@@ -782,10 +801,21 @@ export default function ChatPage() {
         if (!res.ok) return;
         const body = await res.json();
         setVideoCallsEnabled(!!body.video_calls_enabled);
-        setVideoCall(body.call ?? null);
         setFreeVideoCallsRemaining(body.free_video_calls_remaining ?? 0);
+
+        if (body.call && !dismissedCallIdsRef.current.has(body.call.id)) {
+          consecutiveNullPollsRef.current = 0;
+          setVideoCall(body.call);
+        } else {
+          consecutiveNullPollsRef.current += 1;
+          if (consecutiveNullPollsRef.current >= 2) {
+            setVideoCall(null);
+          }
+        }
       } catch {
-        // Silent — same reasoning as the other polls on this page.
+        // Silent — same reasoning as the other polls on this page. Not
+        // counted as a "null" result — a network hiccup shouldn't push
+        // the counter toward clearing a real, still-active call.
       }
     };
     fetchVideoCallStatus();
@@ -1444,7 +1474,7 @@ export default function ChatPage() {
             <Video size={18} />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold">{match.matched_user?.name} wants to video call you</p>
+            <p className="text-sm font-semibold">{match.matched_user?.name} is requesting a video call</p>
             <p className="text-xs text-muted-foreground">
               {freeVideoCallsRemaining > 0 ? "This will use one of your free calls" : "This will use your Sparks balance if it runs long"}
             </p>
@@ -1516,6 +1546,7 @@ export default function ChatPage() {
           <p className="text-lg font-semibold">{match.matched_user?.name}</p>
           <button
             onClick={async () => {
+              dismissedCallIdsRef.current.add(videoCall.id);
               try {
                 await fetch(`/api/video-calls/${videoCall.id}/end`, {
                   method: "POST",
