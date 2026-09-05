@@ -303,9 +303,25 @@ router.post("/video-calls/:id/decline", requireAuth, async (req, res): Promise<v
   // See rpc_video_calls.sql — bypasses the same confirmed PostgREST
   // read-consistency issue that affected /status, applied here too
   // since every one of these action routes had the identical
-  // vulnerable pattern. This specific gap is what let a failed
-  // decline leave a call permanently stuck as "ringing."
-  if (!call || call.acceptor_id !== userId) {
+  // vulnerable pattern.
+  if (!call) {
+    res.status(404).json({ error: "Call not found" });
+    return;
+  }
+
+  // pending_request: only the acceptor can meaningfully refuse a
+  // one-time permission ask — the requester withdrawing their own
+  // request isn't a real product scenario here.
+  //
+  // ringing: EITHER party can end it — the requester cancelling their
+  // own outgoing ring (previously rejected outright here, which is
+  // the actual bug this fixes: the "Ringing..." banner shown to the
+  // requester has its own cancel button hitting this same endpoint),
+  // or the acceptor declining an incoming one.
+  const isAuthorized =
+    call.status === "pending_request" ? call.acceptor_id === userId : call.requester_id === userId || call.acceptor_id === userId;
+
+  if (!isAuthorized) {
     res.status(404).json({ error: "Call not found" });
     return;
   }

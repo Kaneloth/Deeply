@@ -548,16 +548,29 @@ export default function ChatPage() {
   const handleDeclineCall = async () => {
     if (!videoCall) return;
     setIsRespondingToCall(true);
-    dismissedCallIdsRef.current.add(videoCall.id);
     try {
-      await fetch(`/api/video-calls/${videoCall.id}/decline`, {
+      const res = await fetch(`/api/video-calls/${videoCall.id}/decline`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
-    } catch {
-      // Silent — the next poll tick reconciles regardless.
-    } finally {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to end the call");
+      }
+      // Only recorded/cleared on genuine success — previously this ran
+      // unconditionally in a finally block regardless of whether the
+      // request actually succeeded, which silently hid real failures
+      // (like the backend rejecting a requester's own cancel attempt)
+      // behind what looked like a normal, working dismissal.
+      dismissedCallIdsRef.current.add(videoCall.id);
       setVideoCall(null);
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to end the call.",
+        variant: "destructive",
+      });
+    } finally {
       setIsRespondingToCall(false);
     }
   };
@@ -1595,16 +1608,23 @@ export default function ChatPage() {
           <p className="text-lg font-semibold">{match.matched_user?.name}</p>
           <button
             onClick={async () => {
-              dismissedCallIdsRef.current.add(videoCall.id);
               try {
-                await fetch(`/api/video-calls/${videoCall.id}/end`, {
+                const res = await fetch(`/api/video-calls/${videoCall.id}/end`, {
                   method: "POST",
                   headers: { Authorization: `Bearer ${token}` },
                 });
-              } catch {
-                // Silent — the next poll tick reconciles regardless.
-              } finally {
+                if (!res.ok) {
+                  const body = await res.json().catch(() => ({}));
+                  throw new Error(body.error ?? "Failed to end the call");
+                }
+                dismissedCallIdsRef.current.add(videoCall.id);
                 setVideoCall(null);
+              } catch (err) {
+                toast({
+                  title: "Error",
+                  description: err instanceof Error ? err.message : "Failed to end the call.",
+                  variant: "destructive",
+                });
               }
             }}
             className="w-14 h-14 rounded-full bg-destructive flex items-center justify-center"
