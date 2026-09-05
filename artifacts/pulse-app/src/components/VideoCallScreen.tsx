@@ -6,6 +6,7 @@ import AgoraRTC, {
   type IAgoraRTCRemoteUser,
 } from "agora-rtc-sdk-ng";
 import { Mic, MicOff, Video, VideoOff, PhoneOff } from "lucide-react";
+import { captureError } from "@/lib/sentry";
 
 const FREE_CALL_SECONDS = 5 * 60; // must match video-calls.ts's own constant
 const SPARKS_PER_30_SECONDS = 1; // must match video-calls.ts's own constant
@@ -94,8 +95,10 @@ export function VideoCallScreen({
     });
 
     (async () => {
+      let step: "join" | "createTracks" | "publish" = "join";
       try {
         await client.join(agoraAppId, channelName, agoraToken, agoraUid);
+        step = "createTracks";
         const [audioTrack, videoTrack] = await AgoraRTC.createMicrophoneAndCameraTracks();
         if (cancelled) {
           audioTrack.close();
@@ -105,6 +108,26 @@ export function VideoCallScreen({
         localAudioTrackRef.current = audioTrack;
         localVideoTrackRef.current = videoTrack;
         if (localVideoRef.current) videoTrack.play(localVideoRef.current);
+
+        // Catches the specific "call connects fine, but the camera
+        // never actually shows anything" symptom — this genuinely
+        // wouldn't throw at all (createMicrophoneAndCameraTracks can
+        // resolve successfully with a track that isn't actually
+        // producing frames), so the try/catch below alone can't detect
+        // it. Checking the underlying MediaStreamTrack's own readyState
+        // directly is what actually catches this.
+        const rawTrack = videoTrack.getMediaStreamTrack();
+        if (rawTrack.readyState !== "live") {
+          captureError(new Error("Video track created but not live"), {
+            context: "VideoCallScreen.trackNotLive",
+            readyState: rawTrack.readyState,
+            enabled: rawTrack.enabled,
+            muted: rawTrack.muted,
+            channelName,
+          });
+        }
+
+        step = "publish";
         await client.publish([audioTrack, videoTrack]);
         if (!cancelled) setConnectionState("connected");
       } catch (err) {
@@ -120,6 +143,19 @@ export function VideoCallScreen({
             ? "Camera and microphone access is required for video calls. Please allow access and try again."
             : "Couldn't connect to the call. Please check your connection and try again.",
         );
+        // Reported to Sentry so a real failure is actually diagnosable
+        // afterward — "step" specifically distinguishes joining the
+        // Agora channel itself from creating/publishing local
+        // camera+mic tracks, which are two completely different
+        // failure categories that "connection failed" alone can't tell
+        // apart.
+        captureError(err, {
+          context: "VideoCallScreen.join",
+          step,
+          channelName,
+          agoraUid,
+          message,
+        });
       }
     })();
 
@@ -133,6 +169,17 @@ export function VideoCallScreen({
       localVideoTrackRef.current?.close();
       client.removeAllListeners();
       client.leave().catch(() => {});
+
+      // Safety net for exactly the incident this was added for: if the
+      // camera/join fails, or someone leaves via the OS back button
+      // rather than the explicit End Call button, nothing else would
+      // ever tell the backend this call is over — leaving it stuck as
+      // "active" and permanently blocking every future call for the
+      // match. The parent's onEndCall is written to silently no-op if
+      // the backend says the call was already ended (e.g. the explicit
+      // button already handled it moments earlier), so calling it
+      // unconditionally here is safe, not a double-charge risk.
+      onEndCall();
     };
     // Deliberately run once per mount only — this screen is always
     // torn down and recreated fresh for a new call rather than reused

@@ -1641,7 +1641,13 @@ export default function ChatPage() {
               method: "POST",
               headers: { Authorization: `Bearer ${token}` },
             });
-            if (!res.ok) {
+            // A 404 here specifically means this call was already ended
+            // by the other call site (the button tap and
+            // VideoCallScreen's own unmount safety net both call this
+            // same function now, so whichever runs second legitimately
+            // hits this) — silently treated as success, not an error,
+            // since there's genuinely nothing wrong.
+            if (!res.ok && res.status !== 404) {
               const body = await res.json().catch(() => ({}));
               throw new Error(body.error ?? "Failed to end the call");
             }
