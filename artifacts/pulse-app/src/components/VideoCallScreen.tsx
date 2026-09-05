@@ -24,6 +24,10 @@ interface VideoCallScreenProps {
   otherPersonName: string;
   otherPersonPhotoUrl: string | null;
   usedFreeCall: boolean;
+  isPayer: boolean; // determines whether the extend-or-end prompt shows
+  // real cost messaging, or just an informational notice — only one
+  // person (the match's permanently-recorded payer) is ever actually
+  // charged, regardless of who initiated this specific call.
   token: string; // auth token, needed for the one balance-check fetch
   onEndCall: () => void; // parent handles calling /end and clearing state
 }
@@ -38,6 +42,7 @@ export function VideoCallScreen({
   otherPersonName,
   otherPersonPhotoUrl,
   usedFreeCall,
+  isPayer,
   token,
   onEndCall,
 }: VideoCallScreenProps) {
@@ -284,12 +289,12 @@ export function VideoCallScreen({
   const isInFreeWindow = elapsedSeconds < freeSeconds;
   const timeRemainingLabel = isInFreeWindow
     ? `${formatTime(freeSeconds - elapsedSeconds)} free`
-    : hardCutoffAtSeconds !== null
+    : isPayer && hardCutoffAtSeconds !== null
       ? `${formatTime(Math.max(0, hardCutoffAtSeconds - elapsedSeconds))} left on your balance`
       : formatTime(elapsedSeconds);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black flex flex-col">
+    <div className="fixed inset-0 z-[9999] bg-black flex flex-col">
       {/* Remote video fills the screen; falls back to a name/photo
           placeholder until the other person's track actually arrives
           — they may take a moment to finish their own join/publish. */}
@@ -334,7 +339,7 @@ export function VideoCallScreen({
           </div>
         )}
 
-        {showExtendPrompt && (
+        {showExtendPrompt && isPayer && (
           <div className="absolute inset-x-6 bottom-24 bg-card rounded-2xl p-4 shadow-2xl">
             <p className="text-sm font-semibold mb-1">Your free time has ended</p>
             <p className="text-xs text-muted-foreground mb-3">

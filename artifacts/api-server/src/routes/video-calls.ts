@@ -244,6 +244,11 @@ router.get("/video-calls/status", requireAuth, async (req, res): Promise<void> =
     video_calls_enabled: match.video_calls_enabled,
     call: call ?? null,
     free_video_calls_remaining: freeCallsRemaining,
+    // Whoever's video_call_payer_id matches the requesting user is the
+    // one actually charged for this match's calls, regardless of who
+    // initiates any individual one — the frontend uses this to only
+    // show cost-related messaging to the person it's actually true for.
+    is_payer: match.video_call_payer_id === userId,
   });
 });
 

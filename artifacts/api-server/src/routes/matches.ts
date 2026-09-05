@@ -179,6 +179,7 @@ async function formatMatch(m: Record<string, any>, viewerId: string) {
     // includes every column on the match row automatically; no change
     // needed to the RPC function itself.
     video_calls_enabled: !!m.video_calls_enabled,
+    video_call_payer_id: m.video_call_payer_id ?? null,
   };
 }
 
@@ -211,6 +212,7 @@ async function formatMatchesBatch(rawMatches: Record<string, any>[], viewerId: s
       chat_unlock_initiator_id: m.chat_unlock_initiator_id,
       chat_unlock_initiated_at: m.chat_unlock_initiated_at,
       video_calls_enabled: !!m.video_calls_enabled,
+      video_call_payer_id: m.video_call_payer_id ?? null,
     };
   });
 }

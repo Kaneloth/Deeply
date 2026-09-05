@@ -219,6 +219,7 @@ export default function ChatPage() {
     used_free_call: boolean;
   } | null>(null);
   const [freeVideoCallsRemaining, setFreeVideoCallsRemaining] = useState(0);
+  const [isVideoCallPayer, setIsVideoCallPayer] = useState(false);
   const [isStartingCall, setIsStartingCall] = useState(false);
   const [isRespondingToCall, setIsRespondingToCall] = useState(false);
   // Populated only once accept/answer/call actually succeeds — kept
@@ -830,6 +831,7 @@ export default function ChatPage() {
         const body = await res.json();
         setVideoCallsEnabled(!!body.video_calls_enabled);
         setFreeVideoCallsRemaining(body.free_video_calls_remaining ?? 0);
+        setIsVideoCallPayer(!!body.is_payer);
 
         if (body.call && !dismissedCallIdsRef.current.has(body.call.id)) {
           consecutiveNullPollsRef.current = 0;
@@ -1690,6 +1692,7 @@ export default function ChatPage() {
             otherPersonName={match.matched_user?.name ?? "them"}
             otherPersonPhotoUrl={match.matched_user?.photo_url ?? null}
             usedFreeCall={videoCall.used_free_call}
+            isPayer={isVideoCallPayer}
             token={token!}
             onEndCall={handleEndActiveCall}
           />
