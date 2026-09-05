@@ -44,8 +44,17 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- Voice prompt recording (AudioRecorderControl / capacitor-voice-recorder) -->
+    <!-- Voice prompt recording (AudioRecorderControl / capacitor-voice-recorder)
+         — also covers video calling's audio, same permission either way. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Video calling (VideoCallScreen.tsx / Agora Web SDK's getUserMedia()
+         call inside the WebView) — direct camera stream access needs this
+         declared here even though it was never required before now; photo
+         uploads elsewhere in the app go through the system camera app via
+         an intent, which doesn't need this permission at all. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <!-- Distance-on-profile-cards (captureLocation.ts / @capacitor/geolocation) -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
