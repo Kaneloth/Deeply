@@ -597,4 +597,74 @@ router.post("/video-calls/:id/heartbeat", requireAuth, async (req, res): Promise
   res.sendStatus(204);
 });
 
+// Must be meaningfully longer than VideoCallScreen.tsx's own 20s
+// heartbeat interval to avoid false positives from an ordinary,
+// momentary network hiccup — 90s gives roughly 4 missed heartbeats'
+// worth of margin before treating a call as genuinely dead.
+const STALE_THRESHOLD_SECONDS = 90;
+
+/** POST /api/video-calls/_internal/cleanup-stale-calls — called only by
+ *  the netlify/functions/end-stale-video-calls.mts scheduled function,
+ *  every 2 minutes. All the actual logic lives here (inside the main
+ *  Express bundle, already proven to correctly include all its
+ *  dependencies) rather than in the scheduled function itself — that
+ *  function is deliberately kept to a single dependency-free fetch()
+ *  call, after Netlify's own logs confirmed its .mts bundling doesn't
+ *  pull in @supabase/supabase-js the way this main bundle does.
+ *
+ *  Protected by a shared secret (not requireAuth) since the caller is
+ *  a scheduled function, not a logged-in user with a JWT. */
+router.post("/video-calls/_internal/cleanup-stale-calls", async (req, res): Promise<void> => {
+  const providedSecret = req.headers["x-internal-cleanup-secret"];
+  if (!process.env.INTERNAL_CLEANUP_SECRET || providedSecret !== process.env.INTERNAL_CLEANUP_SECRET) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const staleCutoff = new Date(Date.now() - STALE_THRESHOLD_SECONDS * 1000).toISOString();
+
+  // Two separate queries rather than one combined .or() filter — this
+  // codebase has already hit bugs from hand-built PostgREST .or()
+  // strings before (see profile.ts's isUuidLike fix, and
+  // sparks-helper.ts's getAbuseDelayUntil), so two simple queries are
+  // used here instead, same reasoning.
+  const { data: staleWithHeartbeat } = await supabase
+    .from("video_calls")
+    .select("id, match_id, accepted_at, used_free_call, acceptor_id, last_heartbeat_at")
+    .eq("status", "active")
+    .not("last_heartbeat_at", "is", null)
+    .lt("last_heartbeat_at", staleCutoff);
+
+  // Covers a call that went active but never received even its first
+  // heartbeat at all (e.g. immediate connection failure right after
+  // accept/answer, before VideoCallScreen.tsx's own heartbeat effect
+  // ever got a chance to fire) — accepted_at is the only "last known
+  // alive" timestamp available in that case.
+  const { data: staleNeverHeartbeat } = await supabase
+    .from("video_calls")
+    .select("id, match_id, accepted_at, used_free_call, acceptor_id, last_heartbeat_at")
+    .eq("status", "active")
+    .is("last_heartbeat_at", null)
+    .lt("accepted_at", staleCutoff);
+
+  const staleCalls = [...(staleWithHeartbeat ?? []), ...(staleNeverHeartbeat ?? [])];
+
+  for (const call of staleCalls) {
+    try {
+      // Bills up through the last point the call was actually known to
+      // be alive, not "now" (when this cleanup happens to run) —
+      // fairer to the payer, since the real call very likely ended
+      // around the last heartbeat, not whenever this endpoint next
+      // got called.
+      const lastKnownAliveAt = new Date(call.last_heartbeat_at ?? call.accepted_at);
+      await settleVideoCallBilling(call, lastKnownAliveAt);
+      logger.info({ callId: call.id }, "Ended stale video call via scheduled cleanup");
+    } catch (err) {
+      logger.error({ callId: call.id, err }, "Failed to end stale video call");
+    }
+  }
+
+  res.json({ ended_count: staleCalls.length });
+});
+
 export default router;
