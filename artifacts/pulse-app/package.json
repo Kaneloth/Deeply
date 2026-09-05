@@ -90,6 +90,7 @@
     "@sentry/capacitor": "^1.0.0",
     "@sentry/react": "8.55.0",
     "@supabase/supabase-js": "^2.110.7",
+    "agora-rtc-sdk-ng": "^4.24.8",
     "capacitor-voice-recorder": "^7.0.6",
     "emoji-picker-react": "^4.19.1"
   }

@@ -276,6 +276,7 @@ router.post("/video-calls/:id/accept", requireAuth, async (req, res): Promise<vo
   }
 
   const channelName = `vcall_${call.id}`;
+  const acceptedAt = new Date().toISOString();
   await supabase
     .from("matches")
     .update({ video_calls_enabled: true, video_call_payer_id: userId })
@@ -283,11 +284,11 @@ router.post("/video-calls/:id/accept", requireAuth, async (req, res): Promise<vo
 
   await supabase
     .from("video_calls")
-    .update({ status: "active", accepted_at: new Date().toISOString(), channel_name: channelName, used_free_call: useFreeCall })
+    .update({ status: "active", accepted_at: acceptedAt, channel_name: channelName, used_free_call: useFreeCall })
     .eq("id", id);
 
   const token = generateAgoraToken(channelName, uidFromUserId(userId));
-  res.json({ channel_name: channelName, agora_app_id: AGORA_APP_ID, token, uid: uidFromUserId(userId), used_free_call: useFreeCall });
+  res.json({ channel_name: channelName, agora_app_id: AGORA_APP_ID, token, uid: uidFromUserId(userId), used_free_call: useFreeCall, accepted_at: acceptedAt });
 });
 
 /** POST /api/video-calls/:id/decline — branches by current status:
@@ -428,13 +429,45 @@ router.post("/video-calls/:id/answer", requireAuth, async (req, res): Promise<vo
       .eq("id", payerId);
   }
 
+  const acceptedAt = new Date().toISOString();
   await supabase
     .from("video_calls")
-    .update({ status: "active", accepted_at: new Date().toISOString(), used_free_call: useFreeCall })
+    .update({ status: "active", accepted_at: acceptedAt, used_free_call: useFreeCall })
     .eq("id", id);
 
   const token = generateAgoraToken(call.channel_name, uidFromUserId(userId));
-  res.json({ channel_name: call.channel_name, agora_app_id: AGORA_APP_ID, token, uid: uidFromUserId(userId), used_free_call: useFreeCall });
+  res.json({ channel_name: call.channel_name, agora_app_id: AGORA_APP_ID, token, uid: uidFromUserId(userId), used_free_call: useFreeCall, accepted_at: acceptedAt });
+});
+
+/** POST /api/video-calls/:id/join — issues a fresh Agora token for an
+ *  ALREADY-active call. This exists specifically for whichever party
+ *  didn't directly call accept/answer/call themselves — they only
+ *  learn the call is active via polling GET /video-calls/status, which
+ *  deliberately never hands out a token itself (issuing one to someone
+ *  before they've actually taken an action to join would be a real
+ *  gap). Without this endpoint, that party would have no way to
+ *  actually obtain their own token at all — accept/answer/call only
+ *  ever return one to whoever called that specific endpoint, never to
+ *  the other participant. */
+router.post("/video-calls/:id/join", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const { id } = req.params;
+
+  const { data: call } = await supabase.rpc("get_video_call_by_id", { p_call_id: id });
+  if (!call || (call.requester_id !== userId && call.acceptor_id !== userId) || call.status !== "active" || !call.channel_name) {
+    res.status(404).json({ error: "Call not found or not active" });
+    return;
+  }
+
+  const token = generateAgoraToken(call.channel_name, uidFromUserId(userId));
+  res.json({
+    channel_name: call.channel_name,
+    agora_app_id: AGORA_APP_ID,
+    token,
+    uid: uidFromUserId(userId),
+    accepted_at: call.accepted_at,
+    used_free_call: call.used_free_call,
+  });
 });
 
 /** POST /api/video-calls/:id/missed — called by the CALLER when a

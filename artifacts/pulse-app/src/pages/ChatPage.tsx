@@ -13,6 +13,7 @@ import ReactionPicker from "emoji-picker-react";
 import { ReportBlockModal } from "@/components/ReportBlockModal";
 import { MediaPicker } from "@/components/MediaPicker";
 import { evictMatchFromCache } from "./MatchesPage";
+import { VideoCallScreen } from "@/components/VideoCallScreen";
 import { getCachedMatchDetail, updateMatchDetailCache, removeMatchDetailCache } from "@/lib/matchDetailCache";
 import { readPersistentCache, writePersistentCache, registerCacheResetter } from "@/lib/persistentCache";
 
@@ -220,6 +221,13 @@ export default function ChatPage() {
   const [freeVideoCallsRemaining, setFreeVideoCallsRemaining] = useState(0);
   const [isStartingCall, setIsStartingCall] = useState(false);
   const [isRespondingToCall, setIsRespondingToCall] = useState(false);
+  // Populated only once accept/answer/call actually succeeds — kept
+  // separate from videoCall's own signaling state above since these
+  // specifically come from those three endpoints' responses, not from
+  // the polling /status endpoint (which never returns a token, since
+  // handing one out to someone who hasn't actually joined yet would be
+  // a real security gap).
+  const [agoraCredentials, setAgoraCredentials] = useState<{ appId: string; token: string; uid: number } | null>(null);
   // Distinct from actually declining — someone might tap X just
   // because they can't take the call right now, not because they mean
   // to refuse it outright. The request stays genuinely pending on the
@@ -501,9 +509,7 @@ export default function ChatPage() {
         accepted_at: null,
         used_free_call: false,
       });
-      // TODO: once the actual call screen exists, this is where the
-      // caller joins the Agora channel immediately (body.token,
-      // body.agora_app_id, body.uid) while it rings on the other end.
+      setAgoraCredentials({ appId: body.agora_app_id, token: body.token, uid: body.uid });
     } catch (err) {
       toast({
         title: "Error",
@@ -530,10 +536,10 @@ export default function ChatPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to join the call");
       setVideoCallsEnabled(true);
-      setVideoCall((prev) => (prev ? { ...prev, status: "active", channel_name: body.channel_name, used_free_call: body.used_free_call } : prev));
-      // TODO: once the actual call screen exists, this is where the
-      // acceptor joins the Agora channel using body.token,
-      // body.agora_app_id, body.uid.
+      setVideoCall((prev) =>
+        prev ? { ...prev, status: "active", channel_name: body.channel_name, accepted_at: body.accepted_at, used_free_call: body.used_free_call } : prev,
+      );
+      setAgoraCredentials({ appId: body.agora_app_id, token: body.token, uid: body.uid });
     } catch (err) {
       toast({
         title: "Error",
@@ -564,6 +570,8 @@ export default function ChatPage() {
       // behind what looked like a normal, working dismissal.
       dismissedCallIdsRef.current.add(videoCall.id);
       setVideoCall(null);
+      setAgoraCredentials(null);
+      joinedCallIdRef.current = null;
     } catch (err) {
       toast({
         title: "Error",
@@ -842,6 +850,34 @@ export default function ChatPage() {
     const interval = setInterval(fetchVideoCallStatus, 3000);
     return () => clearInterval(interval);
   }, [matchId, token]);
+
+  // Covers whichever party did NOT directly call accept/answer/call
+  // themselves (those three already store their own credentials
+  // directly in their own handlers, above) — this party only learns
+  // the call is active via polling, and /status deliberately never
+  // hands out a token itself. Guarded by the id check so this only
+  // ever fires once per call, not on every subsequent poll tick.
+  const joinedCallIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!videoCall || videoCall.status !== "active" || agoraCredentials) return;
+    if (joinedCallIdRef.current === videoCall.id) return;
+    joinedCallIdRef.current = videoCall.id;
+
+    fetch(`/api/video-calls/${videoCall.id}/join`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (body) setAgoraCredentials({ appId: body.agora_app_id, token: body.token, uid: body.uid });
+      })
+      .catch(() => {
+        // If this fails, the call screen simply won't render (it
+        // requires agoraCredentials) — the person can still tap End
+        // Call from wherever the UI ends up, since that doesn't
+        // depend on ever having joined the Agora channel itself.
+      });
+  }, [videoCall, agoraCredentials, token]);
 
   // Auto-marks an outgoing call as missed after 45s of no answer — only
   // the requester ever does this (the backend rejects /missed from
@@ -1598,41 +1634,60 @@ export default function ChatPage() {
         </div>
       )}
 
-      {videoCall?.status === "active" && (
-        // Placeholder until the actual Agora call screen is built —
-        // this is deliberately NOT a finished feature yet. End Call is
-        // fully wired to the real backend endpoint (billing included),
-        // but there's no video rendering here at all.
-        <div className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center gap-6 text-white">
-          <p className="text-sm opacity-60">Video call screen coming soon</p>
-          <p className="text-lg font-semibold">{match.matched_user?.name}</p>
-          <button
-            onClick={async () => {
-              try {
-                const res = await fetch(`/api/video-calls/${videoCall.id}/end`, {
-                  method: "POST",
-                  headers: { Authorization: `Bearer ${token}` },
-                });
-                if (!res.ok) {
-                  const body = await res.json().catch(() => ({}));
-                  throw new Error(body.error ?? "Failed to end the call");
-                }
-                dismissedCallIdsRef.current.add(videoCall.id);
-                setVideoCall(null);
-              } catch (err) {
-                toast({
-                  title: "Error",
-                  description: err instanceof Error ? err.message : "Failed to end the call.",
-                  variant: "destructive",
-                });
-              }
-            }}
-            className="w-14 h-14 rounded-full bg-destructive flex items-center justify-center"
-          >
-            <PhoneOff size={22} />
-          </button>
-        </div>
-      )}
+      {videoCall?.status === "active" && (() => {
+        const handleEndActiveCall = async () => {
+          try {
+            const res = await fetch(`/api/video-calls/${videoCall.id}/end`, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!res.ok) {
+              const body = await res.json().catch(() => ({}));
+              throw new Error(body.error ?? "Failed to end the call");
+            }
+            dismissedCallIdsRef.current.add(videoCall.id);
+            setVideoCall(null);
+            setAgoraCredentials(null);
+            joinedCallIdRef.current = null;
+          } catch (err) {
+            toast({
+              title: "Error",
+              description: err instanceof Error ? err.message : "Failed to end the call.",
+              variant: "destructive",
+            });
+          }
+        };
+
+        // Briefly true right after the call goes active for whichever
+        // party is still waiting on the /join fallback above to
+        // resolve — a short loading state here is expected and normal,
+        // not an error condition.
+        if (!agoraCredentials || !videoCall.accepted_at) {
+          return (
+            <div className="fixed inset-0 z-50 bg-black flex flex-col items-center justify-center gap-4 text-white">
+              <Loader2 size={28} className="animate-spin opacity-60" />
+              <button onClick={handleEndActiveCall} className="text-xs text-white/60 underline">
+                Cancel
+              </button>
+            </div>
+          );
+        }
+
+        return (
+          <VideoCallScreen
+            channelName={videoCall.channel_name!}
+            agoraAppId={agoraCredentials.appId}
+            agoraToken={agoraCredentials.token}
+            agoraUid={agoraCredentials.uid}
+            acceptedAt={videoCall.accepted_at}
+            otherPersonName={match.matched_user?.name ?? "them"}
+            otherPersonPhotoUrl={match.matched_user?.photo_url ?? null}
+            usedFreeCall={videoCall.used_free_call}
+            token={token!}
+            onEndCall={handleEndActiveCall}
+          />
+        );
+      })()}
 
       {showReportModal && match?.matched_user && (
         <ReportBlockModal
