@@ -12,6 +12,7 @@ const FREE_CALL_SECONDS = 5 * 60; // must match video-calls.ts's own constant
 const SPARKS_PER_30_SECONDS = 1; // must match video-calls.ts's own constant
 
 interface VideoCallScreenProps {
+  callId: string;
   channelName: string;
   agoraAppId: string;
   agoraToken: string;
@@ -28,6 +29,7 @@ interface VideoCallScreenProps {
 }
 
 export function VideoCallScreen({
+  callId,
   channelName,
   agoraAppId,
   agoraToken,
@@ -208,6 +210,31 @@ export function VideoCallScreen({
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
   }, [acceptedAt, usedFreeCall, hasRespondedToPrompt, showExtendPrompt, hardCutoffAtSeconds, onEndCall]);
+
+  // Sent every 20s while genuinely connected — this is the actual
+  // signal the scheduled stale-call cleanup checks against on the
+  // backend. If this stops arriving for any reason (app force-closed,
+  // connectivity lost, phone dies — anything that prevents this
+  // component from cleanly unmounting or the explicit End Call button
+  // from ever being tapped), the backend treats the call as over on
+  // its own rather than letting it run, and bill, indefinitely. This
+  // is the actual fix for that failure mode, not just a nice-to-have.
+  useEffect(() => {
+    if (connectionState !== "connected") return;
+    const sendHeartbeat = () => {
+      fetch(`/api/video-calls/${callId}/heartbeat`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {
+        // Silent — a single missed heartbeat isn't itself a problem,
+        // only a sustained gap is, which the backend's own staleness
+        // threshold already accounts for.
+      });
+    };
+    sendHeartbeat();
+    const interval = setInterval(sendHeartbeat, 20000);
+    return () => clearInterval(interval);
+  }, [connectionState, callId, token]);
 
   const handleContinuePaid = async () => {
     setHasRespondedToPrompt(true);

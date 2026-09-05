@@ -1681,6 +1681,7 @@ export default function ChatPage() {
 
         return (
           <VideoCallScreen
+            callId={videoCall.id}
             channelName={videoCall.channel_name!}
             agoraAppId={agoraCredentials.appId}
             agoraToken={agoraCredentials.token}

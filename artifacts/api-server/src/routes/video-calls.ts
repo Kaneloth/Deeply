@@ -503,22 +503,17 @@ router.post("/video-calls/:id/missed", requireAuth, async (req, res): Promise<vo
  *  GET /api/sparks for the balance it budgets against), so hitting the
  *  insufficient-balance fallback below should be rare in practice —
  *  it exists as a backstop, not the primary enforcement mechanism. */
-router.post("/video-calls/:id/end", requireAuth, async (req, res): Promise<void> => {
-  const userId = req.user!.id;
-  const { id } = req.params;
-
-  const { data: call } = await supabase.rpc("get_video_call_by_id", { p_call_id: id });
-  // See rpc_video_calls.sql — bypasses the same confirmed PostgREST
-  // read-consistency issue that affected /status, applied here too
-  // since every one of these action routes had the identical
-  // vulnerable pattern. This specific gap is what let a failed
-  // decline leave a call permanently stuck as "ringing."
-  if (!call || (call.requester_id !== userId && call.acceptor_id !== userId) || call.status !== "active") {
-    res.status(404).json({ error: "Call not found or not active" });
-    return;
-  }
-
-  const endedAt = new Date();
+/** Shared billing logic — used by both POST /:id/end (the normal path,
+ *  triggered by a person tapping End Call) and the scheduled stale-call
+ *  cleanup function (the safety net for exactly the incident that
+ *  motivated it: a call whose participant force-closed the app,
+ *  losing connectivity, or otherwise never sending the explicit end
+ *  signal at all). Both paths must charge identically — this is the
+ *  one place that logic lives, so they can't ever drift apart. */
+export async function settleVideoCallBilling(
+  call: { id: string; match_id: string; accepted_at: string; used_free_call: boolean; acceptor_id: string },
+  endedAt: Date,
+): Promise<{ elapsedSeconds: number; sparksCharged: number }> {
   const acceptedAt = new Date(call.accepted_at);
   const elapsedSeconds = Math.max(0, Math.floor((endedAt.getTime() - acceptedAt.getTime()) / 1000));
 
@@ -550,16 +545,56 @@ router.post("/video-calls/:id/end", requireAuth, async (req, res): Promise<void>
       // fully go through anyway.
       const partial = await spendSparks(payerId, result.balance, "Video call charge (partial — insufficient balance)");
       if (partial.success) sparksCharged = result.balance;
-      logger.error({ callId: id, sparksOwed, actuallyCharged: sparksCharged }, "Video call ended with insufficient Sparks to cover full duration");
+      logger.error({ callId: call.id, sparksOwed, actuallyCharged: sparksCharged }, "Video call ended with insufficient Sparks to cover full duration");
     }
   }
 
   await supabase
     .from("video_calls")
     .update({ status: "ended", ended_at: endedAt.toISOString(), sparks_charged: sparksCharged })
-    .eq("id", id);
+    .eq("id", call.id);
 
+  return { elapsedSeconds, sparksCharged };
+}
+
+router.post("/video-calls/:id/end", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const { id } = req.params;
+
+  const { data: call } = await supabase.rpc("get_video_call_by_id", { p_call_id: id });
+  // See rpc_video_calls.sql — bypasses the same confirmed PostgREST
+  // read-consistency issue that affected /status, applied here too
+  // since every one of these action routes had the identical
+  // vulnerable pattern. This specific gap is what let a failed
+  // decline leave a call permanently stuck as "ringing."
+  if (!call || (call.requester_id !== userId && call.acceptor_id !== userId) || call.status !== "active") {
+    res.status(404).json({ error: "Call not found or not active" });
+    return;
+  }
+
+  const { elapsedSeconds, sparksCharged } = await settleVideoCallBilling(call, new Date());
   res.json({ elapsed_seconds: elapsedSeconds, sparks_charged: sparksCharged });
+});
+
+/** POST /api/video-calls/:id/heartbeat — called by either party every
+ *  ~20s while a call is active. This is what the scheduled stale-call
+ *  cleanup function checks against: if a call's heartbeat goes silent
+ *  (app force-closed, connectivity lost, or genuinely anything else
+ *  that prevents a proper End Call signal from ever arriving), the
+ *  cleanup treats it as over rather than letting it run — and bill —
+ *  indefinitely. */
+router.post("/video-calls/:id/heartbeat", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const { id } = req.params;
+
+  const { data: call } = await supabase.rpc("get_video_call_by_id", { p_call_id: id });
+  if (!call || (call.requester_id !== userId && call.acceptor_id !== userId) || call.status !== "active") {
+    res.status(404).json({ error: "Call not found or not active" });
+    return;
+  }
+
+  await supabase.from("video_calls").update({ last_heartbeat_at: new Date().toISOString() }).eq("id", id);
+  res.sendStatus(204);
 });
 
 export default router;
