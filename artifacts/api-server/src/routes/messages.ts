@@ -76,12 +76,14 @@ router.get("/matches/:matchId/messages", requireAuth, async (req, res): Promise<
     : req.params.matchId;
   const userId = req.user!.id;
 
-  const { data: match } = await supabase
-    .from("matches")
-    .select(`id, user1_id, user2_id, ${CHAT_UNLOCK_SELECT_FIELDS}`)
-    .eq("id", matchId)
-    .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
-    .single();
+  // RPC instead of a direct .single() query — matches is the exact
+  // table already confirmed (via Supabase's own request logs showing
+  // this identical query flapping between 200 and 406 for the same
+  // match, repeatedly, over almost a full minute) to have this
+  // read-consistency issue elsewhere in this codebase. get_match_by_id
+  // bypasses it the same proven way as matches.ts/video-calls.ts.
+  const { data: rawMatch } = await supabase.rpc("get_match_by_id", { p_match_id: matchId, p_user_id: userId });
+  const match = rawMatch && (rawMatch.user1_id === userId || rawMatch.user2_id === userId) ? rawMatch : null;
 
   if (!match) {
     res.status(404).json({ error: "Match not found" });
@@ -206,12 +208,10 @@ router.post("/matches/:matchId/read-receipts/unlock", requireAuth, async (req, r
     : req.params.matchId;
   const userId = req.user!.id;
 
-  const { data: match } = await supabase
-    .from("matches")
-    .select("id, user1_id, user2_id")
-    .eq("id", matchId)
-    .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
-    .single();
+  // Same RPC bypass as GET /matches/:matchId/messages above - see that
+  // comment for the full reasoning.
+  const { data: rawMatch } = await supabase.rpc("get_match_by_id", { p_match_id: matchId, p_user_id: userId });
+  const match = rawMatch && (rawMatch.user1_id === userId || rawMatch.user2_id === userId) ? rawMatch : null;
 
   if (!match) {
     res.status(404).json({ error: "Match not found" });
@@ -295,12 +295,14 @@ router.post("/matches/:matchId/messages", requireAuth, async (req, res): Promise
     return;
   }
 
-  const { data: match } = await supabase
-    .from("matches")
-    .select(`id, user1_id, user2_id, message_count, ${CHAT_UNLOCK_SELECT_FIELDS}`)
-    .eq("id", matchId)
-    .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
-    .single();
+  // Same RPC bypass as GET /matches/:matchId/messages above - see that
+  // comment for the full reasoning. This specific site is the one that
+  // exactly matched the failing query in Supabase's own request logs
+  // (same select fields, same .single()/.or() pattern) — the direct
+  // cause of the reported "match not found" failure right after
+  // matching, for a match that genuinely existed the whole time.
+  const { data: rawMatch } = await supabase.rpc("get_match_by_id", { p_match_id: matchId, p_user_id: userId });
+  const match = rawMatch && (rawMatch.user1_id === userId || rawMatch.user2_id === userId) ? rawMatch : null;
 
   if (!match) {
     res.status(404).json({ error: "Match not found" });
@@ -424,12 +426,10 @@ router.post("/messages/:messageId/react", requireAuth, async (req, res): Promise
     return;
   }
 
-  const { data: match } = await supabase
-    .from("matches")
-    .select("id")
-    .eq("id", message.match_id)
-    .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
-    .maybeSingle();
+  // Same RPC bypass as GET /matches/:matchId/messages above - see that
+  // comment for the full reasoning.
+  const { data: rawMatch } = await supabase.rpc("get_match_by_id", { p_match_id: message.match_id, p_user_id: userId });
+  const match = rawMatch && (rawMatch.user1_id === userId || rawMatch.user2_id === userId) ? rawMatch : null;
 
   if (!match) {
     res.status(404).json({ error: "Message not found" });
@@ -500,11 +500,11 @@ router.post("/messages/:messageId/unsend", requireAuth, async (req, res): Promis
     return;
   }
 
-  const { data: match } = await supabase
-    .from("matches")
-    .select(`id, user1_id, user2_id, ${CHAT_UNLOCK_SELECT_FIELDS}`)
-    .eq("id", message.match_id)
-    .single();
+  // Same RPC bypass as GET /matches/:matchId/messages above - see that
+  // comment for the full reasoning. No membership check needed here
+  // specifically — message ownership was already verified above (the
+  // "Message not found or not yours" check).
+  const { data: match } = await supabase.rpc("get_match_by_id", { p_match_id: message.match_id, p_user_id: userId });
 
   let balance: number | null = null;
 
@@ -558,12 +558,10 @@ router.post("/messages/:messageId/hide", requireAuth, async (req, res): Promise<
     return;
   }
 
-  const { data: match } = await supabase
-    .from("matches")
-    .select("id")
-    .eq("id", message.match_id)
-    .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
-    .maybeSingle();
+  // Same RPC bypass as GET /matches/:matchId/messages above - see that
+  // comment for the full reasoning.
+  const { data: rawMatch } = await supabase.rpc("get_match_by_id", { p_match_id: message.match_id, p_user_id: userId });
+  const match = rawMatch && (rawMatch.user1_id === userId || rawMatch.user2_id === userId) ? rawMatch : null;
 
   if (!match) {
     res.status(404).json({ error: "Message not found" });
