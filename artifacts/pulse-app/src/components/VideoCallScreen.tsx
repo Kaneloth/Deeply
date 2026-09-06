@@ -106,16 +106,15 @@ export function VideoCallScreen({
       try {
         await client.join(agoraAppId, channelName, agoraToken, agoraUid);
         step = "createTracks";
-        // Requested separately and sequentially (audio first, since
-        // that's specifically what's been failing) rather than via the
-        // single combined createMicrophoneAndCameraTracks() call — a
-        // documented workaround for a known, external Android WebView
-        // bug (confirmed via multiple unrelated projects hitting the
-        // identical "NotReadableError: Could not start audio source"
-        // on newer Android/WebView versions specifically, working fine
-        // on older ones) where requesting both devices simultaneously
-        // can trigger resource contention that requesting them one at
-        // a time avoids.
+
+        // Requested separately and sequentially (audio first) rather
+        // than via the single combined createMicrophoneAndCameraTracks()
+        // call — a documented workaround for a known, external Android
+        // WebView bug class where requesting both devices simultaneously
+        // can trigger resource contention on some devices. Kept as a
+        // harmless precaution even after the actual root cause for this
+        // app's own failures turned out to be a missing
+        // MODIFY_AUDIO_SETTINGS manifest permission, not this.
         const audioTrack = await AgoraRTC.createMicrophoneAudioTrack();
         const videoTrack = await AgoraRTC.createCameraVideoTrack();
         if (cancelled) {
@@ -151,11 +150,11 @@ export function VideoCallScreen({
       } catch (err) {
         if (cancelled) return;
         setConnectionState("failed");
+        const message = err instanceof Error ? err.message : String(err);
         // Most common real-world cause by far: camera/mic permission
         // denied, either by the person or by the device/browser
         // outright. Named explicitly since "failed to connect" alone
         // wouldn't tell anyone what to actually go fix.
-        const message = err instanceof Error ? err.message : String(err);
         setConnectionError(
           message.toLowerCase().includes("permission") || message.toLowerCase().includes("notallowed")
             ? "Camera and microphone access is required for video calls. Please allow access and try again."

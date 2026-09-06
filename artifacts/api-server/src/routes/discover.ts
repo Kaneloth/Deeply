@@ -112,7 +112,7 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
         "nightlife_frequency, has_tattoos, pets, activity_level, height_cm, education, languages_spoken, languages_other, love_language, latitude, longitude",
     )
     .not("id", "in", `(${excludedIds.join(",")})`)
-    .eq("is_incognito", false)
+    .eq("is_incognito", false).eq("onboarding_completed", true)
     .limit(300);
 
   if (error || !candidates || candidates.length === 0) {
@@ -707,7 +707,8 @@ router.get("/discover/invites", requireAuth, async (req, res): Promise<void> => 
   const { data: revealedProfiles } = await supabase
     .from("profiles")
     .select("id, name, age, birthday, bio, city, photo_url, personality_tags, integrity_score, is_verified, photo_verified, is_founder, num_kids, family_plans, smoking_status, drinking_status, vaping_status, has_tattoos, pets, activity_level, nightlife_frequency, height_cm, education, languages_spoken, languages_other, love_language, dating_intentions, relationship_type, latitude, longitude")
-    .in("id", revealedPendingIds);
+    .in("id", revealedPendingIds)
+    .eq("onboarding_completed", true);
 
   const superLikerIds = new Set(
     pendingInviters.filter((p) => p.direction === "super_like").map((p) => p.id),
@@ -869,12 +870,19 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
         "education, languages_spoken, languages_other, love_language, latitude, longitude",
     )
     .not("id", "in", `(${excludedIds.join(",")})`)
-    .eq("is_incognito", false);
+    .eq("is_incognito", false).eq("onboarding_completed", true);
 
   if (name) {
     query = query.ilike("name", `%${name}%`);
   }
-  query = query.gte("age", effectiveMinAge).lte("age", effectiveMaxAge);
+  // Deliberately NOT filtered here at the SQL level — the raw age
+  // column is unreliable (every other age check in this file computes
+  // from birthday instead, via calculateAge(c.birthday ?? null) ??
+  // c.age, rather than trusting this column directly), so a SQL-level
+  // comparison against it was silently excluding rows wherever age was
+  // null/stale — the actual cause of search always returning zero
+  // results regardless of what name was typed. Applied in JS below,
+  // after fetching, using the same pattern as everywhere else instead.
   if (city) {
     query = query.ilike("city", `%${city}%`);
   }
@@ -898,6 +906,8 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
     if (viewer && !passesDealbreakers(c, viewer, dealbreakers)) return false;
     if (viewer && !passesEnabledPreferenceFilters(c, viewer, enabledFilters)) return false;
     if (viewer && !passesHeightRange(c.height_cm, viewer.pref_height_min_cm, viewer.pref_height_max_cm, enabledFilters)) return false;
+    const candidateAge = calculateAge(c.birthday ?? null) ?? c.age;
+    if (!passesAgeRange(candidateAge, effectiveMinAge, effectiveMaxAge)) return false;
     return true;
   });
 
@@ -986,7 +996,7 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
       .from("profiles")
       .select(PREVIEW_FIELDS)
       .not("id", "in", excludeClause)
-      .eq("is_incognito", false)
+      .eq("is_incognito", false).eq("onboarding_completed", true)
       .gte("created_at", sevenDaysAgo)
       .limit(300);
     categories.push({ key: "new_here", label: "New Here", ...applyHardFilters(data ?? []) });
@@ -997,7 +1007,7 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
       .from("profiles")
       .select(PREVIEW_FIELDS)
       .not("id", "in", excludeClause)
-      .eq("is_incognito", false)
+      .eq("is_incognito", false).eq("onboarding_completed", true)
       .eq("is_verified", true)
       .limit(300);
     categories.push({ key: "verified", label: "Verified", ...applyHardFilters(data ?? []) });
@@ -1021,7 +1031,7 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
         .from("profiles")
         .select(PREVIEW_FIELDS)
         .in("id", audioUserIds)
-        .eq("is_incognito", false);
+        .eq("is_incognito", false).eq("onboarding_completed", true);
       result = applyHardFilters(data ?? []);
     }
     categories.push({ key: "has_audio", label: "Voice Questions", ...result });
@@ -1045,7 +1055,7 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
       .from("profiles")
       .select(PREVIEW_FIELDS)
       .not("id", "in", excludeClause)
-      .eq("is_incognito", false)
+      .eq("is_incognito", false).eq("onboarding_completed", true)
       .not("latitude", "is", null)
       .not("longitude", "is", null)
       .limit(500);
@@ -1070,7 +1080,7 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
       .from("profiles")
       .select(PREVIEW_FIELDS)
       .not("id", "in", excludeClause)
-      .eq("is_incognito", false)
+      .eq("is_incognito", false).eq("onboarding_completed", true)
       .limit(300);
     const sorted = (data ?? [])
       .map((c) => ({ c, score: viewerProfile ? computeCompatibilityScore(c, { ...viewerProfile, dealbreakers }) : 0 }))
@@ -1098,7 +1108,7 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
         .from("profiles")
         .select(PREVIEW_FIELDS)
         .in("id", likedIds)
-        .eq("is_incognito", false);
+        .eq("is_incognito", false).eq("onboarding_completed", true);
       const sorted = (data ?? []).sort((a, b) => (countMap.get(b.id) ?? 0) - (countMap.get(a.id) ?? 0));
       result = applyHardFilters(sorted);
     }
@@ -1123,7 +1133,7 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
       .from("profiles")
       .select(PREVIEW_FIELDS)
       .not("id", "in", excludeClause)
-      .eq("is_incognito", false)
+      .eq("is_incognito", false).eq("onboarding_completed", true)
       .in(
         "relationship_type",
         RELATIONSHIP_CATEGORY_DEFS.map((d) => d.value),
@@ -1173,7 +1183,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
         .from("profiles")
         .select(SELECT_FIELDS)
         .not("id", "in", excludeClause)
-        .eq("is_incognito", false)
+        .eq("is_incognito", false).eq("onboarding_completed", true)
         .gte("created_at", sevenDaysAgo)
         .order("created_at", { ascending: false })
         .limit(30);
@@ -1185,7 +1195,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
         .from("profiles")
         .select(SELECT_FIELDS)
         .not("id", "in", excludeClause)
-        .eq("is_incognito", false)
+        .eq("is_incognito", false).eq("onboarding_completed", true)
         .eq("is_verified", true)
         .limit(30);
       results = data ?? [];
@@ -1202,7 +1212,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
           .from("profiles")
           .select(SELECT_FIELDS)
           .in("id", audioUserIds.slice(0, 30))
-          .eq("is_incognito", false);
+          .eq("is_incognito", false).eq("onboarding_completed", true);
         results = data ?? [];
       }
       break;
@@ -1219,7 +1229,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
           .from("profiles")
           .select(SELECT_FIELDS)
           .not("id", "in", excludeClause)
-          .eq("is_incognito", false)
+          .eq("is_incognito", false).eq("onboarding_completed", true)
           .not("latitude", "is", null)
           .not("longitude", "is", null)
           .limit(500);
@@ -1238,7 +1248,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
         .from("profiles")
         .select(SELECT_FIELDS)
         .not("id", "in", excludeClause)
-        .eq("is_incognito", false)
+        .eq("is_incognito", false).eq("onboarding_completed", true)
         .limit(300);
 
       results = (data ?? [])
@@ -1262,7 +1272,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
       }
       const topIds = [...countMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([id]) => id);
       if (topIds.length > 0) {
-        const { data } = await supabase.from("profiles").select(SELECT_FIELDS).in("id", topIds).eq("is_incognito", false);
+        const { data } = await supabase.from("profiles").select(SELECT_FIELDS).in("id", topIds).eq("is_incognito", false).eq("onboarding_completed", true);
         results = topIds.map((id) => (data ?? []).find((p) => p.id === id)).filter(Boolean);
       }
       break;
@@ -1285,7 +1295,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
         .from("profiles")
         .select(SELECT_FIELDS)
         .not("id", "in", excludeClause)
-        .eq("is_incognito", false)
+        .eq("is_incognito", false).eq("onboarding_completed", true)
         .eq("relationship_type", relationshipValue)
         .limit(30);
       results = data ?? [];

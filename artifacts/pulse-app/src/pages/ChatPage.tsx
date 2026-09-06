@@ -1474,10 +1474,9 @@ export default function ChatPage() {
                 onClick={handleUnlockReceipts}
                 disabled={isUnlockingReceipts}
                 title="Unlock read receipts"
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary text-muted-foreground hover:text-foreground transition-colors text-xs font-medium shrink-0 disabled:opacity-50"
+                className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors shrink-0 disabled:opacity-50"
               >
-                <Eye size={13} />
-                <span>{isUnlockingReceipts ? "..." : "Receipts"}</span>
+                {isUnlockingReceipts ? <Loader2 size={16} className="animate-spin" /> : <Eye size={16} />}
               </button>
             )}
 
@@ -1558,9 +1557,11 @@ export default function ChatPage() {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold">{match.matched_user?.name} is requesting a video call</p>
-              <p className="text-xs text-muted-foreground">
-                {freeVideoCallsRemaining > 0 ? "This will use one of your free calls" : "This will use your Sparks balance if it runs long"}
-              </p>
+              {freeVideoCallsRemaining <= 0 ? (
+                <p className="text-xs text-muted-foreground">This will use your Sparks balance if it runs long</p>
+              ) : freeVideoCallsRemaining === 1 ? (
+                <p className="text-xs text-muted-foreground">This is your last free call this month</p>
+              ) : null}
             </div>
             {/* Dismiss — just hides this banner for now (no backend
                 call, request stays pending). Someone might tap this
@@ -2001,9 +2002,13 @@ export default function ChatPage() {
                 {/* Always shows the time; extends with Delivered/Read
                     only for the last own message once receipts are
                     unlocked, reusing the same row instead of stacking a
-                    second one underneath it. */}
+                    second one underneath it. Extra top margin when
+                    reactions are present — those pills hang below the
+                    bubble's own bottom edge (absolute -bottom-2.5), so
+                    without this the timestamp row crowds right into
+                    them regardless of this row's own normal spacing. */}
                 <div
-                  className={`flex items-center gap-1 mt-1 text-[11px] text-muted-foreground ${
+                  className={`flex items-center gap-1 text-[11px] text-muted-foreground ${msg.reactions.length > 0 ? "mt-4" : "mt-1"} ${
                     mine ? "justify-end pr-1" : "justify-start pl-1"
                   }`}
                 >

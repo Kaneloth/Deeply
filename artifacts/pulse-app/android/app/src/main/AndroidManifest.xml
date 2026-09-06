@@ -48,6 +48,19 @@
          — also covers video calling's audio, same permission either way. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- Video calling specifically — controls whether the app can
+         configure Android's audio session mode (e.g. voice/call-
+         optimized capture, echo cancellation routing). Genuinely
+         untried until now; NotReadableError ("Could not start audio
+         source") on the OS's own AudioRecord/AudioManager layer,
+         confirmed via debug logging to fail even on a plain, direct
+         getUserMedia() call with zero Agora or app code involved, is
+         at least plausibly explained by this being missing — audio
+         capture failing specifically at the "start the hardware" step
+         despite permission already being granted fits a session/mode
+         configuration failure better than a permission failure. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
     <!-- Video calling (VideoCallScreen.tsx / Agora Web SDK's getUserMedia()
          call inside the WebView) — direct camera stream access needs this
          declared here even though it was never required before now; photo
