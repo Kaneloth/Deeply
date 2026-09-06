@@ -113,6 +113,16 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
     )
     .not("id", "in", `(${excludedIds.join(",")})`)
     .eq("is_incognito", false).eq("onboarding_completed", true)
+    // Without this, the query has no explicit order at all, meaning
+    // Postgres returns whatever 300 rows it happens to fetch first —
+    // with no guarantee a currently-boosted profile is even among
+    // them once the total user base grows past this limit. Ordering by
+    // boosted_until first guarantees every boosted profile is always
+    // pulled into this initial sample, regardless of how many other
+    // profiles exist; nullsFirst: false keeps everyone else (the vast
+    // majority, with no boosted_until at all) after them rather than
+    // NULL sorting ambiguously.
+    .order("boosted_until", { ascending: false, nullsFirst: false })
     .limit(300);
 
   if (error || !candidates || candidates.length === 0) {
@@ -142,8 +152,23 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
     : withDistance;
 
   const now = Date.now();
-  const boosted = withinRadius.filter((c) => c.boosted_until && new Date(c.boosted_until).getTime() > now);
-  const rest = withinRadius.filter((c) => !c.boosted_until || new Date(c.boosted_until).getTime() <= now);
+  // Three tiers, in this exact priority order: boosted-with-photo,
+  // then everyone else with a photo, then anyone with NO photo at all
+  // — regardless of boost status or compatibility score. A boost
+  // purchase on a profile that still has no photo doesn't override
+  // this: showing a prominent, empty-looking card would be a worse
+  // experience for the viewer than honoring the boost, and there's no
+  // legitimate reason to boost an incomplete profile in the first
+  // place. This naturally also covers reshuffle, not just the initial
+  // queue load — POST /discover/reshuffle calls this exact same
+  // function, so a no-photo profile can never be shuffled to the front
+  // no matter how many times someone taps reshuffle.
+  const hasPhoto = (c: { photo_url?: string | null }) => !!c.photo_url;
+  const boosted = withinRadius.filter((c) => hasPhoto(c) && c.boosted_until && new Date(c.boosted_until).getTime() > now);
+  const rest = withinRadius.filter(
+    (c) => hasPhoto(c) && (!c.boosted_until || new Date(c.boosted_until).getTime() <= now),
+  );
+  const noPhoto = withinRadius.filter((c) => !hasPhoto(c));
 
   const weightedShuffle = <T extends Record<string, any>>(arr: T[]) => {
     if (arr.length === 0) return arr;
@@ -170,7 +195,7 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
     return result;
   };
 
-  const prioritized = [...weightedShuffle(boosted), ...weightedShuffle(rest)].slice(0, 20);
+  const prioritized = [...weightedShuffle(boosted), ...weightedShuffle(rest), ...weightedShuffle(noPhoto)].slice(0, 20);
 
   // Previously this stripped `gender` and `relationship_type` out
   // entirely before sending to the frontend, along with the genuinely

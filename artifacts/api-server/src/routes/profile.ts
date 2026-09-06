@@ -407,7 +407,7 @@ router.get("/profile/boost/status", requireAuth, async (req, res): Promise<void>
   });
 });
 
-/** POST /api/profile/boost — 50 Sparks, 1 hour of priority placement in
+/** POST /api/profile/boost — 50 Sparks, 5 hours of priority placement in
  *  other users' Discover queues, once per 24 hours. */
 router.post("/profile/boost", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
