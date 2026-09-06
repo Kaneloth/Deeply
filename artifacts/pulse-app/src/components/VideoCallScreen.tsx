@@ -106,7 +106,18 @@ export function VideoCallScreen({
       try {
         await client.join(agoraAppId, channelName, agoraToken, agoraUid);
         step = "createTracks";
-        const [audioTrack, videoTrack] = await AgoraRTC.createMicrophoneAndCameraTracks();
+        // Requested separately and sequentially (audio first, since
+        // that's specifically what's been failing) rather than via the
+        // single combined createMicrophoneAndCameraTracks() call — a
+        // documented workaround for a known, external Android WebView
+        // bug (confirmed via multiple unrelated projects hitting the
+        // identical "NotReadableError: Could not start audio source"
+        // on newer Android/WebView versions specifically, working fine
+        // on older ones) where requesting both devices simultaneously
+        // can trigger resource contention that requesting them one at
+        // a time avoids.
+        const audioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+        const videoTrack = await AgoraRTC.createCameraVideoTrack();
         if (cancelled) {
           audioTrack.close();
           videoTrack.close();

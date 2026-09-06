@@ -96,11 +96,14 @@ async function getMatchParticipants(
   matchId: string,
   userId: string,
 ): Promise<{ user1_id: string; user2_id: string; video_calls_enabled: boolean; video_call_payer_id: string | null } | null> {
-  const { data: match } = await supabase
-    .from("matches")
-    .select("user1_id, user2_id, video_calls_enabled, video_call_payer_id")
-    .eq("id", matchId)
-    .single();
+  // RPC instead of a direct .select() — matches is the exact table
+  // that motivated get_match_by_id's existence in the first place
+  // (see rpc_get_match_by_id.sql), for this identical confirmed
+  // read-consistency symptom. This helper backs every single route in
+  // this file, so a stale read here could intermittently affect any
+  // of them — including, very plausibly, the "Only women can request"
+  // error appearing for a match that's actually already enabled.
+  const { data: match } = await supabase.rpc("get_match_by_id", { p_match_id: matchId, p_user_id: userId });
 
   if (!match || (match.user1_id !== userId && match.user2_id !== userId)) {
     return null;
