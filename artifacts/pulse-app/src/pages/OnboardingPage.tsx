@@ -100,7 +100,7 @@ export default function OnboardingPage() {
 
   const [step, setStep] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
-  const [founderReveal, setFounderReveal] = useState<{ rank: number } | null>(null);
+  const [founderReveal, setFounderReveal] = useState<{ rank: number; cap: number } | null>(null);
 
   const [name, setName] = useState("");
   const [gender, setGender] = useState("");
@@ -267,7 +267,7 @@ export default function OnboardingPage() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to save profile");
       if (body.is_founder) {
-        setFounderReveal({ rank: body.founder_rank });
+        setFounderReveal({ rank: body.founder_rank, cap: body.founder_cap });
       } else {
         setLocation("/discover");
       }
@@ -291,7 +291,7 @@ export default function OnboardingPage() {
         </div>
         <h1 className="text-3xl font-['Syne'] font-bold mb-3">You're a Founder!</h1>
         <p className="text-muted-foreground max-w-xs">
-          You're one of the first 112 people to join Deeply. You've earned the{" "}
+          You're one of the first {founderReveal.cap} people to join Deeply. You've earned the{" "}
           <span className="text-foreground font-semibold">Founders Badge</span>,{" "}
           <span className="text-foreground font-semibold">free ID verification</span> — no charge, ever —{" "}
           and <span className="text-foreground font-semibold">double monthly Sparks</span>, for as long as you're on Deeply.

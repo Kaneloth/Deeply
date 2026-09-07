@@ -2,6 +2,7 @@ import { supabase } from "./supabase";
 
 export interface EconomyConfig {
   sparks_monthly_grant: number;
+  founder_slot_cap: number;
   cost_super_like: number;
   cost_undo_swipe: number;
   cost_reveal_invites: number;
@@ -36,6 +37,16 @@ export interface EconomyConfig {
 // the economy degrades gracefully instead of throwing mid-purchase.
 const DEFAULTS: EconomyConfig = {
   sparks_monthly_grant: 300,
+  // How many of the first sign-ups get permanent Founder status (badge,
+  // free ID verification, double monthly Sparks for life). Previously
+  // hardcoded directly in the claim_founder_slot RPC call in
+  // profile.ts; moving it here makes it admin-editable without any
+  // change in current behavior — this default matches the number
+  // that's actually been live the whole time, so this is a no-op until
+  // an admin deliberately changes it. Already-awarded founders keep
+  // their status permanently regardless of later changes here — this
+  // only affects who's still eligible to claim a remaining slot.
+  founder_slot_cap: 112,
   cost_super_like: 10,
   cost_undo_swipe: 5,
   cost_reveal_invites: 30,

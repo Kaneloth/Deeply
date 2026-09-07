@@ -249,8 +249,14 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   // resubmission of an already-completed profile must never re-claim a
   // slot). The claim itself is a single atomic UPDATE server-side (see
   // claim_founder_slot), so two users finishing onboarding within the
-  // same instant can't both claim the same slot — the 112 cutoff is
-  // exact, not a race.
+  // same instant can't both claim the same slot — the cutoff is exact,
+  // not a race, whatever it's currently admin-configured to.
+  // Set below only if a founder slot is actually claimed this request —
+  // carried out to the response at the end of this route so the
+  // frontend can display the current cap dynamically rather than a
+  // hardcoded number.
+  let founderSlotCapForResponse: number | null = null;
+
   if (onboarding_completed === true) {
     const { data: currentProfile } = await supabase
       .from("profiles")
@@ -259,21 +265,23 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
       .single();
 
     if (currentProfile && !currentProfile.onboarding_completed) {
-      const { data: rank, error: founderClaimError } = await supabase.rpc("claim_founder_slot", { cap: 112 });
+      const { founder_slot_cap: founderSlotCap } = await getEconomyConfig();
+      const { data: rank, error: founderClaimError } = await supabase.rpc("claim_founder_slot", { cap: founderSlotCap });
       if (founderClaimError) {
         // Previously silently swallowed — this destructured only
         // `data`, so a failing RPC call (e.g. a permissions/RLS issue)
-        // was indistinguishable from "all 112 slots are genuinely
-        // taken": both just left `rank` null and skipped awarding
-        // anything, with zero visibility into which one actually
-        // happened. Logging this doesn't fix the underlying cause on
-        // its own, but means a real failure now shows up instead of
-        // silently looking like the founders program just ran out.
+        // was indistinguishable from "all slots are genuinely taken":
+        // both just left `rank` null and skipped awarding anything,
+        // with zero visibility into which one actually happened.
+        // Logging this doesn't fix the underlying cause on its own,
+        // but means a real failure now shows up instead of silently
+        // looking like the founders program just ran out.
         console.error(
           `FOUNDER CLAIM DEBUG: claim_founder_slot RPC failed for userId=${req.user!.id}: ${founderClaimError.message}`,
         );
       }
       if (typeof rank === "number") {
+        founderSlotCapForResponse = founderSlotCap;
         updates.is_founder = true;
         updates.founder_rank = rank;
         updates.free_verification = true;
@@ -379,7 +387,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
-  res.json(withComputedAge(profile));
+  res.json({ ...withComputedAge(profile), ...(founderSlotCapForResponse !== null ? { founder_cap: founderSlotCapForResponse } : {}) });
 });
 
 /** GET /api/profile/boost/status — is a boost currently active, and when
@@ -3025,6 +3033,7 @@ router.post(
 
 const ECONOMY_CONFIG_LABELS: Record<string, { label: string; description: string; unit: string }> = {
   sparks_monthly_grant: { label: "Monthly Free Grant", description: "Free Sparks every user receives each month", unit: "Sparks" },
+  founder_slot_cap: { label: "Founder Slots", description: "How many of the first sign-ups to award Founder status to — a one-time, permanent badge, free ID verification, and double monthly Sparks for life. Already-awarded founders keep their status regardless of later changes to this number.", unit: "people" },
   cost_super_like: { label: "Super Like", description: "Cost to send a Super Like", unit: "Sparks" },
   cost_undo_swipe: { label: "Undo Swipe / Withdraw Invite", description: "Cost to undo a swipe or withdraw a sent invite", unit: "Sparks" },
   cost_reveal_invites: { label: "Reveal Who Invited You", description: "Cost to see new pending inviters", unit: "Sparks" },

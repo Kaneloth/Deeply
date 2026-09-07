@@ -1957,6 +1957,7 @@ function EconomySection({ token, toast }: { token: string | null; toast: any }) 
 
   const groups: { title: string; keys: string[] }[] = [
     { title: "Grants", keys: ["sparks_monthly_grant", "daily_free_invites"] },
+    { title: "Founders Program", keys: ["founder_slot_cap"] },
     {
       title: "Sparks Costs",
       keys: [
