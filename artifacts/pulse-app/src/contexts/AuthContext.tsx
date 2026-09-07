@@ -285,6 +285,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // touching unrelated fetches (other origins, unauthenticated calls).
       if (!authValue?.startsWith("Bearer ")) return response;
 
+      // Before triggering another refresh at all: has some OTHER parallel
+      // request already refreshed the token since THIS request was
+      // originally sent? This happens routinely on initial page load,
+      // where several independent fetches (invites, sparks, unread-count,
+      // etc.) all fire near-simultaneously, each carrying whatever token
+      // was current at the moment it was issued. The shared
+      // refreshPromiseRef above only deduplicates refreshes that overlap
+      // in time — it does nothing for a 401 that arrives just AFTER some
+      // other request's refresh already completed and cleared that ref,
+      // even though the token is now already valid again. Without this
+      // check, that 401 triggers a completely unnecessary second refresh
+      // call using Supabase's single-use/rotating refresh tokens — and if
+      // that second call's own retry then arrives late relative to a
+      // THIRD parallel request's independent refresh, the same thing
+      // repeats indefinitely, which is exactly the infinite loading loop
+      // this was written to fix.
+      const currentToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+      if (currentToken && currentToken !== authValue.slice("Bearer ".length)) {
+        const retryHeaders = new Headers(init?.headers);
+        retryHeaders.set("Authorization", `Bearer ${currentToken}`);
+        return original(input, { ...init, headers: retryHeaders, __isRetry: true } as RequestInit);
+      }
+
       const newToken = await doRefresh();
       if (!newToken) return response;
 
