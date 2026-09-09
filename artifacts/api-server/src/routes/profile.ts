@@ -298,65 +298,93 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
       .eq("id", req.user!.id)
       .single();
 
+    // Wrapped in try/catch — this entire block runs for EVERY single
+    // user completing onboarding, not just referral-code users (unlike
+    // the referral block below, which only runs for those who entered
+    // a code). Before this fix, any transient failure anywhere in here
+    // — a brief Supabase hiccup, a network blip, anything throwing —
+    // would crash this entire PUT request, meaning onboarding_completed
+    // never actually got saved for that person. Given how much more
+    // widely this code path is hit than the referral one, this is very
+    // plausibly the real, broader explanation for "some succeed,
+    // others get stuck looping back to the start" that's been observed
+    // — not something specific to the referral feature at all, which
+    // only existed recently and only affects people who used a code.
     if (currentProfile && !currentProfile.onboarding_completed) {
-      const { founder_slot_cap: founderSlotCap } = await getEconomyConfig();
-      const { data: rank, error: founderClaimError } = await supabase.rpc("claim_founder_slot", { cap: founderSlotCap });
-      if (founderClaimError) {
-        // Previously silently swallowed — this destructured only
-        // `data`, so a failing RPC call (e.g. a permissions/RLS issue)
-        // was indistinguishable from "all slots are genuinely taken":
-        // both just left `rank` null and skipped awarding anything,
-        // with zero visibility into which one actually happened.
-        // Logging this doesn't fix the underlying cause on its own,
-        // but means a real failure now shows up instead of silently
-        // looking like the founders program just ran out.
-        console.error(
-          `FOUNDER CLAIM DEBUG: claim_founder_slot RPC failed for userId=${req.user!.id}: ${founderClaimError.message}`,
-        );
-      }
-      if (typeof rank === "number") {
-        founderSlotCapForResponse = founderSlotCap;
-        updates.is_founder = true;
-        updates.founder_rank = rank;
-        updates.free_verification = true;
-
-        // Corrects a real ordering bug, not a hypothetical one: a brand
-        // new profile's next_spark_grant_at is already due immediately,
-        // so this account has already received its FIRST monthly grant
-        // via the normal sparks-check flow — necessarily calculated
-        // BEFORE is_founder could possibly exist yet, since that only
-        // happens here, during onboarding completion, a separate and
-        // later request than signup. That first grant was therefore
-        // always the standard, non-doubled amount, for every founder,
-        // every time — not an edge case.
-        //
-        // Rather than restructure when the very first grant fires (a
-        // bigger, riskier change), this simply tops the balance up by
-        // one more base grant's worth the one time founder status is
-        // newly discovered, bringing this month's total to the correct
-        // doubled amount regardless of whether any of it was already
-        // spent in the meantime.
-        const { data: currentBalance } = await supabase
-          .from("profiles")
-          .select("free_sparks_balance, paid_sparks_balance")
-          .eq("id", req.user!.id)
-          .single();
-
-        if (currentBalance) {
-          const { sparks_monthly_grant: baseGrantAmount } = await getEconomyConfig();
-          const toppedUpFree = currentBalance.free_sparks_balance + baseGrantAmount;
-          updates.free_sparks_balance = toppedUpFree;
-
-          supabase
-            .from("sparks_transactions")
-            .insert({
-              user_id: req.user!.id,
-              amount: baseGrantAmount,
-              reason: "Founder status granted — Sparks top-up to 2x",
-              balance_after: toppedUpFree + currentBalance.paid_sparks_balance,
-            })
-            .then(() => {});
+      try {
+        const { founder_slot_cap: founderSlotCap } = await getEconomyConfig();
+        const { data: rank, error: founderClaimError } = await supabase.rpc("claim_founder_slot", { cap: founderSlotCap });
+        if (founderClaimError) {
+          // Previously silently swallowed — this destructured only
+          // `data`, so a failing RPC call (e.g. a permissions/RLS issue)
+          // was indistinguishable from "all slots are genuinely taken":
+          // both just left `rank` null and skipped awarding anything,
+          // with zero visibility into which one actually happened.
+          // Logging this doesn't fix the underlying cause on its own,
+          // but means a real failure now shows up instead of silently
+          // looking like the founders program just ran out.
+          console.error(
+            `FOUNDER CLAIM DEBUG: claim_founder_slot RPC failed for userId=${req.user!.id}: ${founderClaimError.message}`,
+          );
         }
+        if (typeof rank === "number") {
+          founderSlotCapForResponse = founderSlotCap;
+          updates.is_founder = true;
+          updates.founder_rank = rank;
+          updates.free_verification = true;
+
+          // Corrects a real ordering bug, not a hypothetical one: a brand
+          // new profile's next_spark_grant_at is already due immediately,
+          // so this account has already received its FIRST monthly grant
+          // via the normal sparks-check flow — necessarily calculated
+          // BEFORE is_founder could possibly exist yet, since that only
+          // happens here, during onboarding completion, a separate and
+          // later request than signup. That first grant was therefore
+          // always the standard, non-doubled amount, for every founder,
+          // every time — not an edge case.
+          //
+          // Rather than restructure when the very first grant fires (a
+          // bigger, riskier change), this simply tops the balance up by
+          // one more base grant's worth the one time founder status is
+          // newly discovered, bringing this month's total to the correct
+          // doubled amount regardless of whether any of it was already
+          // spent in the meantime.
+          const { data: currentBalance } = await supabase
+            .from("profiles")
+            .select("free_sparks_balance, paid_sparks_balance")
+            .eq("id", req.user!.id)
+            .single();
+
+          if (currentBalance) {
+            const { sparks_monthly_grant: baseGrantAmount } = await getEconomyConfig();
+            const toppedUpFree = currentBalance.free_sparks_balance + baseGrantAmount;
+            updates.free_sparks_balance = toppedUpFree;
+
+            supabase
+              .from("sparks_transactions")
+              .insert({
+                user_id: req.user!.id,
+                amount: baseGrantAmount,
+                reason: "Founder status granted — Sparks top-up to 2x",
+                balance_after: toppedUpFree + currentBalance.paid_sparks_balance,
+              })
+              .then(() => {});
+          }
+        }
+      } catch (founderErr) {
+        // If the RPC itself already succeeded and set updates.is_founder
+        // above before something later in this same try block threw
+        // (e.g. the balance top-up), that assignment survives — it's
+        // already been written into the local `updates` object by this
+        // point, so the person still actually becomes a founder once
+        // the final .update(updates) call below runs; they'd just miss
+        // the immediate top-up, which is a far better outcome than
+        // failing onboarding_completed entirely over it.
+        console.error(
+          `Founder claim processing failed for userId=${req.user!.id} — onboarding continues regardless: ${
+            founderErr instanceof Error ? founderErr.message : String(founderErr)
+          }`,
+        );
       }
     }
 
@@ -374,69 +402,89 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     // checkReferralFraudSignals in sparks-helper.ts), so admin has
     // full visibility into every suspicious case rather than some
     // being invisibly dropped.
+    //
+    // The entire block is wrapped in try/catch — this is what actually
+    // enforces "never blocks onboarding completion" from the comment
+    // above, which was stated as intent but never actually guaranteed
+    // before this fix. Without it, any failure anywhere in here (a
+    // missing table/column, a bug in checkReferralFraudSignals,
+    // anything) would throw, and that would fail this entire PUT
+    // request — meaning onboarding_completed never actually gets
+    // saved, which is exactly what was happening: onboarding appeared
+    // to silently fail and bounce back to the start, for every single
+    // person who entered a referral code, regardless of the specific
+    // underlying cause.
     if (currentProfile && !currentProfile.onboarding_completed && referral_code_entered) {
-      const { data: referralFeatureSetting } = await supabase
-        .from("app_settings")
-        .select("value")
-        .eq("key", "referral_program_enabled")
-        .single();
-      const referralProgramEnabled = referralFeatureSetting?.value !== false; // defaults on, matching voice_question_nudge_enabled's own precedent
+      try {
+        const { data: referralFeatureSetting } = await supabase
+          .from("app_settings")
+          .select("value")
+          .eq("key", "referral_program_enabled")
+          .single();
+        const referralProgramEnabled = referralFeatureSetting?.value !== false; // defaults on, matching voice_question_nudge_enabled's own precedent
 
-      if (referralProgramEnabled) {
-        const normalizedCode = referral_code_entered.trim().toUpperCase();
-        const { data: referrer } = await supabase
-          .from("profiles")
-          .select("id, name, signup_device_id, normalized_email, signup_ip, latitude, longitude, referral_count")
-          .eq("referral_code", normalizedCode)
-          .maybeSingle();
-
-        if (referrer && referrer.id !== req.user!.id) {
-          const { data: newUserProfile } = await supabase
+        if (referralProgramEnabled) {
+          const normalizedCode = referral_code_entered.trim().toUpperCase();
+          const { data: referrer } = await supabase
             .from("profiles")
-            .select("signup_device_id, normalized_email, signup_ip, latitude, longitude, created_at")
-            .eq("id", req.user!.id)
-            .single();
+            .select("id, name, signup_device_id, normalized_email, signup_ip, latitude, longitude, referral_count")
+            .eq("referral_code", normalizedCode)
+            .maybeSingle();
 
-          updates.referred_by = referrer.id;
+          if (referrer && referrer.id !== req.user!.id) {
+            const { data: newUserProfile } = await supabase
+              .from("profiles")
+              .select("signup_device_id, normalized_email, signup_ip, latitude, longitude, created_at")
+              .eq("id", req.user!.id)
+              .single();
 
-          if (newUserProfile) {
-            const { referral_bonus_sparks: referralBonus } = await getEconomyConfig();
-            const onboardingCompletedAt = new Date();
+            updates.referred_by = referrer.id;
 
-            const flags = await checkReferralFraudSignals(
-              referrer,
-              { id: req.user!.id, ...newUserProfile },
-              onboardingCompletedAt,
-            );
+            if (newUserProfile) {
+              const { referral_bonus_sparks: referralBonus } = await getEconomyConfig();
+              const onboardingCompletedAt = new Date();
 
-            if (flags.length === 0) {
-              const newTotal = await addPaidSparks(referrer.id, referralBonus, `Referral bonus — someone signed up using your code`);
+              const flags = await checkReferralFraudSignals(
+                referrer,
+                { id: req.user!.id, ...newUserProfile },
+                onboardingCompletedAt,
+              );
 
-              await supabase
-                .from("profiles")
-                .update({ referral_count: (referrer.referral_count ?? 0) + 1 })
-                .eq("id", referrer.id);
+              if (flags.length === 0) {
+                const newTotal = await addPaidSparks(referrer.id, referralBonus, `Referral bonus — someone signed up using your code`);
 
-              createNotification(
-                referrer.id,
-                "referral_bonus",
-                "Your referral just paid off",
-                `${referralBonus} Sparks were added to your balance — someone signed up using your referral code.`,
-              ).catch(() => {});
+                await supabase
+                  .from("profiles")
+                  .update({ referral_count: (referrer.referral_count ?? 0) + 1 })
+                  .eq("id", referrer.id);
 
-              console.log(`Referral bonus credited: referrerId=${referrer.id} newUserId=${req.user!.id} newTotal=${newTotal}`);
-            } else {
-              await supabase.from("referral_flags").insert({
-                referrer_id: referrer.id,
-                new_user_id: req.user!.id,
-                flags,
-                sparks_amount: referralBonus,
-              });
+                createNotification(
+                  referrer.id,
+                  "referral_bonus",
+                  "Your referral just paid off",
+                  `${referralBonus} Sparks were added to your balance — someone signed up using your referral code.`,
+                ).catch(() => {});
 
-              console.log(`Referral flagged for review: referrerId=${referrer.id} newUserId=${req.user!.id} flags=${flags.join(", ")}`);
+                console.log(`Referral bonus credited: referrerId=${referrer.id} newUserId=${req.user!.id} newTotal=${newTotal}`);
+              } else {
+                await supabase.from("referral_flags").insert({
+                  referrer_id: referrer.id,
+                  new_user_id: req.user!.id,
+                  flags,
+                  sparks_amount: referralBonus,
+                });
+
+                console.log(`Referral flagged for review: referrerId=${referrer.id} newUserId=${req.user!.id} flags=${flags.join(", ")}`);
+              }
             }
           }
         }
+      } catch (referralErr) {
+        console.error(
+          `Referral processing failed for userId=${req.user!.id} — onboarding continues regardless: ${
+            referralErr instanceof Error ? referralErr.message : String(referralErr)
+          }`,
+        );
       }
     }
   }
