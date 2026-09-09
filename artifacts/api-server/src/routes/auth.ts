@@ -452,11 +452,30 @@ router.delete("/auth/account", requireAuth, async (req, res): Promise<void> => {
 
   // Delete the profile row explicitly first (in case the FK to auth.users
   // isn't set up with ON DELETE CASCADE), then delete the auth user.
-  await supabase.from("profiles").delete().eq("id", userId);
+  // Previously completely unchecked — a silent failure here (e.g. a
+  // foreign key from another table referencing this profile without
+  // cascade, blocking the delete at the database level) would leave
+  // the profile row intact while the code proceeded to attempt the
+  // auth-user deletion anyway, on a now-incorrect assumption.
+  const { error: profileDeleteError } = await supabase.from("profiles").delete().eq("id", userId);
+  if (profileDeleteError) {
+    console.error(`DELETE /auth/account — profiles.delete() failed for userId=${userId}:`, JSON.stringify(profileDeleteError, null, 2));
+    res.status(500).json({ error: `Failed to delete account: ${profileDeleteError.message}` });
+    return;
+  }
 
   const { error: deleteError } = await supabase.auth.admin.deleteUser(userId);
   if (deleteError) {
-    res.status(500).json({ error: `Failed to delete account: ${deleteError.message}` });
+    // Logs the FULL error object, not just .message — that's what was
+    // actually producing the unhelpful "{}" shown to the user (a plain
+    // JS Error's message/stack are non-enumerable properties, so
+    // naive stringification of the object itself yields "{}"; this
+    // logs the object's own actual fields explicitly instead so the
+    // real cause is visible in Netlify's logs next time this happens).
+    console.error(
+      `DELETE /auth/account — auth.admin.deleteUser() failed for userId=${userId}: message="${deleteError.message}" status=${deleteError.status} code=${(deleteError as { code?: string }).code}`,
+    );
+    res.status(500).json({ error: `Failed to delete account: ${deleteError.message || "Unknown error — check server logs"}` });
     return;
   }
 
