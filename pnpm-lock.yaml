@@ -462,6 +462,9 @@ importers:
       '@capacitor/geolocation':
         specifier: ^8.2.2
         version: 8.2.2(@capacitor/core@8.5.0)
+      '@capawesome/capacitor-app-review':
+        specifier: ^8.0.2
+        version: 8.0.2(@capacitor/core@8.5.0)
       '@capawesome/capacitor-app-update':
         specifier: ^8.0.4
         version: 8.0.4(@capacitor/core@8.5.0)
@@ -898,6 +901,11 @@ packages:
 
   '@capacitor/synapse@1.0.4':
     resolution: {integrity: sha512-/C1FUo8/OkKuAT4nCIu/34ny9siNHr9qtFezu4kxm6GY1wNFxrCFWjfYx5C1tUhVGz3fxBABegupkpjXvjCHrw==}
+
+  '@capawesome/capacitor-app-review@8.0.2':
+    resolution: {integrity: sha512-N0YyjTsnfuuY4PvTc45GNu1iQ/jrEuki8Kiky5PXCcnP02RqJSdo9Pq6H3bOA4z3A5QWu2UeV5oxwWsJvNpxBA==}
+    peerDependencies:
+      '@capacitor/core': '>=8.0.0'
 
   '@capawesome/capacitor-app-update@8.0.4':
     resolution: {integrity: sha512-XZFTIhe/jQNXltCbpZ1oPlvQqNTNDeTKzPFkn19TOxSbF6KNH+NuWrX+NdyxrKTU7MPbao9rFbDRLlQyGpKEjw==}
@@ -4079,6 +4087,10 @@ snapshots:
       '@capacitor/core': 8.5.0
 
   '@capacitor/synapse@1.0.4': {}
+
+  '@capawesome/capacitor-app-review@8.0.2(@capacitor/core@8.5.0)':
+    dependencies:
+      '@capacitor/core': 8.5.0
 
   '@capawesome/capacitor-app-update@8.0.4(@capacitor/core@8.5.0)':
     dependencies:

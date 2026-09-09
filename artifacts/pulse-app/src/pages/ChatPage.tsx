@@ -14,6 +14,7 @@ import { ReportBlockModal } from "@/components/ReportBlockModal";
 import { MediaPicker } from "@/components/MediaPicker";
 import { evictMatchFromCache } from "./MatchesPage";
 import { VideoCallScreen } from "@/components/VideoCallScreen";
+import { maybeRequestReview } from "@/lib/reviewPrompt";
 import { getCachedMatchDetail, updateMatchDetailCache, removeMatchDetailCache } from "@/lib/matchDetailCache";
 import { readPersistentCache, writePersistentCache, registerCacheResetter } from "@/lib/persistentCache";
 
@@ -1653,6 +1654,20 @@ export default function ChatPage() {
             if (!res.ok && res.status !== 404) {
               const body = await res.json().catch(() => ({}));
               throw new Error(body.error ?? "Failed to end the call");
+            }
+            if (res.ok) {
+              // Review-prompt trigger: a genuinely completed video call
+              // is one of the two agreed positive moments. Gated on a
+              // minimum duration (60s) so an immediate misclick or
+              // connection failure — not a real positive experience —
+              // doesn't count. maybeRequestReview handles its own
+              // cooldown/lifetime-cap/native-only checks internally, so
+              // this call site doesn't need to know any of those rules
+              // itself.
+              const body = await res.json().catch(() => ({}));
+              if (typeof body.elapsed_seconds === "number" && body.elapsed_seconds >= 60) {
+                maybeRequestReview().catch(() => {});
+              }
             }
             dismissedCallIdsRef.current.add(videoCall.id);
             setVideoCall(null);

@@ -99,6 +99,7 @@ const SwipeCard = memo(
 );
 
 import { MatchCelebration } from "@/components/MatchCelebration";
+import { recordMatchAndMaybeRequestReview } from "@/lib/reviewPrompt";
 import { ScanWaveLoader } from "@/components/ScanWaveLoader";
 
 let hasShownDiscoverScanWave = false;
@@ -453,6 +454,7 @@ export default function DiscoverPage() {
         toast({ title: "5 Sparks used", description: "You've used today's 15 free invites — extra invites cost 5 Sparks each." });
       }
       if (body.matched) {
+        recordMatchAndMaybeRequestReview();
         setMatchCelebration({ name: target.name, matchId: body.matchId, photoUrl: target.photo_url ?? undefined });
       }
     } catch (err) {
@@ -573,6 +575,7 @@ export default function DiscoverPage() {
       });
 
       if (replyBody.matched && target) {
+        recordMatchAndMaybeRequestReview();
         setMatchCelebration({ name: target.name, matchId: replyBody.matchId, photoUrl: target.photo_url ?? undefined });
       } else {
         toast({ title: "Reply sent", description: "Your voice reply was sent as an invite." });
@@ -630,6 +633,7 @@ export default function DiscoverPage() {
       // Otherwise, just confirm the invite was sent; it now shows up in
       // Invites (Sent) until the other person accepts or declines it.
       if (body.matched && body.matchId) {
+        recordMatchAndMaybeRequestReview();
         setMatchCelebration({ name: sentTo.name, matchId: body.matchId, photoUrl: sentTo.photo_url ?? undefined });
       } else {
         toast({
