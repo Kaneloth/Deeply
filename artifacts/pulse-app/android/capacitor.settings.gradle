@@ -26,6 +26,9 @@ project(':capacitor-filesystem').projectDir = new File('../../../node_modules/.p
 include ':capacitor-geolocation'
 project(':capacitor-geolocation').projectDir = new File('../../../node_modules/.pnpm/@capacitor+geolocation@8.2.2_@capacitor+core@8.5.0/node_modules/@capacitor/geolocation/android')
 
+include ':capawesome-capacitor-app-review'
+project(':capawesome-capacitor-app-review').projectDir = new File('../../../node_modules/.pnpm/@capawesome+capacitor-app-review@8.0.2_@capacitor+core@8.5.0/node_modules/@capawesome/capacitor-app-review/android')
+
 include ':capawesome-capacitor-app-update'
 project(':capawesome-capacitor-app-update').projectDir = new File('../../../node_modules/.pnpm/@capawesome+capacitor-app-update@8.0.4_@capacitor+core@8.5.0/node_modules/@capawesome/capacitor-app-update/android')
 
