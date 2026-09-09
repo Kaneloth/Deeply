@@ -76,6 +76,109 @@ async function getAbuseDelayUntil(
   return delayUntil;
 }
 
+/** Approximate distance in km between two lat/lon points (Haversine
+ *  formula) — used for the "same GPS location" referral fraud signal.
+ *  Deliberately a proximity threshold, not exact equality: GPS readings
+ *  drift slightly every single time even for the same physical spot,
+ *  so exact-match would almost never fire even for genuine fraud. */
+function haversineDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const EARTH_RADIUS_KM = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 + Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+  return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+const SAME_LOCATION_THRESHOLD_KM = 0.1; // ~100m — same household/building range, deliberately
+const TOO_FAST_ONBOARDING_MS = 3 * 60 * 1000; // 3 minutes
+const MULTI_REFERRAL_WINDOW_DAYS = 30;
+const MULTI_REFERRAL_THRESHOLD = 3; // this account + how many others sharing the same device/IP
+
+interface ReferralProfileFields {
+  id: string;
+  signup_device_id: string | null;
+  normalized_email: string | null;
+  signup_ip: string | null;
+  latitude: number | null;
+  longitude: number | null;
+}
+
+/** Unified referral fraud check — every signal DeepSeek's plan
+ *  suggested except selfie comparison (a separate facial-recognition
+ *  integration, deliberately out of scope). Returns every signal that
+ *  fired, not just the first — admin reviewing a flagged case benefits
+ *  from seeing the full picture ("same device AND same IP" is more
+ *  clearly suspicious than either alone), and this list is stored
+ *  verbatim on the review-queue row. An empty array means auto-approve;
+ *  any non-empty array means the reward sits in the review queue
+ *  instead of crediting immediately — see profile.ts's PUT /profile/me
+ *  for where this actually gets called and acted on. Nothing here is a
+ *  silent, invisible drop anymore: every flagged case is visible to
+ *  admin, who can then go cross-check both profiles manually. */
+export async function checkReferralFraudSignals(
+  referrer: ReferralProfileFields,
+  newUser: ReferralProfileFields & { created_at: string },
+  onboardingCompletedAt: Date,
+): Promise<string[]> {
+  const flags: string[] = [];
+
+  if (referrer.signup_device_id && referrer.signup_device_id === newUser.signup_device_id) {
+    flags.push("Same device ID as referrer");
+  }
+  if (referrer.normalized_email && referrer.normalized_email === newUser.normalized_email) {
+    flags.push("Same email as referrer");
+  }
+  if (referrer.signup_ip && referrer.signup_ip === newUser.signup_ip) {
+    flags.push("Same IP address as referrer");
+  }
+  if (
+    referrer.latitude != null &&
+    referrer.longitude != null &&
+    newUser.latitude != null &&
+    newUser.longitude != null &&
+    haversineDistanceKm(referrer.latitude, referrer.longitude, newUser.latitude, newUser.longitude) < SAME_LOCATION_THRESHOLD_KM
+  ) {
+    flags.push("Same GPS location as referrer");
+  }
+
+  const signupToOnboardingMs = onboardingCompletedAt.getTime() - new Date(newUser.created_at).getTime();
+  if (signupToOnboardingMs >= 0 && signupToOnboardingMs < TOO_FAST_ONBOARDING_MS) {
+    flags.push("Completed onboarding suspiciously fast after signing up");
+  }
+
+  // "One person creating many accounts" — checked against the new
+  // user's own device/IP specifically (not the referrer's), since
+  // that's the side actually being newly created here. Two separate
+  // queries, same reasoning as getAbuseDelayUntil above: avoids
+  // hand-building a PostgREST .or() filter string.
+  const cutoff = new Date(Date.now() - MULTI_REFERRAL_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  let sameSourceCount = 0;
+  if (newUser.signup_device_id) {
+    const { count } = await supabase
+      .from("profiles")
+      .select("id", { count: "exact", head: true })
+      .eq("signup_device_id", newUser.signup_device_id)
+      .neq("id", newUser.id)
+      .gte("created_at", cutoff);
+    sameSourceCount = Math.max(sameSourceCount, count ?? 0);
+  }
+  if (newUser.signup_ip) {
+    const { count } = await supabase
+      .from("profiles")
+      .select("id", { count: "exact", head: true })
+      .eq("signup_ip", newUser.signup_ip)
+      .neq("id", newUser.id)
+      .gte("created_at", cutoff);
+    sameSourceCount = Math.max(sameSourceCount, count ?? 0);
+  }
+  if (sameSourceCount >= MULTI_REFERRAL_THRESHOLD - 1) {
+    flags.push(`${sameSourceCount + 1} accounts total from the same device/IP in the last ${MULTI_REFERRAL_WINDOW_DAYS} days`);
+  }
+
+  return flags;
+}
+
 /** Records that userId just received a grant against these identifiers,
  *  so a future different account reusing the same device/email gets
  *  caught by getAbuseDelayUntil above. Upserts rather than inserts,

@@ -3,7 +3,7 @@ import multer from "multer";
 import { randomUUID } from "crypto";
 import { requireAuth } from "../middlewares/auth";
 import { supabase } from "../lib/supabase";
-import { spendSparks } from "../lib/sparks-helper";
+import { spendSparks, addPaidSparks, checkReferralFraudSignals } from "../lib/sparks-helper";
 import { withComputedAge, withComputedAges } from "../lib/age";
 import { isSuperAdmin, requireSuperAdmin, requireAdminScope, type AdminScope } from "../lib/admin-auth";
 import { createNotification, createNotificationForUsers, recordProfileView, scheduleProfileViewNotificationClear } from "../lib/notifications-helper";
@@ -62,12 +62,41 @@ router.get("/profile/me", requireAuth, async (req, res): Promise<void> => {
   res.json(withComputedAge(profile));
 });
 
+/** GET /api/profile/referral/validate?code=DLY-1234ABC — live feedback
+ *  as someone types a referral code during onboarding, so an invalid or
+ *  self-entered code is caught immediately rather than only discovered
+ *  after finishing the entire onboarding flow. This is a read-only
+ *  check — the actual crediting (and its own, separate abuse check)
+ *  only ever happens once, atomically, at the real onboarding-
+ *  completion moment in PUT /profile/me, never here. */
+router.get("/profile/referral/validate", requireAuth, async (req, res): Promise<void> => {
+  const code = typeof req.query.code === "string" ? req.query.code.trim().toUpperCase() : "";
+  if (!code) {
+    res.json({ valid: false });
+    return;
+  }
+
+  const { data: referrer } = await supabase
+    .from("profiles")
+    .select("id, name")
+    .eq("referral_code", code)
+    .maybeSingle();
+
+  if (!referrer || referrer.id === req.user!.id) {
+    res.json({ valid: false });
+    return;
+  }
+
+  res.json({ valid: true, referrer_name: referrer.name });
+});
+
 /** PUT /api/profile/me */
 router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   const {
     name, age, bio, city, photo_url, personality_tags,
     birthday, gender, looking_for_gender, distance_km,
     relationship_type, dating_intentions, onboarding_completed,
+    referral_code_entered,
     num_kids, smoking_status, drinking_status, languages_spoken,
     languages_other, love_language, education, family_plans,
     notify_sparks, notify_profile_views,
@@ -92,6 +121,11 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     relationship_type?: string;
     dating_intentions?: string[];
     onboarding_completed?: boolean;
+    // Entered as a plain, optional onboarding field, same treatment as
+    // name — never trusted as already-validated; looked up and checked
+    // fresh server-side below, only at the exact moment onboarding
+    // actually completes.
+    referral_code_entered?: string;
     num_kids?: string;
     smoking_status?: string;
     drinking_status?: string;
@@ -322,6 +356,86 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
               balance_after: toppedUpFree + currentBalance.paid_sparks_balance,
             })
             .then(() => {});
+        }
+      }
+    }
+
+    // Referral system: same onboarding-completion transition as the
+    // founders check above — a resubmission of an already-completed
+    // profile must never re-trigger a reward, and the reward only ever
+    // goes to the referrer, never the new user (a deliberate business
+    // decision: the referrer did the work of bringing someone in, the
+    // new user hasn't done anything yet). An invalid code, self-
+    // referral, or the feature being disabled all silently skip with
+    // no error — this is a supplementary, optional bonus, never
+    // something that can block someone from finishing onboarding.
+    // Unlike those, a fraud signal firing does NOT silently skip
+    // anymore — it creates a review-queue row instead (see
+    // checkReferralFraudSignals in sparks-helper.ts), so admin has
+    // full visibility into every suspicious case rather than some
+    // being invisibly dropped.
+    if (currentProfile && !currentProfile.onboarding_completed && referral_code_entered) {
+      const { data: referralFeatureSetting } = await supabase
+        .from("app_settings")
+        .select("value")
+        .eq("key", "referral_program_enabled")
+        .single();
+      const referralProgramEnabled = referralFeatureSetting?.value !== false; // defaults on, matching voice_question_nudge_enabled's own precedent
+
+      if (referralProgramEnabled) {
+        const normalizedCode = referral_code_entered.trim().toUpperCase();
+        const { data: referrer } = await supabase
+          .from("profiles")
+          .select("id, name, signup_device_id, normalized_email, signup_ip, latitude, longitude, referral_count")
+          .eq("referral_code", normalizedCode)
+          .maybeSingle();
+
+        if (referrer && referrer.id !== req.user!.id) {
+          const { data: newUserProfile } = await supabase
+            .from("profiles")
+            .select("signup_device_id, normalized_email, signup_ip, latitude, longitude, created_at")
+            .eq("id", req.user!.id)
+            .single();
+
+          updates.referred_by = referrer.id;
+
+          if (newUserProfile) {
+            const { referral_bonus_sparks: referralBonus } = await getEconomyConfig();
+            const onboardingCompletedAt = new Date();
+
+            const flags = await checkReferralFraudSignals(
+              referrer,
+              { id: req.user!.id, ...newUserProfile },
+              onboardingCompletedAt,
+            );
+
+            if (flags.length === 0) {
+              const newTotal = await addPaidSparks(referrer.id, referralBonus, `Referral bonus — someone signed up using your code`);
+
+              await supabase
+                .from("profiles")
+                .update({ referral_count: (referrer.referral_count ?? 0) + 1 })
+                .eq("id", referrer.id);
+
+              createNotification(
+                referrer.id,
+                "referral_bonus",
+                "Your referral just paid off",
+                `${referralBonus} Sparks were added to your balance — someone signed up using your referral code.`,
+              ).catch(() => {});
+
+              console.log(`Referral bonus credited: referrerId=${referrer.id} newUserId=${req.user!.id} newTotal=${newTotal}`);
+            } else {
+              await supabase.from("referral_flags").insert({
+                referrer_id: referrer.id,
+                new_user_id: req.user!.id,
+                flags,
+                sparks_amount: referralBonus,
+              });
+
+              console.log(`Referral flagged for review: referrerId=${referrer.id} newUserId=${req.user!.id} flags=${flags.join(", ")}`);
+            }
+          }
         }
       }
     }
@@ -1383,6 +1497,91 @@ router.post("/admin/reports/:reportId/dismiss", requireAuth, requireAdminScope("
     return;
   }
   await cleanupReportScreenshots(updated?.screenshot_urls);
+  res.sendStatus(204);
+});
+
+/** GET /api/admin/referral-flags — the review queue for referrals that
+ *  tripped one or more fraud signals (see checkReferralFraudSignals in
+ *  sparks-helper.ts). Deliberately returns enough of both profiles
+ *  (name, email, city, photo) for admin to cross-check manually —
+ *  selfie comparison itself is out of scope, so this is the
+ *  information admin actually has to work with instead. */
+router.get("/admin/referral-flags", requireAuth, requireAdminScope("manage_sparks"), async (req, res): Promise<void> => {
+  const { data: rows } = await supabase
+    .from("referral_flags")
+    .select("*")
+    .eq("status", "pending")
+    .order("created_at", { ascending: true });
+
+  const userIds = [...new Set((rows ?? []).flatMap((r) => [r.referrer_id, r.new_user_id]))];
+  const { data: profiles } = userIds.length
+    ? await supabase.from("profiles").select("id, name, photo_url, city, normalized_email, signup_device_id, signup_ip").in("id", userIds)
+    : { data: [] };
+  const profileMap = new Map((profiles ?? []).map((p) => [p.id, p]));
+
+  const merged = (rows ?? []).map((r) => ({
+    ...r,
+    referrer: profileMap.get(r.referrer_id) ?? null,
+    new_user: profileMap.get(r.new_user_id) ?? null,
+  }));
+
+  res.json(merged);
+});
+
+/** POST /api/admin/referral-flags/:id/approve — credits the referral
+ *  bonus now, exactly like the auto-approved path in PUT /profile/me
+ *  would have if this case had never been flagged in the first place.
+ *  Admin has decided, after manually cross-checking both profiles,
+ *  that this one is legitimate despite the signal(s) that flagged it. */
+router.post("/admin/referral-flags/:id/approve", requireAuth, requireAdminScope("manage_sparks"), async (req, res): Promise<void> => {
+  const flagId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const { data: flag } = await supabase.from("referral_flags").select("*").eq("id", flagId).eq("status", "pending").single();
+  if (!flag) {
+    res.status(404).json({ error: "Flagged referral not found or already reviewed" });
+    return;
+  }
+
+  const newTotal = await addPaidSparks(flag.referrer_id, flag.sparks_amount, "Referral bonus — approved after review");
+
+  const { data: referrerProfile } = await supabase.from("profiles").select("referral_count").eq("id", flag.referrer_id).single();
+  await supabase
+    .from("profiles")
+    .update({ referral_count: (referrerProfile?.referral_count ?? 0) + 1 })
+    .eq("id", flag.referrer_id);
+
+  await supabase
+    .from("referral_flags")
+    .update({ status: "approved", reviewed_at: new Date().toISOString(), reviewed_by: req.user!.id })
+    .eq("id", flagId);
+
+  createNotification(
+    flag.referrer_id,
+    "referral_bonus",
+    "Your referral just paid off",
+    `${flag.sparks_amount} Sparks were added to your balance — someone signed up using your referral code.`,
+  ).catch(() => {});
+
+  console.log(`Referral flag approved by admin: flagId=${flagId} referrerId=${flag.referrer_id} newTotal=${newTotal}`);
+  res.sendStatus(204);
+});
+
+/** POST /api/admin/referral-flags/:id/reject — no Sparks granted.
+ *  Deliberately doesn't touch either account beyond this — banning, if
+ *  warranted, is a separate, existing admin action (see
+ *  /admin/users/:userId/ban) admin can take after reviewing, not
+ *  something this endpoint does automatically. */
+router.post("/admin/referral-flags/:id/reject", requireAuth, requireAdminScope("manage_sparks"), async (req, res): Promise<void> => {
+  const flagId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const { error } = await supabase
+    .from("referral_flags")
+    .update({ status: "rejected", reviewed_at: new Date().toISOString(), reviewed_by: req.user!.id })
+    .eq("id", flagId)
+    .eq("status", "pending");
+
+  if (error) {
+    res.status(500).json({ error: `Failed to reject flagged referral: ${error.message}` });
+    return;
+  }
   res.sendStatus(204);
 });
 
@@ -3034,6 +3233,7 @@ router.post(
 const ECONOMY_CONFIG_LABELS: Record<string, { label: string; description: string; unit: string }> = {
   sparks_monthly_grant: { label: "Monthly Free Grant", description: "Free Sparks every user receives each month", unit: "Sparks" },
   founder_slot_cap: { label: "Founder Slots", description: "How many of the first sign-ups to award Founder status to — a one-time, permanent badge, free ID verification, and double monthly Sparks for life. Already-awarded founders keep their status regardless of later changes to this number.", unit: "people" },
+  referral_bonus_sparks: { label: "Referral Bonus", description: "Sparks awarded to the referrer when someone they invited completes onboarding using their code. Only the referrer is rewarded, not the new user.", unit: "Sparks" },
   cost_super_like: { label: "Super Like", description: "Cost to send a Super Like", unit: "Sparks" },
   cost_undo_swipe: { label: "Undo Swipe / Withdraw Invite", description: "Cost to undo a swipe or withdraw a sent invite", unit: "Sparks" },
   cost_reveal_invites: { label: "Reveal Who Invited You", description: "Cost to see new pending inviters", unit: "Sparks" },

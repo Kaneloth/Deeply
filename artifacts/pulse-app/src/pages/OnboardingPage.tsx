@@ -136,6 +136,54 @@ export default function OnboardingPage() {
 
   const [notifySparks, setNotifySparks] = useState(true);
 
+  const [referralCode, setReferralCode] = useState("");
+  const [referralCheck, setReferralCheck] = useState<{ status: "idle" | "checking" | "valid" | "invalid"; referrerName?: string }>({
+    status: "idle",
+  });
+  // Defaults to false (hidden) until the actual setting loads — a brief
+  // flash of a field that then disappears would be worse than a brief
+  // moment where it's simply not there yet.
+  const [referralProgramEnabled, setReferralProgramEnabled] = useState(false);
+
+  // Runs once on mount — whether to even show the referral code field
+  // at all depends on this admin-controlled flag (same on/off pattern
+  // as Incognito and Dealbreakers in AdminDashboard.tsx).
+  useEffect(() => {
+    fetch("/api/app-settings", { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (body) setReferralProgramEnabled(body.referral_program_enabled !== false); // defaults on, matching the backend's own default
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Debounced live validation as the person types — catches an invalid
+  // or self-entered code immediately rather than only discovering it
+  // after finishing the entire rest of onboarding. Deliberately doesn't
+  // block continuing past this step either way (see continueDisabled
+  // below, which never depends on this) — an unresolved or invalid code
+  // just means no referral gets credited, never a hard stop.
+  useEffect(() => {
+    const trimmed = referralCode.trim();
+    if (!trimmed) {
+      setReferralCheck({ status: "idle" });
+      return;
+    }
+    setReferralCheck({ status: "checking" });
+    const timeoutId = setTimeout(() => {
+      fetch(`/api/profile/referral/validate?code=${encodeURIComponent(trimmed)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then((res) => (res.ok ? res.json() : { valid: false }))
+        .then((body) => {
+          setReferralCheck(body.valid ? { status: "valid", referrerName: body.referrer_name } : { status: "invalid" });
+        })
+        .catch(() => setReferralCheck({ status: "invalid" }));
+    }, 500);
+    return () => clearTimeout(timeoutId);
+  }, [referralCode, token]);
+
   // Pre-fill whatever name already exists — currently only possible via
   // Google sign-in, which auto-populates it from Google's own profile
   // data without the person ever confirming it themselves. The Name
@@ -262,6 +310,7 @@ export default function OnboardingPage() {
           languages_other: languagesOther,
           notify_sparks: notifySparks,
           onboarding_completed: true,
+          ...(referralCode.trim() ? { referral_code_entered: referralCode.trim() } : {}),
         }),
       });
       const body = await res.json();
@@ -348,6 +397,25 @@ export default function OnboardingPage() {
                 <label className="text-sm font-medium">Name</label>
                 <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" className="bg-card border-card-border h-12 rounded-xl" />
               </div>
+              {referralProgramEnabled && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Referral code (optional)</label>
+                  <Input
+                    value={referralCode}
+                    onChange={(e) => setReferralCode(e.target.value)}
+                    placeholder="DLY-1234ABC"
+                    className="bg-card border-card-border h-12 rounded-xl uppercase"
+                  />
+                  {referralCheck.status === "valid" && (
+                    <p className="text-xs text-green-600">
+                      ✅ Valid code{referralCheck.referrerName ? ` from ${referralCheck.referrerName}` : ""} — they'll earn Sparks once you finish setting up your profile.
+                    </p>
+                  )}
+                  {referralCheck.status === "invalid" && (
+                    <p className="text-xs text-destructive">That code doesn't look right — double-check it, or leave this blank.</p>
+                  )}
+                </div>
+              )}
               <div className="space-y-2">
                 <label className="text-sm font-medium">I am a</label>
                 <RadioList value={gender} onChange={setGender} options={GENDER_OPTIONS} />

@@ -6,15 +6,16 @@ import { Input } from "@/components/ui/input";
 import {
   X, Users, Flag, Coins, Megaphone, LayoutDashboard, Loader2, Search,
   Ban, ShieldOff, Crown, Plus, Trash2, CheckCircle2, XCircle, ChevronLeft,
-  ChevronRight, ShieldCheck, AlertTriangle, RefreshCw, Sliders, Receipt,
+  ChevronRight, ShieldCheck, AlertTriangle, RefreshCw, Sliders, Receipt, Gift,
 } from "lucide-react";
 
-type Section = "overview" | "reports" | "users" | "sparks" | "transactions" | "economy" | "announcements" | "verification";
+type Section = "overview" | "reports" | "referral-flags" | "users" | "sparks" | "transactions" | "economy" | "announcements" | "verification";
 type AdminScope = "manage_reports" | "manage_users" | "manage_sparks" | "view_analytics";
 
 const SECTIONS: { key: Section; label: string; icon: any; scope: AdminScope }[] = [
   { key: "overview", label: "Overview", icon: LayoutDashboard, scope: "view_analytics" },
   { key: "reports", label: "Reports", icon: Flag, scope: "manage_reports" },
+  { key: "referral-flags", label: "Referral Review", icon: Gift, scope: "manage_sparks" },
   { key: "users", label: "Users", icon: Users, scope: "manage_users" },
   { key: "verification", label: "Verification", icon: ShieldCheck, scope: "manage_users" },
   { key: "sparks", label: "Sparks", icon: Coins, scope: "manage_sparks" },
@@ -25,7 +26,7 @@ const SECTIONS: { key: Section; label: string; icon: any; scope: AdminScope }[] 
 
 const NAV_GROUPS: { label: string; keys: Section[] }[] = [
   { label: "Overview", keys: ["overview"] },
-  { label: "People & Safety", keys: ["reports", "users", "verification"] },
+  { label: "People & Safety", keys: ["reports", "referral-flags", "users", "verification"] },
   { label: "Money", keys: ["sparks", "transactions", "economy"] },
   { label: "Communication", keys: ["announcements"] },
 ];
@@ -64,6 +65,7 @@ export function AdminDashboard({ access, onClose }: { access: AdminAccess; onClo
     <>
       {section === "overview" && <OverviewSection token={token} toast={toast} />}
       {section === "reports" && <ReportsSection token={token} toast={toast} />}
+      {section === "referral-flags" && <ReferralFlagsSection token={token} toast={toast} />}
       {section === "users" && <UsersSection token={token} toast={toast} isSuperAdmin={access.isSuperAdmin} />}
       {section === "sparks" && <SparksSection token={token} toast={toast} />}
       {section === "transactions" && <TransactionsSection token={token} toast={toast} />}
@@ -193,6 +195,8 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
   const [isTogglingIncognito, setIsTogglingIncognito] = useState(false);
   const [dealbreakersEnabled, setDealbreakersEnabled] = useState(false);
   const [isTogglingDealbreakers, setIsTogglingDealbreakers] = useState(false);
+  const [referralProgramEnabled, setReferralProgramEnabled] = useState(true);
+  const [isTogglingReferralProgram, setIsTogglingReferralProgram] = useState(false);
   // Defaults to true (not false, unlike incognito/dealbreakers above) —
   // this nudge already existed and worked with no admin control at all
   // until now, so an admin who never touches this new setting should
@@ -224,6 +228,10 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
         if (body) {
           setIncognitoEnabled(body.incognito_enabled === true);
           setDealbreakersEnabled(body.dealbreakers_enabled === true);
+          // Defaults to true (not false, unlike incognito/dealbreakers
+          // above) — matches voice_question_nudge_enabled's own
+          // precedent and the backend's own default treatment.
+          setReferralProgramEnabled(body.referral_program_enabled !== false);
           // Absent (never set by an admin yet) must mean "on", not
           // "off" — see the comment above the state declaration for why
           // this one flips the usual default.
@@ -291,6 +299,33 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
       });
     } finally {
       setIsTogglingDealbreakers(false);
+    }
+  };
+
+  const toggleReferralProgramFeature = async () => {
+    const next = !referralProgramEnabled;
+    setIsTogglingReferralProgram(true);
+    try {
+      const res = await fetch("/api/admin/settings", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ key: "referral_program_enabled", value: next }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "Failed to update setting");
+      setReferralProgramEnabled(next);
+      toast({ title: next ? "Referral program enabled platform-wide" : "Referral program disabled platform-wide" });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to update setting.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsTogglingReferralProgram(false);
     }
   };
 
@@ -408,6 +443,24 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
           </div>
           <div className={`h-6 w-10 rounded-full relative transition-colors shrink-0 ${dealbreakersEnabled ? "bg-primary" : "bg-secondary"}`}>
             <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${dealbreakersEnabled ? "right-1" : "left-1"}`} />
+          </div>
+        </button>
+
+        <button
+          onClick={toggleReferralProgramFeature}
+          disabled={isTogglingReferralProgram}
+          className="w-full flex items-center justify-between bg-card border border-card-border rounded-2xl p-4 disabled:opacity-60 mt-2"
+        >
+          <div className="text-left">
+            <p className="text-sm font-medium">Referral Program</p>
+            <p className="text-xs text-muted-foreground">
+              {referralProgramEnabled
+                ? "Enabled — new sign-ups can enter a referral code, and existing users can share theirs"
+                : "Disabled — referral code field hidden during onboarding and on the profile page"}
+            </p>
+          </div>
+          <div className={`h-6 w-10 rounded-full relative transition-colors shrink-0 ${referralProgramEnabled ? "bg-primary" : "bg-secondary"}`}>
+            <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${referralProgramEnabled ? "right-1" : "left-1"}`} />
           </div>
         </button>
 
@@ -614,6 +667,126 @@ function ReportsSection({ token, toast }: { token: string | null; toast: any }) 
           <img src={preview} alt="" className="max-w-full max-h-[85vh] rounded-xl object-contain" />
         </div>
       )}
+    </div>
+  );
+}
+
+// ============================================================
+// Referral fraud review queue — see checkReferralFraudSignals in
+// sparks-helper.ts for what actually gets flagged, and profile.ts's
+// PUT /profile/me for where auto-approval vs. flagging is decided.
+// Deliberately no selfie comparison here (out of scope — that needs a
+// separate facial-recognition integration) — instead, each card shows
+// enough of both profiles (name, email, city, device/IP) for admin to
+// cross-check manually.
+function ReferralFlagsSection({ token, toast }: { token: string | null; toast: any }) {
+  const [flags, setFlags] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [processingId, setProcessingId] = useState<string | null>(null);
+
+  const fetchFlags = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/referral-flags", { headers: { Authorization: `Bearer ${token}` } });
+      const body = await res.json();
+      if (res.ok) setFlags(body ?? []);
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  // Run once on mount only — same reasoning as ReportsSection/
+  // EconomySection above (fetchFlags depends on [token], which changes
+  // reference on every background token refresh).
+  useEffect(() => {
+    fetchFlags();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const review = async (flag: any, action: "approve" | "reject") => {
+    setProcessingId(flag.id);
+    try {
+      const res = await fetch(`/api/admin/referral-flags/${flag.id}/${action}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? `Failed (${res.status})`);
+      }
+      toast({
+        title: action === "approve" ? `${flag.sparks_amount} Sparks credited to ${flag.referrer?.name ?? "referrer"}` : "Referral rejected",
+      });
+      setFlags((prev) => prev.filter((f) => f.id !== flag.id));
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to update this referral.",
+        variant: "destructive",
+      });
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  if (loading) return <CenteredLoader />;
+  if (flags.length === 0) return <EmptyNote text="No flagged referrals pending review." />;
+
+  return (
+    <div className="space-y-3">
+      {flags.map((f) => (
+        <div key={f.id} className="bg-card border border-card-border rounded-2xl p-4">
+          <p className="text-sm">
+            <span className="font-semibold">{f.referrer?.name ?? "Unknown"}</span>
+            <span className="text-muted-foreground"> referred </span>
+            <span className="font-semibold">{f.new_user?.name ?? "Unknown"}</span>
+            <span className="text-muted-foreground"> — {f.sparks_amount} Sparks pending</span>
+          </p>
+          <p className="text-xs text-muted-foreground mt-0.5">{new Date(f.created_at).toLocaleString()}</p>
+
+          <div className="mt-2 px-3 py-2 rounded-xl bg-secondary/60 text-xs">
+            <p className="font-semibold mb-1">Flags</p>
+            <ul className="text-muted-foreground list-disc pl-4 space-y-0.5">
+              {(f.flags ?? []).map((flagText: string, i: number) => (
+                <li key={i}>{flagText}</li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 mt-2">
+            {[
+              { label: "Referrer", p: f.referrer },
+              { label: "New user", p: f.new_user },
+            ].map(({ label, p }) => (
+              <div key={label} className="px-3 py-2 rounded-xl bg-secondary/40 text-xs">
+                <p className="font-semibold mb-1">{label}</p>
+                <p className="text-muted-foreground truncate">{p?.name ?? "Unknown"}</p>
+                <p className="text-muted-foreground truncate">{p?.normalized_email ?? "—"}</p>
+                <p className="text-muted-foreground truncate">{p?.city ?? "—"}</p>
+                <p className="text-muted-foreground truncate">Device: {p?.signup_device_id ?? "—"}</p>
+                <p className="text-muted-foreground truncate">IP: {p?.signup_ip ?? "—"}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex gap-2 mt-2">
+            <button
+              disabled={processingId === f.id}
+              onClick={() => review(f, "approve")}
+              className="flex-1 h-9 rounded-lg text-xs font-medium border border-green-500/30 text-green-500 bg-green-500/10 disabled:opacity-50"
+            >
+              Approve
+            </button>
+            <button
+              disabled={processingId === f.id}
+              onClick={() => review(f, "reject")}
+              className="flex-1 h-9 rounded-lg text-xs font-medium border border-destructive/30 text-destructive disabled:opacity-50"
+            >
+              Reject
+            </button>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

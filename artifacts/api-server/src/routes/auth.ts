@@ -37,6 +37,59 @@ function normalizeEmail(email: string): string {
   return `${finalLocalPart}@${finalDomain}`;
 }
 
+// Referral system — see referral_system_migration.sql for the full
+// format rationale (DLY-0000XXX, 175,760,000 possible codes) and the
+// one-time backfill this exact same generation logic mirrors for
+// pre-existing profiles.
+const REFERRAL_CODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const REFERRAL_CODE_DIGITS = "0123456789";
+
+function generateReferralCode(): string {
+  let code = "DLY-";
+  for (let i = 0; i < 4; i++) code += REFERRAL_CODE_DIGITS[Math.floor(Math.random() * REFERRAL_CODE_DIGITS.length)];
+  for (let i = 0; i < 3; i++) code += REFERRAL_CODE_CHARS[Math.floor(Math.random() * REFERRAL_CODE_CHARS.length)];
+  return code;
+}
+
+/** Assigns a unique referral code to a newly-created profile row,
+ *  retrying with a freshly generated code on the rare collision
+ *  (Postgres unique_violation, code 23505) rather than failing the
+ *  whole signup over it — with ~175 million possible codes, a
+ *  collision should be exceptionally rare, but signup must never be
+ *  blocked by one regardless. Gives up silently after a handful of
+ *  attempts rather than retrying forever; a missing code here is
+ *  recoverable later (support can backfill one manually), but a
+ *  signup that never completes over it would not be. */
+async function assignReferralCode(userId: string): Promise<void> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = generateReferralCode();
+    const { error } = await supabase.from("profiles").update({ referral_code: code }).eq("id", userId);
+    if (!error) return;
+    if (error.code !== "23505") {
+      console.error(`Failed to assign referral code for userId=${userId}: ${error.message}`);
+      return;
+    }
+    // Unique violation — loop again with a freshly generated code.
+  }
+  console.error(`Failed to assign a unique referral code for userId=${userId} after 5 attempts`);
+}
+
+// Used by the referral fraud-flagging checks (see profile.ts's PUT
+// /profile/me) — a shared IP between a referrer and their new user is
+// one signal among several, not a hard block on its own.
+//
+// req.ip/req.socket.remoteAddress would just report Netlify's own
+// internal proxy address, not the actual visitor — x-forwarded-for is
+// what Netlify's edge layer sets to the real client IP. It can contain
+// a comma-separated chain if multiple proxies were involved; the first
+// entry is the original client, which is the one that matters here.
+function getClientIp(req: { headers: Record<string, string | string[] | undefined> }): string | null {
+  const header = req.headers["x-forwarded-for"];
+  const value = Array.isArray(header) ? header[0] : header;
+  if (!value) return null;
+  return value.split(",")[0].trim() || null;
+}
+
 /** POST /api/auth/signup */
 router.post("/auth/signup", async (req, res): Promise<void> => {
   const { email, password, device_id } = req.body as {
@@ -90,8 +143,11 @@ router.post("/auth/signup", async (req, res): Promise<void> => {
     .update({
       signup_device_id: device_id ?? null,
       normalized_email: normalizeEmail(email),
+      signup_ip: getClientIp(req),
     })
     .eq("id", data.user.id);
+
+  await assignReferralCode(data.user.id);
 
   if (!data.session) {
     res.status(201).json({

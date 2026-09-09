@@ -3,6 +3,7 @@ import { supabase } from "./supabase";
 export interface EconomyConfig {
   sparks_monthly_grant: number;
   founder_slot_cap: number;
+  referral_bonus_sparks: number;
   cost_super_like: number;
   cost_undo_swipe: number;
   cost_reveal_invites: number;
@@ -47,6 +48,12 @@ const DEFAULTS: EconomyConfig = {
   // their status permanently regardless of later changes here — this
   // only affects who's still eligible to claim a remaining slot.
   founder_slot_cap: 112,
+  // Referral system: 30 Sparks to the referrer only, when their invited
+  // friend completes onboarding using their code — see profile.ts's PUT
+  // /profile/me for the full crediting logic. Deliberately not
+  // rewarding the new user too — they haven't referred anyone
+  // themselves yet, so there's nothing to reward on their side yet.
+  referral_bonus_sparks: 30,
   cost_super_like: 10,
   cost_undo_swipe: 5,
   cost_reveal_invites: 30,

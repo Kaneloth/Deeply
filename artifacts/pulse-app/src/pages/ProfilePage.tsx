@@ -8,7 +8,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { Capacitor } from "@capacitor/core";
 import { Camera as CapacitorCamera } from "@capacitor/camera";
-import { CheckCircle2, AlertCircle, Rocket, Plus, X, ImageIcon, Camera, Video, Mic, Play, Pause, Crown, Star, Trash2 } from "lucide-react";
+import { CheckCircle2, AlertCircle, Rocket, Plus, X, ImageIcon, Camera, Video, Mic, Play, Pause, Crown, Star, Trash2, Gift, Share2 } from "lucide-react";
 import { SparkIcon } from "@/components/Icons";
 import { SparksModal } from "@/components/SparksModal";
 import { motion, AnimatePresence } from "framer-motion";
@@ -272,6 +272,8 @@ export default function ProfilePage() {
   // — never hardcoded, always read live so a price change in the admin
   // dashboard is reflected immediately.
   const [voiceQuestionRecordCost, setVoiceQuestionRecordCost] = useState<number | null>(null);
+  const [referralProgramEnabled, setReferralProgramEnabled] = useState(false);
+  const [referralCopied, setReferralCopied] = useState(false);
   const [voiceQuestionExpiryDays, setVoiceQuestionExpiryDays] = useState<number | null>(null);
 
   // The filename extension must match the blob's real format, not
@@ -324,6 +326,7 @@ export default function ProfilePage() {
         if (body && typeof body.voice_question_expiry_days === "number") {
           setVoiceQuestionExpiryDays(body.voice_question_expiry_days);
         }
+        if (body) setReferralProgramEnabled(body.referral_program_enabled !== false); // defaults on, matching the backend's own default
       })
       .catch(() => {
         // Silent — the sheet just shows a loading state for the price
@@ -909,6 +912,38 @@ export default function ProfilePage() {
     await Promise.all([fetchProfile(), fetchPhotos(), fetchVoiceQuestion(), fetchBoostStatus()]);
   });
 
+  const handleShareReferralCode = async () => {
+    const code = profile?.referral_code;
+    if (!code) return;
+    const shareText = `Hey! I'm on Deeply — a dating app built for real connections. Use my referral code ${code} when you sign up!`;
+
+    // Web Share API first (native share sheet — WhatsApp/SMS/etc. all
+    // show up there automatically on a real device), falling back to
+    // clipboard on anything that doesn't support it (most desktop
+    // browsers).
+    if (navigator.share) {
+      try {
+        await navigator.share({ text: shareText });
+        return;
+      } catch {
+        // Cancelled or failed silently — falls through to clipboard
+        // below rather than leaving the person with nothing to do.
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(shareText);
+      setReferralCopied(true);
+      setTimeout(() => setReferralCopied(false), 2000);
+    } catch {
+      toast({
+        title: "Error",
+        description: "Couldn't copy your referral code. Please copy it manually.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleBoost = async () => {
     setIsBoosting(true);
     try {
@@ -1144,6 +1179,38 @@ export default function ProfilePage() {
           </Button>
         )}
       </div>
+
+      {referralProgramEnabled && profile?.referral_code && (
+        <div className="bg-card border border-card-border rounded-2xl p-5 mb-8">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-10 h-10 rounded-full bg-gradient-accent flex items-center justify-center text-white shrink-0">
+              <Gift size={18} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-['Syne'] font-bold text-base">Refer a Friend</h3>
+              <p className="text-xs text-muted-foreground">
+                Earn Sparks for every friend who joins using your code
+                {typeof profile.referral_count === "number" && profile.referral_count > 0
+                  ? ` — ${profile.referral_count} so far`
+                  : ""}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between bg-secondary rounded-xl px-4 py-3 mb-3">
+            <span className="font-mono font-semibold tracking-wide">{profile.referral_code}</span>
+            <span className="text-xs text-muted-foreground">Quote this to support too</span>
+          </div>
+
+          <Button
+            onClick={handleShareReferralCode}
+            className="w-full h-12 rounded-xl bg-gradient-accent border-0 text-white font-semibold flex items-center justify-center gap-2"
+          >
+            <Share2 size={16} />
+            {referralCopied ? "Copied!" : "Share Your Code"}
+          </Button>
+        </div>
+      )}
 
       {/* Photos Section */}
       <div className="bg-card border border-card-border rounded-2xl p-5 mb-8">
