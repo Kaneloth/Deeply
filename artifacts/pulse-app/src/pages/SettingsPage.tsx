@@ -540,7 +540,15 @@ export default function SettingsPage() {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "Failed to delete account");
       }
-      setLocation("/");
+      toast({ title: "Account deleted", description: "Your account and all its data have been permanently removed." });
+      // Actually logs out (clears the auth token/state) rather than
+      // just navigating — previously this only changed the URL while
+      // the app still believed the user was authenticated, since the
+      // token itself was never cleared. That meant nothing visibly
+      // happened until some later API call failed because the account
+      // genuinely no longer existed, which is what was actually being
+      // seen as "no confirmation, then an error on leaving Settings."
+      logout();
     } catch (err) {
       toast({
         title: "Error",

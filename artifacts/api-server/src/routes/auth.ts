@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { supabase } from "../lib/supabase";
 import { requireAuth } from "../middlewares/auth";
+import { recordGrantForAbuseCheck } from "../lib/sparks-helper";
 
 const router: IRouter = Router();
 
@@ -146,6 +147,15 @@ router.post("/auth/signup", async (req, res): Promise<void> => {
       signup_ip: getClientIp(req),
     })
     .eq("id", data.user.id);
+
+  // Recorded immediately at signup, not left to only happen reactively
+  // whenever the first monthly grant eventually processes (which this
+  // account might delete itself before ever reaching) — see
+  // recordGrantForAbuseCheck's own comment in sparks-helper.ts for the
+  // confirmed real-world gap this closes.
+  await recordGrantForAbuseCheck(data.user.id, device_id ?? null, normalizeEmail(email)).catch((err) =>
+    console.error(`Failed to record signup for abuse check, userId=${data.user.id}:`, err),
+  );
 
   await assignReferralCode(data.user.id);
 
@@ -478,11 +488,20 @@ router.delete("/auth/account", requireAuth, async (req, res): Promise<void> => {
   // for a brief moment. Verifying it's actually gone first, with a short
   // retry, closes that gap rather than assuming the delete is instantly
   // visible everywhere.
+  let profileRowStillVisible = true;
+  let verifyAttempts = 0;
   for (let attempt = 0; attempt < 5; attempt++) {
+    verifyAttempts = attempt + 1;
     const { data: stillExists } = await supabase.from("profiles").select("id").eq("id", userId).maybeSingle();
-    if (!stillExists) break;
+    if (!stillExists) {
+      profileRowStillVisible = false;
+      break;
+    }
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
+  console.log(
+    `DELETE /auth/account — profile row visibility check for userId=${userId}: stillVisible=${profileRowStillVisible} attempts=${verifyAttempts}`,
+  );
 
   const { error: deleteError } = await supabase.auth.admin.deleteUser(userId);
   if (deleteError) {

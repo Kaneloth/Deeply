@@ -183,8 +183,21 @@ export async function checkReferralFraudSignals(
  *  so a future different account reusing the same device/email gets
  *  caught by getAbuseDelayUntil above. Upserts rather than inserts,
  *  since the same device/email legitimately gets a new row's worth of
- *  "last granted" data every single month for its original owner. */
-async function recordGrantForAbuseCheck(
+ *  "last granted" data every single month for its original owner.
+ *
+ *  Exported (not just called internally from checkAndApplyMonthlyGrant
+ *  below) so auth.ts can also call this directly at signup itself —
+ *  confirmed as a real gap otherwise: this previously only got
+ *  recorded reactively, the first time a grant actually processed,
+ *  which might never happen at all if someone deletes their account
+ *  before ever triggering that (e.g. testing the delete flow itself,
+ *  or genuinely never opening a Sparks-related screen). Deleting the
+ *  account before this ever ran meant the device/email was never
+ *  marked as "used" at all — exactly the gap a quick delete-and-
+ *  resignup would exploit to get a second free grant. Recording this
+ *  at signup itself closes that gap regardless of whether or when the
+ *  first grant ever actually processes. */
+export async function recordGrantForAbuseCheck(
   userId: string,
   deviceId: string | null,
   normalizedEmail: string | null,
