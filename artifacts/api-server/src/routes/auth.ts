@@ -464,6 +464,26 @@ router.delete("/auth/account", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
+  // Confirmed root cause of the actual failure this was hit for: Supabase's
+  // own documented troubleshooting guide shows auth.admin.deleteUser()
+  // failing with exactly this shape (a generic 500) when the profiles row
+  // still references the user at the moment GoTrue's own internal check
+  // runs — "update or delete on table users violates foreign key
+  // constraint... still referenced from table profiles". The delete above
+  // already succeeded (profileDeleteError is falsy), but GoTrue runs on a
+  // separate connection from this request's own supabase-js client, and
+  // this project has already hit read-after-write lag between separate
+  // connections/replicas repeatedly elsewhere (matches, video_calls) — the
+  // same lag here means GoTrue's check can still see the just-deleted row
+  // for a brief moment. Verifying it's actually gone first, with a short
+  // retry, closes that gap rather than assuming the delete is instantly
+  // visible everywhere.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { data: stillExists } = await supabase.from("profiles").select("id").eq("id", userId).maybeSingle();
+    if (!stillExists) break;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+
   const { error: deleteError } = await supabase.auth.admin.deleteUser(userId);
   if (deleteError) {
     // Logs the FULL error object, not just .message — that's what was
