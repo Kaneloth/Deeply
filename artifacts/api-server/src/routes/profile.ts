@@ -268,7 +268,26 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
 
       if (!currentProfile?.is_incognito) {
         const { cost_incognito_per_day } = await getEconomyConfig();
-        const spend = await spendSparks(req.user!.id, cost_incognito_per_day, "Incognito Mode (1 day)");
+        // spendSparks throws on a database error (not just an
+        // insufficient-balance failure, which it returns normally as
+        // { success: false }) — this was completely unprotected, and a
+        // throw here would have crashed this entire request the same
+        // way the founder/referral blocks used to. Unlike those
+        // (supplementary, must never block), this is a real, intentional
+        // charge that should either cleanly succeed or cleanly fail with
+        // a proper error response — not silently crash the request.
+        let spend: { success: boolean; balance: number };
+        try {
+          spend = await spendSparks(req.user!.id, cost_incognito_per_day, "Incognito Mode (1 day)");
+        } catch (spendErr) {
+          console.error(
+            `PUT /profile/me — spendSparks threw for Incognito charge, userId=${req.user!.id}: ${
+              spendErr instanceof Error ? spendErr.message : String(spendErr)
+            }`,
+          );
+          res.status(500).json({ error: "Failed to charge for Incognito mode. Please try again." });
+          return;
+        }
         if (!spend.success) {
           res.status(402).json({ error: `Insufficient Sparks (need ${cost_incognito_per_day})`, balance: spend.balance });
           return;
@@ -291,12 +310,25 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   // hardcoded number.
   let founderSlotCapForResponse: number | null = null;
 
-  if (onboarding_completed === true) {
-    const { data: currentProfile } = await supabase
-      .from("profiles")
-      .select("onboarding_completed")
-      .eq("id", req.user!.id)
-      .single();
+  // Wraps the ENTIRE onboarding-completion section in one more, outer
+  // safety net — defense in depth on top of the founder and referral
+  // sub-blocks below, which already have their own try/catch. This is
+  // what makes the guarantee structural rather than depending on every
+  // individual block inside here remembering to protect itself: even
+  // something added here later without its own try/catch still can't
+  // block onboarding_completed from being saved. Confirmed (via a full,
+  // fresh line-by-line audit of this route) that everything AFTER the
+  // final .update(updates) call below is already safe — checked errors,
+  // proper retry logic for the known read-after-write lag — so this
+  // outer boundary only needs to cover the pre-update logic, which is
+  // where every actual incident traced back to so far.
+  try {
+    if (onboarding_completed === true) {
+      const { data: currentProfile } = await supabase
+        .from("profiles")
+        .select("onboarding_completed")
+        .eq("id", req.user!.id)
+        .single();
 
     // Wrapped in try/catch — this entire block runs for EVERY single
     // user completing onboarding, not just referral-code users (unlike
@@ -487,6 +519,24 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
         );
       }
     }
+  }
+  } catch (onboardingSectionErr) {
+    // Outer catch for the entire onboarding-completion section above —
+    // this is the actual structural guarantee: whatever threw, and
+    // wherever it happened inside this block, is logged here and
+    // execution continues straight to the update below with whatever
+    // fields had already been set on `updates` by that point (e.g. if
+    // founder status was already assigned before something later threw,
+    // that assignment survives and still gets saved). onboarding_completed
+    // itself is set much earlier, in the plain field-mapping section
+    // above this whole block, so it's already in `updates` regardless of
+    // anything that happens in here — nothing in this section can ever
+    // prevent it from being included in the save that follows.
+    console.error(
+      `Onboarding-completion section failed for userId=${req.user!.id} — proceeding to save regardless: ${
+        onboardingSectionErr instanceof Error ? onboardingSectionErr.message : String(onboardingSectionErr)
+      }`,
+    );
   }
 
   if (Object.keys(updates).length === 0) {
