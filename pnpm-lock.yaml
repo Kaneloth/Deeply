@@ -471,6 +471,9 @@ importers:
       '@capawesome/capacitor-google-sign-in':
         specifier: ^0.1.2
         version: 0.1.2(@capacitor/core@8.5.0)
+      '@capawesome/capacitor-settings-launcher':
+        specifier: ^0.1.2
+        version: 0.1.2(@capacitor/core@8.5.0)
       '@capgo/native-purchases':
         specifier: ^8.0.0
         version: 8.6.5(@capacitor/core@8.5.0)
@@ -914,6 +917,11 @@ packages:
 
   '@capawesome/capacitor-google-sign-in@0.1.2':
     resolution: {integrity: sha512-41Z5LBVZJQ/20lEbzQJUtjfm7rCUhiq0EsfKmytTfKjqUjQB4zy0zlDMowe/z5CtetL8u7WGvERtyRYil2exww==}
+    peerDependencies:
+      '@capacitor/core': '>=8.0.0'
+
+  '@capawesome/capacitor-settings-launcher@0.1.2':
+    resolution: {integrity: sha512-5Jv7p+N3l+QWbDF2BA4rvRTtQDMu9NaZaagdM9akh8M6fdgAa1EAXbbUkbxNAT3fCufjeReWafWSvZvpOvJ+Dg==}
     peerDependencies:
       '@capacitor/core': '>=8.0.0'
 
@@ -4097,6 +4105,10 @@ snapshots:
       '@capacitor/core': 8.5.0
 
   '@capawesome/capacitor-google-sign-in@0.1.2(@capacitor/core@8.5.0)':
+    dependencies:
+      '@capacitor/core': 8.5.0
+
+  '@capawesome/capacitor-settings-launcher@0.1.2(@capacitor/core@8.5.0)':
     dependencies:
       '@capacitor/core': 8.5.0
 
