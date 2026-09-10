@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
 import { Image as ImageIcon, Check, ChevronLeft, Crown } from "lucide-react";
+import { captureError } from "@/lib/sentry";
 import { RadioList, ChipGrid } from "@/components/SelectorControls";
 import { RadiusSlider } from "@/components/DropdownControls";
 import { HeightInput } from "@/components/HeightInput";
@@ -48,6 +49,43 @@ const MAX_BIRTHDATE = new Date(today.getFullYear() - 18, today.getMonth(), today
 const MIN_BIRTHDATE = new Date(today.getFullYear() - 100, today.getMonth(), today.getDate())
   .toISOString()
   .split("T")[0];
+
+// Youngest/oldest allowed birth YEAR specifically — used to build the
+// year dropdown's own option list, so under-18 years are simply never
+// selectable in the first place rather than only caught by validation
+// after the fact. Note this alone isn't fully sufficient on its own:
+// someone selecting exactly MAX_BIRTH_YEAR could still be under 18 if
+// their birth month/day hasn't occurred yet this year (e.g. today is
+// March, they select this year but a December day) — computeAge below
+// is what catches that specific remaining edge case precisely.
+const MAX_BIRTH_YEAR = today.getFullYear() - 18;
+const MIN_BIRTH_YEAR = today.getFullYear() - 100;
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+// Draft persistence key — this is the actual fix for "users avoid
+// retrying once they see all their data has been deleted and have to
+// start over." Nothing in this entire flow is saved to the backend
+// until the single, final PUT at the very end (see handleComplete) —
+// every answer up to that point lives only in this component's own
+// React state. If that final submission ever fails, or the person
+// gets redirected away for any reason before it succeeds, all of it
+// was previously lost outright. Now it's mirrored to localStorage as
+// they go, and restored automatically if they come back.
+const ONBOARDING_DRAFT_KEY = "onboarding_draft_v1";
+
+function computeAge(year: number, month: number, day: number): number {
+  const dob = new Date(year, month - 1, day);
+  const now = new Date();
+  let age = now.getFullYear() - dob.getFullYear();
+  const hasHadBirthdayThisYear =
+    now.getMonth() > dob.getMonth() || (now.getMonth() === dob.getMonth() && now.getDate() >= dob.getDate());
+  if (!hasHadBirthdayThisYear) age -= 1;
+  return age;
+}
 
 function StepShell({
   children,
@@ -104,7 +142,33 @@ export default function OnboardingPage() {
 
   const [name, setName] = useState("");
   const [gender, setGender] = useState("");
-  const [birthday, setBirthday] = useState("");
+  const [birthDay, setBirthDay] = useState("");
+  const [birthMonth, setBirthMonth] = useState("");
+  const [birthYear, setBirthYear] = useState("");
+  // Deliberately still exists as a derived value, not raw state — this
+  // is what actually gets submitted, and what continueDisabled below
+  // still checks. It only ever gets a value once all three pieces are
+  // chosen AND the precise combination is confirmed to be 18+ — the
+  // remaining edge case computeAge exists for (selecting exactly
+  // MAX_BIRTH_YEAR but a birth month/day that hasn't happened yet this
+  // year) means "all three fields filled" alone isn't sufficient.
+  const birthday = (() => {
+    if (!birthDay || !birthMonth || !birthYear) return "";
+    if (computeAge(Number(birthYear), Number(birthMonth), Number(birthDay)) < 18) return "";
+    return `${birthYear}-${birthMonth.padStart(2, "0")}-${birthDay.padStart(2, "0")}`;
+  })();
+  const showUnder18Warning =
+    birthDay && birthMonth && birthYear && computeAge(Number(birthYear), Number(birthMonth), Number(birthDay)) < 18;
+  // Resets the day back to empty rather than silently keeping a now-
+  // invalid value (e.g. 31 selected, then month changed to February) —
+  // forces an explicit re-pick instead of quietly substituting a
+  // different day the person never actually chose for this combination.
+  useEffect(() => {
+    if (birthDay && birthMonth && birthYear) {
+      const maxDay = new Date(Number(birthYear), Number(birthMonth), 0).getDate();
+      if (Number(birthDay) > maxDay) setBirthDay("");
+    }
+  }, [birthMonth, birthYear, birthDay]);
   const [lookingForGender, setLookingForGender] = useState("");
 
   const [city, setCity] = useState("");
@@ -144,6 +208,81 @@ export default function OnboardingPage() {
   // flash of a field that then disappears would be worse than a brief
   // moment where it's simply not there yet.
   const [referralProgramEnabled, setReferralProgramEnabled] = useState(false);
+  const hasRestoredDraftRef = useRef(false);
+
+  // Draft persistence — this is the actual fix for "users avoid
+
+  // Runs once, and must run before the save-effect below ever fires
+  // with the initial, empty state — otherwise that first save would
+  // immediately overwrite a real, previously-saved draft with nothing,
+  // before it even had a chance to be read back.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(ONBOARDING_DRAFT_KEY);
+      if (raw) {
+        const draft = JSON.parse(raw);
+        if (draft.step !== undefined) setStep(draft.step);
+        if (draft.name !== undefined) setName(draft.name);
+        if (draft.gender !== undefined) setGender(draft.gender);
+        if (draft.birthDay !== undefined) setBirthDay(draft.birthDay);
+        if (draft.birthMonth !== undefined) setBirthMonth(draft.birthMonth);
+        if (draft.birthYear !== undefined) setBirthYear(draft.birthYear);
+        if (draft.lookingForGender !== undefined) setLookingForGender(draft.lookingForGender);
+        if (draft.city !== undefined) setCity(draft.city);
+        if (draft.distanceKm !== undefined) setDistanceKm(draft.distanceKm);
+        if (draft.relationshipType !== undefined) setRelationshipType(draft.relationshipType);
+        if (draft.intentions !== undefined) setIntentions(draft.intentions);
+        if (draft.interests !== undefined) setInterests(draft.interests);
+        if (draft.bio !== undefined) setBio(draft.bio);
+        if (draft.numKids !== undefined) setNumKids(draft.numKids);
+        if (draft.familyPlans !== undefined) setFamilyPlans(draft.familyPlans);
+        if (draft.smokingStatus !== undefined) setSmokingStatus(draft.smokingStatus);
+        if (draft.vapingStatus !== undefined) setVapingStatus(draft.vapingStatus);
+        if (draft.drinkingStatus !== undefined) setDrinkingStatus(draft.drinkingStatus);
+        if (draft.nightlifeFrequency !== undefined) setNightlifeFrequency(draft.nightlifeFrequency);
+        if (draft.hasTattoos !== undefined) setHasTattoos(draft.hasTattoos);
+        if (draft.pets !== undefined) setPets(draft.pets);
+        if (draft.heightCm !== undefined) setHeightCm(draft.heightCm);
+        if (draft.activityLevel !== undefined) setActivityLevel(draft.activityLevel);
+        if (draft.loveLanguage !== undefined) setLoveLanguage(draft.loveLanguage);
+        if (draft.education !== undefined) setEducation(draft.education);
+        if (draft.languagesSpoken !== undefined) setLanguagesSpoken(draft.languagesSpoken);
+        if (draft.languagesOther !== undefined) setLanguagesOther(draft.languagesOther);
+        if (draft.notifySparks !== undefined) setNotifySparks(draft.notifySparks);
+        if (draft.referralCode !== undefined) setReferralCode(draft.referralCode);
+      }
+    } catch {
+      // Corrupted/unparseable draft — ignore and start fresh rather
+      // than crash onboarding itself over a bad localStorage value.
+    } finally {
+      hasRestoredDraftRef.current = true;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!hasRestoredDraftRef.current) return;
+    const draft = {
+      step, name, gender, birthDay, birthMonth, birthYear, lookingForGender,
+      city, distanceKm, relationshipType, intentions, interests, bio,
+      numKids, familyPlans, smokingStatus, vapingStatus, drinkingStatus,
+      nightlifeFrequency, hasTattoos, pets, heightCm, activityLevel,
+      loveLanguage, education, languagesSpoken, languagesOther,
+      notifySparks, referralCode,
+    };
+    try {
+      localStorage.setItem(ONBOARDING_DRAFT_KEY, JSON.stringify(draft));
+    } catch {
+      // Storage full/unavailable — non-critical, just skip this save.
+    }
+  }, [
+    step, name, gender, birthDay, birthMonth, birthYear, lookingForGender,
+    city, distanceKm, relationshipType, intentions, interests, bio,
+    numKids, familyPlans, smokingStatus, vapingStatus, drinkingStatus,
+    nightlifeFrequency, hasTattoos, pets, heightCm, activityLevel,
+    loveLanguage, education, languagesSpoken, languagesOther,
+    notifySparks, referralCode,
+  ]);
 
   // Runs once on mount — whether to even show the referral code field
   // at all depends on this admin-controlled flag (same on/off pattern
@@ -320,10 +459,31 @@ export default function OnboardingPage() {
       } else {
         setLocation("/discover");
       }
+      // Cleared only on genuine success — the draft's whole purpose is
+      // to survive exactly the failure case below, so it must still be
+      // there if this didn't actually work.
+      try {
+        localStorage.removeItem(ONBOARDING_DRAFT_KEY);
+      } catch {
+        // Non-critical either way.
+      }
     } catch (err) {
+      // Reported to Sentry specifically so this is actually visible
+      // going forward, rather than only discoverable weeks later as
+      // another incomplete profile quietly sitting in the admin
+      // dashboard with no way to tell "this hit the bug" apart from
+      // "this person just abandoned onboarding normally." Every prior
+      // instance of this exact bug was only ever found this same
+      // way — this closes that gap.
+      captureError(err, {
+        context: "OnboardingPage.handleComplete",
+        message: err instanceof Error ? err.message : String(err),
+      });
       toast({
-        title: "Error",
-        description: err instanceof Error ? err.message : "Failed to save your profile.",
+        title: "Something went wrong saving your profile",
+        description:
+          (err instanceof Error ? err.message : "Failed to save your profile.") +
+          " Your answers have been saved on this device — please try again, or contact support if this keeps happening.",
         variant: "destructive",
       });
     } finally {
@@ -422,15 +582,73 @@ export default function OnboardingPage() {
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium">My birthday</label>
-                <Input
-                  type="date"
-                  value={birthday}
-                  onChange={(e) => setBirthday(e.target.value)}
-                  max={MAX_BIRTHDATE}
-                  min={MIN_BIRTHDATE}
-                  className="bg-card border-card-border h-12 rounded-xl"
-                />
-                <p className="text-xs text-muted-foreground">You must be 18 or older to use Deeply.</p>
+                {/* Three separate pickers, not a single native date
+                    input — deliberately. The native picker's own `max`
+                    was set to exactly the youngest allowed date, and
+                    browsers/WebViews typically open a date picker
+                    already showing that max value when nothing's been
+                    chosen yet — meaning "just tap confirm without
+                    navigating" landed on exactly age 18 every time,
+                    which is confirmed to be exactly what was happening
+                    at scale. Three separate, empty-by-default dropdowns
+                    have no single "just accept it" action available —
+                    each one requires its own deliberate choice, and the
+                    year dropdown's own option list never includes an
+                    under-18 year at all, rather than only validating
+                    after the fact. */}
+                <div className="grid grid-cols-3 gap-2">
+                  <select
+                    value={birthDay}
+                    onChange={(e) => setBirthDay(e.target.value)}
+                    className="bg-card border border-card-border h-12 rounded-xl px-2 text-sm"
+                  >
+                    <option value="">Day</option>
+                    {Array.from(
+                      {
+                        length:
+                          birthMonth && birthYear
+                            ? new Date(Number(birthYear), Number(birthMonth), 0).getDate()
+                            : 31,
+                      },
+                      (_, i) => i + 1,
+                    ).map((d) => (
+                      <option key={d} value={String(d)}>
+                        {d}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={birthMonth}
+                    onChange={(e) => setBirthMonth(e.target.value)}
+                    className="bg-card border border-card-border h-12 rounded-xl px-2 text-sm"
+                  >
+                    <option value="">Month</option>
+                    {MONTH_NAMES.map((name, i) => (
+                      <option key={name} value={String(i + 1)}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={birthYear}
+                    onChange={(e) => setBirthYear(e.target.value)}
+                    className="bg-card border border-card-border h-12 rounded-xl px-2 text-sm"
+                  >
+                    <option value="">Year</option>
+                    {Array.from({ length: MAX_BIRTH_YEAR - MIN_BIRTH_YEAR + 1 }, (_, i) => MAX_BIRTH_YEAR - i).map((y) => (
+                      <option key={y} value={String(y)}>
+                        {y}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {showUnder18Warning ? (
+                  <p className="text-xs text-destructive">
+                    That date makes you younger than 18 — Deeply is for adults only. Please double-check your birth year.
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">You must be 18 or older to use Deeply.</p>
+                )}
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium">I'm looking for</label>
