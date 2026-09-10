@@ -609,4 +609,31 @@ router.post("/auth/reset-password", async (req, res): Promise<void> => {
   res.sendStatus(204);
 });
 
+/** POST /api/auth/_internal/backfill-referral-codes — safety net, not a
+ *  root-cause fix. Called daily by the
+ *  netlify/functions/backfill-referral-codes.mts scheduled function.
+ *  Regardless of exactly why a given account ended up without a code
+ *  (a signup-time race condition, or any other future cause) — this
+ *  catches and fixes it within at most 24 hours, rather than a missing
+ *  code being permanent unless someone happens to notice and manually
+ *  intervene. Same shared-secret protection as video-calls.ts's
+ *  stale-call cleanup route, for the same reason: the caller is a
+ *  scheduled function, not a logged-in user with a JWT. */
+router.post("/auth/_internal/backfill-referral-codes", async (req, res): Promise<void> => {
+  const providedSecret = req.headers["x-internal-cleanup-secret"];
+  if (!process.env.INTERNAL_CLEANUP_SECRET || providedSecret !== process.env.INTERNAL_CLEANUP_SECRET) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const { data: missing } = await supabase.from("profiles").select("id").is("referral_code", null);
+
+  for (const profile of missing ?? []) {
+    await assignReferralCode(profile.id);
+  }
+
+  console.log(`backfill-referral-codes: processed ${missing?.length ?? 0} profile(s) missing a referral code`);
+  res.status(200).json({ processed: missing?.length ?? 0 });
+});
+
 export default router;
