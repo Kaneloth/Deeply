@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { requireAuth } from "../middlewares/auth";
 import { supabase } from "../lib/supabase";
 import { getSparksSummary, addPaidSparks } from "../lib/sparks-helper";
-import { verifyAndConsumeGooglePurchase } from "../lib/google-play-helper";
+import { verifyAndConsumeGooglePurchase, TestPurchaseError } from "../lib/google-play-helper";
 import { buildPayfastCheckout, validateItn } from "../lib/payfast-helper";
 import { getEconomyConfig, type EconomyConfig } from "../lib/economy-config";
 
@@ -112,6 +112,16 @@ router.post("/sparks/purchase/google", requireAuth, async (req, res): Promise<vo
     await verifyAndConsumeGooglePurchase(bundle.google_product_id, purchase_token);
   } catch (err) {
     console.error("Google Play purchase verification failed:", err);
+    if (err instanceof TestPurchaseError) {
+      // Distinct from a genuine verification failure — this tells a
+      // real user exactly what's actually wrong (they're on an old
+      // testing-track install) and what to do about it, rather than a
+      // generic "couldn't verify" that reads as a bug.
+      res.status(402).json({
+        error: "You're using a test version of Deeply. Please update to the latest version from the Play Store to make purchases.",
+      });
+      return;
+    }
     res.status(402).json({ error: "Could not verify this purchase with Google Play. Please try again or contact support." });
     return;
   }

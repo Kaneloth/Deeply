@@ -2,6 +2,17 @@ import crypto from "node:crypto";
 
 const PACKAGE_NAME = "za.co.deeplydating.app"; // must match capacitor.config.ts appId exactly
 
+// Thrown specifically when Google reports a purchase as test-type (see
+// the purchaseType check below) — exported so sparks.ts's catch block
+// can distinguish this from a genuine verification failure and show a
+// message that actually explains what happened.
+export class TestPurchaseError extends Error {
+  constructor() {
+    super("Purchase was made from a license testing account or non-production track — not a real payment");
+    this.name = "TestPurchaseError";
+  }
+}
+
 interface ServiceAccountKey {
   client_email: string;
   private_key: string;
@@ -87,11 +98,27 @@ export async function verifyAndConsumeGooglePurchase(productId: string, purchase
     throw new Error(`Google Play purchase lookup failed: ${getRes.status} ${body}`);
   }
 
-  const purchase = (await getRes.json()) as { purchaseState: number };
+  const purchase = (await getRes.json()) as { purchaseState: number; purchaseType?: number };
 
   // purchaseState: 0 = Purchased, 1 = Canceled, 2 = Pending.
   if (purchase.purchaseState !== 0) {
     throw new Error(`Purchase is not in a completed state (purchaseState=${purchase.purchaseState})`);
+  }
+
+  // purchaseType is only set at all when the purchase did NOT go through
+  // the standard billing flow — 0 = Test (bought from a license tester
+  // account, or from a build still confined to a Play Console testing
+  // track rather than Production), 1 = Promo, 2 = Rewarded. This is the
+  // permanent safeguard against a real-money bundle being "purchased"
+  // for free — rejecting purchaseType === 0 here holds regardless of
+  // which track the installing app came from. A distinct error class
+  // (not a plain Error) so sparks.ts's catch block can tell this case
+  // apart from a genuine verification failure and surface a message
+  // that actually explains what happened, rather than a generic
+  // "couldn't verify" that reads as a bug to a real user who's simply
+  // still on an old testing-track install.
+  if (purchase.purchaseType === 0) {
+    throw new TestPurchaseError();
   }
 
   const consumeRes = await fetch(
