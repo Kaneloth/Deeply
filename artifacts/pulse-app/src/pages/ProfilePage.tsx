@@ -915,7 +915,7 @@ export default function ProfilePage() {
   const handleShareReferralCode = async () => {
     const code = profile?.referral_code;
     if (!code) return;
-    const shareText = `Hey! I'm on Deeply — a dating app built for real connections. Use my referral code ${code} when you sign up!`;
+    const shareText = `Hey! I'm on Deeply — a dating app built for real connections. Use my referral code ${code} when you sign up! Get the app here: https://play.google.com/store/apps/details?id=za.co.deeplydating.app`;
 
     // Web Share API first (native share sheet — WhatsApp/SMS/etc. all
     // show up there automatically on a real device), falling back to
