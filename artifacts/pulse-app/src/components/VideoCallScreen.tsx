@@ -55,6 +55,7 @@ export function VideoCallScreen({
 
   const [connectionState, setConnectionState] = useState<"connecting" | "connected" | "failed">("connecting");
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [isPermissionError, setIsPermissionError] = useState(false);
   const [remoteUserPresent, setRemoteUserPresent] = useState(false);
 
   const [isMuted, setIsMuted] = useState(false);
@@ -62,6 +63,21 @@ export function VideoCallScreen({
 
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [showExtendPrompt, setShowExtendPrompt] = useState(false);
+
+  // Opens this app's own Settings screen directly, rather than just
+  // telling someone to go find it themselves — the actual, concrete
+  // next step once camera/mic access has been denied, since neither
+  // Android nor iOS re-shows the OS permission dialog after a denial.
+  // Dynamically imported, same reasoning as reviewPrompt.ts's own
+  // native-plugin import: this module doesn't exist on web at all.
+  const handleOpenSettings = async () => {
+    try {
+      const { SettingsLauncher } = await import("@capawesome/capacitor-settings-launcher");
+      await SettingsLauncher.openAppSettings();
+    } catch (err) {
+      captureError(err, { context: "VideoCallScreen.handleOpenSettings" });
+    }
+  };
   const [hasRespondedToPrompt, setHasRespondedToPrompt] = useState(false);
   // null while unknown/unlimited (still in the free window); once past
   // it and the person chooses to continue, this becomes the actual
@@ -155,9 +171,20 @@ export function VideoCallScreen({
         // denied, either by the person or by the device/browser
         // outright. Named explicitly since "failed to connect" alone
         // wouldn't tell anyone what to actually go fix.
+        //
+        // The message itself matters here: neither Android nor iOS
+        // ever re-shows the OS-level permission dialog once someone's
+        // denied it — the only way to actually recover is the app's
+        // own Settings screen. "Please allow access and try again"
+        // was misleading for exactly that reason: retrying does
+        // nothing on its own if it's already been denied once. Now
+        // paired with an actual "Open Settings" button below, rather
+        // than describing an action with no way to take it.
+        const isPermission = message.toLowerCase().includes("permission") || message.toLowerCase().includes("notallowed");
+        setIsPermissionError(isPermission);
         setConnectionError(
-          message.toLowerCase().includes("permission") || message.toLowerCase().includes("notallowed")
-            ? "Camera and microphone access is required for video calls. Please allow access and try again."
+          isPermission
+            ? "Camera and microphone access is required for video calls. Open Settings to allow access, then try calling again."
             : "Couldn't connect to the call. Please check your connection and try again.",
         );
         // Reported to Sentry so a real failure is actually diagnosable
@@ -343,6 +370,14 @@ export function VideoCallScreen({
         {connectionState === "failed" && (
           <div className="absolute inset-0 bg-black/90 flex flex-col items-center justify-center gap-4 px-8 text-center">
             <p className="text-white text-sm">{connectionError}</p>
+            {isPermissionError && (
+              <button
+                onClick={handleOpenSettings}
+                className="px-5 py-2 rounded-full bg-white text-black text-sm font-semibold"
+              >
+                Open Settings
+              </button>
+            )}
             <button onClick={onEndCall} className="px-5 py-2 rounded-full bg-destructive text-white text-sm font-semibold">
               Close
             </button>

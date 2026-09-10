@@ -5,13 +5,24 @@ import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.view.View;
 import android.webkit.PermissionRequest;
+import androidx.annotation.NonNull;
+import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebChromeClient;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
 public class MainActivity extends BridgeActivity {
+    private static final int VIDEO_CALL_PERMISSION_REQUEST_CODE = 8901;
+
+    // Holds the WebView's own pending request while Android's runtime
+    // permission dialog is on screen, so onRequestPermissionsResult
+    // below can resolve it once the user actually responds. Null
+    // whenever nothing is currently pending.
+    private PermissionRequest pendingWebViewPermissionRequest;
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -29,7 +40,7 @@ public class MainActivity extends BridgeActivity {
         // the same time as our custom pull-to-refresh gesture — two
         // independent animations competing for the same physical
         // gesture. That's what was actually behind "needs two pulls,
-        // not smooth": the CSS fix addressed the browser-level version
+        // not smooth"; the CSS fix addressed the browser-level version
         // of this same class of problem, but this native-level one was
         // still firing regardless, since it isn't something CSS can
         // suppress at all.
@@ -43,33 +54,30 @@ public class MainActivity extends BridgeActivity {
         // WebView itself to grant camera/mic access to the page's own
         // getUserMedia() call — a permission layer tracked entirely
         // separately from the Android OS-level app permission
-        // (CAMERA/RECORD_AUDIO in the manifest). Confirmed directly via
-        // Sentry, using the page's own navigator.permissions.query()
-        // API: this WebView-level state was stuck at "prompt" — never
-        // actually reaching "granted" — even with the OS-level
-        // permission fully confirmed granted through its own runtime
-        // prompts, on a completely fresh install, with the freshest
-        // possible user-gesture context. Capacitor's own
-        // BridgeWebChromeClient.onPermissionRequest is supposed to
-        // handle exactly this bridging, but wasn't doing so correctly
-        // on this specific device for reasons that weren't further
-        // diagnosable without native-level debugging tools this device
-        // doesn't support (no working USB debugging).
+        // (CAMERA/RECORD_AUDIO in the manifest).
         //
-        // This override bypasses whatever that gap actually is by
-        // explicitly granting the WebView's request directly, once the
-        // OS-level permission is confirmed already in place. It
-        // deliberately never calls into this class's own inherited
-        // permission-request handling (super.onPermissionRequest) even
-        // as a fallback — that machinery depends on Activity-lifecycle
-        // wiring (ActivityResultLauncher registration) that only
-        // happens correctly through Capacitor's own initialization
-        // sequence, not through this constructor alone; falling back to
-        // it here risks a null-pointer crash instead. If the OS-level
-        // permission genuinely isn't granted, this simply denies the
-        // WebView's request directly — the app's own getUserMedia()
-        // call already surfaces a clear, already-handled error message
-        // for that case.
+        // CONFIRMED REGRESSION (fixed here): the previous version of
+        // this override only ever CHECKED whether the OS-level
+        // permission was already granted — if not, it called
+        // request.deny() immediately, without ever actually triggering
+        // Android's own runtime permission dialog at all. On any fresh
+        // install, that check is always false, so every single user was
+        // silently denied with no prompt ever shown — which is exactly
+        // the "camera/mic permission requests no longer appear at all"
+        // regression this was rebuilt to fix. Checking is not the same
+        // as asking; this version now actually asks when needed.
+        //
+        // Deliberately uses the older, requestCode-based
+        // ActivityCompat.requestPermissions() / onRequestPermissionsResult()
+        // pair rather than the modern ActivityResultLauncher API — that
+        // modern API requires registering the launcher before onCreate/
+        // onStart completes, which this callback (fired later, at an
+        // arbitrary point whenever the WebView happens to request
+        // camera/mic) can't satisfy; calling it from here risks exactly
+        // the null-pointer crash the original version's own comment
+        // was already trying to avoid. The older API has no such
+        // registration requirement and can be called safely from
+        // exactly this context.
         getBridge().getWebView().setWebChromeClient(new BridgeWebChromeClient(getBridge()) {
             @Override
             public void onPermissionRequest(final PermissionRequest request) {
@@ -86,10 +94,53 @@ public class MainActivity extends BridgeActivity {
 
                 if (cameraOk && micOk) {
                     request.grant(request.getResources());
-                } else {
-                    request.deny();
+                    return;
                 }
+
+                // Actually ask — this is the fix. Only requests the
+                // specific OS-level permission(s) still missing, not
+                // both unconditionally, so a user who already granted
+                // one of the two in an earlier session isn't asked for
+                // it again.
+                List<String> permissionsToRequest = new ArrayList<>();
+                if (!cameraOk) permissionsToRequest.add(Manifest.permission.CAMERA);
+                if (!micOk) permissionsToRequest.add(Manifest.permission.RECORD_AUDIO);
+
+                pendingWebViewPermissionRequest = request;
+                ActivityCompat.requestPermissions(
+                    MainActivity.this,
+                    permissionsToRequest.toArray(new String[0]),
+                    VIDEO_CALL_PERMISSION_REQUEST_CODE
+                );
             }
         });
+    }
+
+    // Resolves the WebView's pending request once the user actually
+    // responds to the OS-level dialog triggered above — grants only if
+    // every permission that was asked for was actually granted;
+    // otherwise denies, matching the WebView's own binary grant/deny API.
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+
+        if (requestCode != VIDEO_CALL_PERMISSION_REQUEST_CODE || pendingWebViewPermissionRequest == null) {
+            return;
+        }
+
+        boolean allGranted = true;
+        for (int result : grantResults) {
+            if (result != PackageManager.PERMISSION_GRANTED) {
+                allGranted = false;
+                break;
+            }
+        }
+
+        if (allGranted) {
+            pendingWebViewPermissionRequest.grant(pendingWebViewPermissionRequest.getResources());
+        } else {
+            pendingWebViewPermissionRequest.deny();
+        }
+        pendingWebViewPermissionRequest = null;
     }
 }
