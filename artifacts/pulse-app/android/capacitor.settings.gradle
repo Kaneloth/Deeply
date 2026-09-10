@@ -35,6 +35,9 @@ project(':capawesome-capacitor-app-update').projectDir = new File('../../../node
 include ':capawesome-capacitor-google-sign-in'
 project(':capawesome-capacitor-google-sign-in').projectDir = new File('../../../node_modules/.pnpm/@capawesome+capacitor-google-sign-in@0.1.2_@capacitor+core@8.5.0/node_modules/@capawesome/capacitor-google-sign-in/android')
 
+include ':capawesome-capacitor-settings-launcher'
+project(':capawesome-capacitor-settings-launcher').projectDir = new File('../../../node_modules/.pnpm/@capawesome+capacitor-settings-launcher@0.1.2_@capacitor+core@8.5.0/node_modules/@capawesome/capacitor-settings-launcher/android')
+
 include ':capgo-native-purchases'
 project(':capgo-native-purchases').projectDir = new File('../../../node_modules/.pnpm/@capgo+native-purchases@8.6.5_@capacitor+core@8.5.0/node_modules/@capgo/native-purchases/android')
 

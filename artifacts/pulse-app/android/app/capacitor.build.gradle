@@ -20,6 +20,7 @@ dependencies {
     implementation project(':capawesome-capacitor-app-review')
     implementation project(':capawesome-capacitor-app-update')
     implementation project(':capawesome-capacitor-google-sign-in')
+    implementation project(':capawesome-capacitor-settings-launcher')
     implementation project(':capgo-native-purchases')
     implementation project(':sentry-capacitor')
     implementation project(':capacitor-voice-recorder')

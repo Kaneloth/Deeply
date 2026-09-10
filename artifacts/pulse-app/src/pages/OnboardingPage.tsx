@@ -132,7 +132,7 @@ function StepShell({
 }
 
 export default function OnboardingPage() {
-  const { token } = useAuth();
+  const { token, markOnboardingCompleted } = useAuth();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
@@ -454,6 +454,15 @@ export default function OnboardingPage() {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Failed to save profile");
+      // Tells AuthContext directly, using this response's own confirmed
+      // success — rather than letting ProtectedRoute go rediscover this
+      // same fact via a fresh, separate GET that could independently
+      // hit read-after-write lag on its own connection. This is what
+      // actually closes the "bounced back to Get Started right after
+      // finishing onboarding" gap — confirmed via a real incident where
+      // that second, later read returned stale data even though this
+      // PUT had already genuinely succeeded moments earlier.
+      markOnboardingCompleted();
       if (body.is_founder) {
         setFounderReveal({ rank: body.founder_rank, cap: body.founder_cap });
       } else {

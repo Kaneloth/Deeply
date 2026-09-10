@@ -565,28 +565,37 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   }
 
   // Retries the read-back specifically for the same Supabase read-after-
-  // write consistency lag traced repeatedly elsewhere in this app: the
-  // UPDATE above can succeed while THIS separate, subsequent read
-  // transiently doesn't see it yet. Without this retry, that lag meant
-  // the endpoint returned a 500 to the client even when the update
-  // (including, critically, the founders-program fields set above)
-  // genuinely succeeded — the client would see an error and never learn
-  // it actually worked. Since claim_founder_slot is a one-time atomic
-  // claim, a user hitting this on their onboarding-completion request
-  // would have a permanently correct is_founder=true in the database
-  // with no way to ever see confirmation of it, even on retry (the
-  // founders check only fires on the false->true transition, which
-  // their retry would no longer see).
+  // write consistency lag traced repeatedly elsewhere in this app — but
+  // unlike the previous version of this loop, actually verifies the
+  // read reflects what was just written, rather than merely that a row
+  // came back. Confirmed via a real incident that the old check
+  // (`if (result.data)`) was insufficient: for an UPDATE, the row
+  // always exists both before and after, so lag here manifests as "row
+  // found, but still showing the pre-update content" — result.data was
+  // truthy even when it was a stale copy, so the old loop broke
+  // immediately on the first attempt and returned outdated data (e.g.
+  // onboarding_completed: false) as if it were fresh, even though the
+  // UPDATE above had already genuinely succeeded moments earlier.
   let profile: Record<string, unknown> | null = null;
   let readBackError: { message?: string } | null = null;
+  let confirmedFresh = false;
   for (let attempt = 0; attempt < 3; attempt++) {
     const result = await supabase.from("profiles").select("*").eq("id", req.user!.id).maybeSingle();
     if (result.data) {
       profile = result.data;
       readBackError = null;
-      break;
+      const reflectsUpdate = Object.entries(updates).every(
+        ([key, value]) => JSON.stringify(result.data![key]) === JSON.stringify(value),
+      );
+      if (reflectsUpdate) {
+        confirmedFresh = true;
+        break;
+      }
+      // Row found but still stale — keep this as the current best
+      // profile snapshot, but keep retrying rather than accepting it.
+    } else {
+      readBackError = result.error;
     }
-    readBackError = result.error;
     if (attempt < 2) {
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
@@ -597,6 +606,17 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     console.error("PUT /profile/me — user id was:", req.user!.id);
     res.status(500).json({ error: "Profile was updated, but could not be read back." });
     return;
+  }
+
+  if (!confirmedFresh) {
+    // The UPDATE itself already succeeded (checked above) — this only
+    // means the read-back never caught up within 3 attempts, not that
+    // anything failed. Logged so a slow-to-propagate case like this is
+    // actually visible, rather than silently returning stale field
+    // values (e.g. an old onboarding_completed) as if confirmed fresh.
+    console.error(
+      `PUT /profile/me — read-back never confirmed fresh after retries for userId=${req.user!.id}. Update itself succeeded; returned profile snapshot may be momentarily stale.`,
+    );
   }
 
   res.json({ ...withComputedAge(profile), ...(founderSlotCapForResponse !== null ? { founder_cap: founderSlotCapForResponse } : {}) });

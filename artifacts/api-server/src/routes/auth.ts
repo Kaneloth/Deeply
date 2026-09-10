@@ -108,6 +108,22 @@ router.post("/auth/signup", async (req, res): Promise<void> => {
     return;
   }
 
+  // Blocks Google's own Firebase Test Lab bot accounts, used by Google
+  // Play's "Pre-launch report" feature — an automated crawler that
+  // randomly taps through the app on every new release upload to catch
+  // crashes before real users see them. Confirmed via a real occurrence:
+  // it can accidentally complete a sign-in (random taps sometimes land
+  // on the right buttons), then continues tapping incoherently through
+  // everything after, which is why it never completes onboarding — it's
+  // not a real person, and blocking it here means no fake account (auth
+  // user + profile row) ever gets created for it at all, rather than
+  // needing to clean one up after the fact. This specific email domain
+  // is exclusively used for this purpose — never a genuine signup.
+  if (email.toLowerCase().endsWith("@cloudtestlabaccounts.com")) {
+    res.status(400).json({ error: "Signups from this address are not permitted." });
+    return;
+  }
+
   // Name is no longer collected here — the signup screen asking for it
   // duplicated the Name field onboarding already asks for right after
   // (and for Google sign-in, that name gets auto-populated from Google's

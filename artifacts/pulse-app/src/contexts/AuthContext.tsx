@@ -38,11 +38,22 @@ interface AuthContextType {
   // Once true, stays true permanently — onboarding completion is a
   // one-way transition, so there's never a need to re-verify an
   // already-onboarded account. While false (or null), ProtectedRoute
-  // re-checks fresh on every navigation to a guarded route, which is
-  // what lets it pick up a just-completed onboarding immediately
-  // without OnboardingPage needing to explicitly announce it.
+  // re-checks fresh on every navigation to a guarded route.
+  //
+  // markOnboardingCompleted exists because relying purely on that fresh
+  // re-check is exactly what's vulnerable to Supabase read-after-write
+  // lag — confirmed directly via a real incident: PUT /profile/me
+  // returned 200 (the write genuinely succeeded), but the immediately-
+  // following GET in checkOnboardingStatus below can independently read
+  // a still-stale copy on a connection that hasn't caught up yet,
+  // reporting false right after a save that had already truly
+  // succeeded. OnboardingPage's own successful PUT response is the
+  // freshest, most authoritative confirmation available — there's no
+  // reason to discard that and gamble on a second, separate read
+  // catching up in time.
   onboardingCompleted: boolean | null;
   checkOnboardingStatus: () => Promise<void>;
+  markOnboardingCompleted: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -140,6 +151,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       setOnboardingCompleted(null);
     }
+  };
+
+  // Called directly by OnboardingPage right after its own PUT
+  // /profile/me succeeds — sets the known-true state immediately,
+  // without a second, separate read that could independently hit
+  // read-after-write lag. See the comment on the context type above for
+  // the full reasoning; this is what actually closes that gap.
+  const markOnboardingCompleted = () => {
+    setOnboardingCompleted(true);
   };
 
   const scheduleRefresh = (expiresAt: number) => {
@@ -353,6 +373,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         clearBlockInfo: () => setBlockInfo(null),
         onboardingCompleted,
         checkOnboardingStatus,
+        markOnboardingCompleted,
       }}
     >
       {children}

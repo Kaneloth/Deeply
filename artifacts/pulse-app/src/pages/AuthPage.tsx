@@ -679,10 +679,47 @@ export default function AuthPage() {
           <button
             onClick={onResendCode}
             disabled={isResending}
-            className="text-muted-foreground text-sm hover:text-primary transition-colors font-medium"
+            className="text-muted-foreground text-sm hover:text-primary transition-colors font-medium mb-6"
           >
             {isResending ? "Sending..." : "Didn't get it? Resend code"}
           </button>
+
+          {/* Directly addresses the actual, confirmed failure mode: a
+              real email landing in spam, or simply taking a while to
+              arrive — not everyone thinks to check spam on their own,
+              and without this, that person has no visible path forward
+              at all beyond repeatedly hitting "resend." */}
+          <div className="bg-card border border-card-border rounded-xl p-4 text-left mb-4">
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Don't see it? Check your <span className="text-foreground font-medium">spam or junk folder</span> — emails
+              sometimes land there. They can also occasionally take{" "}
+              <span className="text-foreground font-medium">20–30 minutes</span> to arrive, so it's worth checking back
+              a bit later too.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3 mb-4">
+            <div className="flex-1 h-px bg-card-border" />
+            <span className="text-xs text-muted-foreground">or skip the wait</span>
+            <div className="flex-1 h-px bg-card-border" />
+          </div>
+
+          <button
+            type="button"
+            onClick={onGoogleSignIn}
+            disabled={isGoogleLoading}
+            className="w-full h-12 rounded-xl text-sm font-semibold bg-card border border-card-border flex items-center justify-center gap-3 hover:bg-card/70 transition-colors disabled:opacity-60 mb-6"
+          >
+            <GoogleIcon />
+            {isGoogleLoading ? "Redirecting…" : "Continue with Google instead"}
+          </button>
+
+          <p className="text-xs text-muted-foreground">
+            Still stuck? Email us at{" "}
+            <a href="mailto:support@deeplydating.co.za" className="text-primary font-medium">
+              support@deeplydating.co.za
+            </a>
+          </p>
         </div>
       </div>
     );
