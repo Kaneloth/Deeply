@@ -132,6 +132,32 @@ router.post("/auth/signup", async (req, res): Promise<void> => {
     return;
   }
 
+  // The on_auth_user_created trigger creates this profiles row, but its
+  // effects aren't guaranteed to be immediately visible to this
+  // separate connection right after signUp() returns — this exact
+  // project has already confirmed this same class of read-after-write
+  // lag repeatedly elsewhere (matches, video_calls, profiles itself in
+  // the account-deletion flow). If this row doesn't exist yet from this
+  // connection's view, the updates below would silently match ZERO
+  // rows — which Postgres/PostgREST report as { error: null }, not an
+  // error — meaning both the device/email/IP capture AND the referral
+  // code assignment could silently no-op with nothing ever logged,
+  // while looking identical to success. Verifying existence first, with
+  // a short retry, closes that gap rather than assuming the row is
+  // instantly visible on this connection.
+  let profileRowExists = false;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { data: existing } = await supabase.from("profiles").select("id").eq("id", data.user.id).maybeSingle();
+    if (existing) {
+      profileRowExists = true;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  if (!profileRowExists) {
+    console.error(`profiles row never became visible for userId=${data.user.id} after signup — device/email/IP capture and referral code assignment both skipped`);
+  }
+
   // Stored as soon as the auth user exists, before the email-confirmed
   // check below — a profiles row for this user id already exists by
   // this point (created via the on_auth_user_created trigger), and
@@ -139,25 +165,31 @@ router.post("/auth/signup", async (req, res): Promise<void> => {
   // signup still needs email confirmation, so the grant-cooldown check
   // in sparks-helper.ts has them available from this account's very
   // first monthly grant, whenever that ends up happening.
-  await supabase
-    .from("profiles")
-    .update({
-      signup_device_id: device_id ?? null,
-      normalized_email: normalizeEmail(email),
-      signup_ip: getClientIp(req),
-    })
-    .eq("id", data.user.id);
+  if (profileRowExists) {
+    await supabase
+      .from("profiles")
+      .update({
+        signup_device_id: device_id ?? null,
+        normalized_email: normalizeEmail(email),
+        signup_ip: getClientIp(req),
+      })
+      .eq("id", data.user.id);
+  }
 
   // Recorded immediately at signup, not left to only happen reactively
   // whenever the first monthly grant eventually processes (which this
   // account might delete itself before ever reaching) — see
   // recordGrantForAbuseCheck's own comment in sparks-helper.ts for the
   // confirmed real-world gap this closes.
-  await recordGrantForAbuseCheck(data.user.id, device_id ?? null, normalizeEmail(email)).catch((err) =>
-    console.error(`Failed to record signup for abuse check, userId=${data.user.id}:`, err),
-  );
+  if (profileRowExists) {
+    await recordGrantForAbuseCheck(data.user.id, device_id ?? null, normalizeEmail(email)).catch((err) =>
+      console.error(`Failed to record signup for abuse check, userId=${data.user.id}:`, err),
+    );
+  }
 
-  await assignReferralCode(data.user.id);
+  if (profileRowExists) {
+    await assignReferralCode(data.user.id);
+  }
 
   if (!data.session) {
     res.status(201).json({
