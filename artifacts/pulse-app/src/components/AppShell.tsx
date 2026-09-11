@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
+import { PhotoNudgeBanner } from "@/components/PhotoNudgeBanner";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { TextSizeProvider } from "@/contexts/TextSizeContext";
@@ -200,6 +201,7 @@ function AppShellInner({ children }: AppShellProps) {
       <TopBar />
       <UpdateBanner />
       <AnnouncementBanner />
+      <PhotoNudgeBanner />
 
       {/* overscroll-y-none is the fix for a real glitch: without it, the
           browser/WebView's OWN native pull-to-refresh/rubber-band effect
