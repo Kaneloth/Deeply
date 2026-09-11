@@ -13,8 +13,8 @@ android {
         applicationId "za.co.deeplydating.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 27
-        versionName "1.0.1"
+        versionCode 29
+        versionName "1.0.2"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -40,7 +40,23 @@ android {
     }
     buildTypes {
         release {
-            minifyEnabled false
+            // Was false — confirmed direct cause of Play Console's
+            // "App optimization is below our threshold (Obfuscation 1%)"
+            // warning. This is the actual setting controlling R8
+            // minification/obfuscation for release builds; a
+            // proguard-rules.pro file already exists and is already
+            // wired in below, but with minification off it was never
+            // actually being applied. IMPORTANT: enabling this needs a
+            // full, thorough test of a release build before shipping —
+            // R8 can strip or rename classes that reflection-based
+            // native code (Capacitor plugins, WebView bridge classes)
+            // depends on existing under their original names, if the
+            // existing proguard-rules.pro doesn't already have complete
+            // keep rules for all of them. Test assembleRelease/
+            // bundleRelease thoroughly (all native plugin functionality
+            // — camera, video calls, permissions, etc.) before treating
+            // this as safe to publish.
+            minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
             if (keystorePropertiesFile.exists()) {
                 signingConfig signingConfigs.release
