@@ -403,6 +403,66 @@ router.get("/auth/me", requireAuth, async (req, res): Promise<void> => {
   res.json({ id: data.user.id, email: data.user.email, has_password: hasPassword });
 });
 
+/** POST /api/auth/link-google-metadata — captures signup_device_id and
+ *  signup_ip for Google sign-ins, closing a confirmed real gap: those
+ *  two fields were only ever populated by the email/password
+ *  /auth/signup route, which Google OAuth never touches at all
+ *  (Supabase handles the token exchange directly, client-side).
+ *  Confirmed via a real investigation into a suspected mass-signup
+ *  pattern: every single one of ~21 flagged accounts, all created via
+ *  Google, had NULL signup_device_id AND signup_ip — meaning the
+ *  entire grant-abuse-cooldown system (getAbuseDelayUntil in
+ *  sparks-helper.ts) had zero ability to ever detect reuse across
+ *  accounts on this specific signup path, regardless of how
+ *  unsophisticated the abuse actually was.
+ *
+ *  Called once, right after a Google sign-in succeeds, from both the
+ *  native (AuthPage.tsx) and web (AuthCallbackPage.tsx) flows.
+ *
+ *  Deliberately only ever writes these fields the FIRST time an
+ *  account is seen here — an unconditional overwrite would corrupt the
+ *  abuse-detection system by replacing the account's original signup
+ *  device/IP with whatever device happens to be used on a LATER,
+ *  perfectly ordinary login. */
+router.post("/auth/link-google-metadata", requireAuth, async (req, res): Promise<void> => {
+  const { device_id } = req.body as { device_id?: string };
+  const userId = req.user!.id;
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("signup_device_id, signup_ip, normalized_email")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (!profile) {
+    res.sendStatus(204);
+    return;
+  }
+
+  // Already captured — either by an earlier call to this same endpoint,
+  // or (shouldn't happen for a Google-only account, but a safe check
+  // regardless) already set via the email/password signup route.
+  if (profile.signup_device_id || profile.signup_ip) {
+    res.sendStatus(204);
+    return;
+  }
+
+  await supabase
+    .from("profiles")
+    .update({ signup_device_id: device_id ?? null, signup_ip: getClientIp(req) })
+    .eq("id", userId);
+
+  // Same treatment as the email/password signup flow's own call to this
+  // — records this device/email as "used" immediately, closing the same
+  // delete-and-resignup grant-abuse gap for Google sign-ins that was
+  // already fixed for email/password.
+  await recordGrantForAbuseCheck(userId, device_id ?? null, profile.normalized_email).catch((err) =>
+    console.error(`Failed to record Google signup for abuse check, userId=${userId}:`, err),
+  );
+
+  res.sendStatus(204);
+});
+
 /** PUT /api/auth/change-password — requires the current password to be
  *  correct before allowing the change, UNLESS this account has never
  *  had one (Google-only sign-in) — in that case currentPassword is
@@ -650,6 +710,66 @@ router.post("/auth/_internal/backfill-referral-codes", async (req, res): Promise
 
   console.log(`backfill-referral-codes: processed ${missing?.length ?? 0} profile(s) missing a referral code`);
   res.status(200).json({ processed: missing?.length ?? 0 });
+});
+
+/** POST /api/auth/record-google-signup — closes a confirmed real gap:
+ *  signup_device_id, signup_ip, and normalized_email were NEVER being
+ *  captured for Google sign-ups at all, only for email/password signups
+ *  via /auth/signup above. Google OAuth never touches that route —
+ *  Supabase exchanges the token directly, client-side — so there was
+ *  never a natural backend hook to capture this for that path.
+ *
+ *  Confirmed via a real investigation into a suspected mass-signup
+ *  pattern: 21 accounts with disposable-looking, bot-generated emails
+ *  (name.randomdigits@gmail.com) all showed signup_device_id AND
+ *  signup_ip as null — not because they shared a device, but because
+ *  the entire abuse-cooldown system (getAbuseDelayUntil in
+ *  sparks-helper.ts) has had zero visibility into Google sign-ups this
+ *  whole time, regardless of how the accounts were actually created.
+ *
+ *  Called once, right after a successful Google sign-in, from both the
+ *  native flow (AuthPage.tsx's onGoogleSignIn) and the web OAuth
+ *  redirect flow (AuthCallbackPage.tsx).
+ *
+ *  Deliberately idempotent — only ever sets these fields if they're
+ *  still null. A person can legitimately sign in via Google again
+ *  later from a different device; this must never overwrite the true,
+ *  original signup capture with that later login's device/IP instead. */
+router.post("/auth/record-google-signup", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const { device_id: deviceId } = req.body as { device_id?: string };
+
+  const { data: existing } = await supabase
+    .from("profiles")
+    .select("signup_device_id, signup_ip, normalized_email")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (existing?.signup_device_id || existing?.signup_ip || existing?.normalized_email) {
+    // Already captured — either a prior call to this same endpoint, or
+    // (unexpectedly) already set some other way. Never overwrite.
+    res.sendStatus(204);
+    return;
+  }
+
+  const { data: userData } = await supabase.auth.admin.getUserById(userId);
+  const email = userData.user?.email;
+  const normalizedEmail = email ? normalizeEmail(email) : null;
+
+  await supabase
+    .from("profiles")
+    .update({
+      signup_device_id: deviceId ?? null,
+      signup_ip: getClientIp(req),
+      normalized_email: normalizedEmail,
+    })
+    .eq("id", userId);
+
+  await recordGrantForAbuseCheck(userId, deviceId ?? null, normalizedEmail).catch((err) =>
+    console.error(`Failed to record Google signup for abuse check, userId=${userId}:`, err),
+  );
+
+  res.sendStatus(204);
 });
 
 export default router;

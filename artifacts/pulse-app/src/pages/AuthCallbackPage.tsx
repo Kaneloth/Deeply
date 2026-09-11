@@ -34,6 +34,25 @@ export default function AuthCallbackPage() {
       const { access_token, refresh_token, expires_in } = data.session;
       login(access_token, refresh_token, expires_in);
 
+      // Closes a confirmed real gap: signup_device_id/signup_ip/
+      // normalized_email were never being captured for Google sign-ins
+      // at all (this page's own flow included), meaning the entire
+      // abuse-cooldown system had zero visibility into any Google
+      // sign-up — confirmed via a real investigation into a suspected
+      // mass-signup pattern where every matching account showed null
+      // for these fields. No device_id sent here — this is the web-only
+      // flow, native sign-in uses Credential Manager directly and never
+      // reaches this page at all. Idempotent on the backend (only ever
+      // sets these once), so safe to call on every sign-in, not just a
+      // genuinely new signup. Fire-and-forget — this is abuse-detection
+      // infrastructure, not something that should ever block or delay
+      // getting this person into the app.
+      fetch("/api/auth/record-google-signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${access_token}` },
+        body: JSON.stringify({}),
+      }).catch(() => {});
+
       // New Google sign-ups get a profiles row via the same DB trigger
       // signup goes through, but onboarding_completed will still be
       // false for them — route accordingly, same distinction the

@@ -456,6 +456,37 @@ export default function AuthPage() {
         const { access_token, refresh_token, expires_in } = data.session;
         login(access_token, refresh_token, expires_in);
 
+        // Closes a confirmed real gap: signup_device_id/signup_ip/
+        // normalized_email were never being captured for Google sign-
+        // ins at all, meaning the entire abuse-cooldown system had zero
+        // visibility into this path — confirmed via a real investigation
+        // into a suspected mass-signup pattern where every single
+        // matching account showed null for these fields, not because
+        // they shared a device but because nothing was ever recording
+        // it. The endpoint itself is idempotent (only sets these once,
+        // never overwrites), so it's safe to call on every Google sign-
+        // in, not just a genuinely new signup. Non-fatal on failure —
+        // same reasoning as the device_id capture above.
+        try {
+          let googleDeviceId: string | undefined;
+          if (Capacitor.isNativePlatform()) {
+            try {
+              const info = await Device.getId();
+              googleDeviceId = info.identifier;
+            } catch {
+              // Non-fatal — see reasoning above.
+            }
+          }
+          await fetch("/api/auth/record-google-signup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${access_token}` },
+            body: JSON.stringify({ device_id: googleDeviceId }),
+          });
+        } catch {
+          // Non-fatal — this is abuse-detection infrastructure, not
+          // something that should ever block a successful sign-in.
+        }
+
         // Same onboarding check the web flow's AuthCallbackPage does —
         // called explicitly here since login() alone would otherwise let
         // PublicRoute's own isAuthenticated redirect send everyone
