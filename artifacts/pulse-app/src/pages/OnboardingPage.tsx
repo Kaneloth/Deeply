@@ -822,10 +822,10 @@ export default function OnboardingPage() {
         )}
 
         {step === 20 && (
-          <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel={photoCount > 0 ? "Continue" : "Skip for now"}>
+          <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel="Continue" continueDisabled={photoCount === 0}>
             <h2 className="text-2xl font-['Syne'] font-bold mb-2">📸 Photos & Video</h2>
             <p className="text-sm text-muted-foreground mb-6">
-              Add up to 8 photos and a 5-second clip from your Profile page any time. Adding at least one now helps people recognize you right away.
+              Add at least one photo to continue — you can add up to 8 photos and a 5-second clip from your Profile page any time.
             </p>
             <div className="grid grid-cols-3 gap-3 mb-4">
               {Array.from({ length: photoCount }).map((_, i) => (

@@ -27,6 +27,33 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        // Direct, official fix for Play Console's "Edge-to-edge may not
+        // display for all users" warning (targeting SDK 35, Android 15+
+        // enables edge-to-edge by default). Called after, not before,
+        // super.onCreate() — matching this file's own established
+        // convention below for the same reason: avoids any risk of
+        // interfering with BridgeActivity's own window/WebView
+        // initialization, which happens inside super.onCreate() itself.
+        //
+        // This is separate from, and doesn't resolve, the "deprecated
+        // APIs for edge-to-edge" warning — that one comes from
+        // Window.setStatusBarColor/setNavigationBarColor calls buried
+        // inside third-party library internals (Material Components,
+        // ion-camera-lib, even Sentry's own Android SDK), not from
+        // anything in this app's own code, so it isn't fixable from
+        // here.
+        // EdgeToEdge.enable() was added here to address a low-priority
+        // Play Console recommendation, but confirmed to cause a severe
+        // layout regression: content overlapping the status bar, the
+        // bottom nav hidden, and unreadable status bar icons in light
+        // mode. Enabling edge-to-edge means content draws BEHIND the
+        // system bars by design — that only works correctly once the
+        // app's own CSS properly reserves space for them (safe-area-
+        // inset-* padding on the header/nav, viewport-fit=cover set).
+        // Reverted rather than left broken while that's sorted out
+        // properly; revisit only after confirming the CSS side is
+        // actually in place first.
+
         // Disables Android's native WebView overscroll glow/bounce
         // effect. This is a completely separate mechanism from the CSS
         // `overscroll-behavior` property already set on <main> in
