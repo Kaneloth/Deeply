@@ -525,6 +525,63 @@ router.put("/auth/change-password", requireAuth, async (req, res): Promise<void>
  *  own "type DELETE to confirm" step is the only safeguard available,
  *  same reasoning as change-password above. Without this exception,
  *  a Google-only user could never delete their own account at all. */
+/** Shared deletion sequence — extracted from DELETE /auth/account below
+ *  so the new automated stale-incomplete-account cleanup can reuse this
+ *  exact, already-proven-correct sequence (storage cleanup, profile
+ *  delete, verify-then-auth-delete with the read-after-write lag fix)
+ *  rather than duplicating it. Deliberately does NOT include the
+ *  password-confirmation check — that's specific to a real person
+ *  confirming their own deletion, not relevant to an automated cleanup
+ *  acting on an account that was never actually claimed by completing
+ *  onboarding.
+ *
+ *  Returns an error message on failure, or null on success — callers
+ *  decide what to do with that (respond to a request vs. just log and
+ *  continue to the next account in a batch). */
+async function deleteAccountCompletely(userId: string): Promise<string | null> {
+  for (const bucket of ["profile-photos", "audio-prompts"]) {
+    try {
+      const { data: files } = await supabase.storage.from(bucket).list(userId);
+      if (files && files.length > 0) {
+        const paths = files.map((f) => `${userId}/${f.name}`);
+        await supabase.storage.from(bucket).remove(paths);
+      }
+    } catch {
+      // Non-fatal — don't block account deletion if storage cleanup
+      // fails for one bucket; the account deletion itself still proceeds.
+    }
+  }
+
+  const { error: profileDeleteError } = await supabase.from("profiles").delete().eq("id", userId);
+  if (profileDeleteError) {
+    console.error(`deleteAccountCompletely — profiles.delete() failed for userId=${userId}:`, JSON.stringify(profileDeleteError, null, 2));
+    return `Failed to delete account: ${profileDeleteError.message}`;
+  }
+
+  let profileRowStillVisible = true;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { data: stillExists } = await supabase.from("profiles").select("id").eq("id", userId).maybeSingle();
+    if (!stillExists) {
+      profileRowStillVisible = false;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  if (profileRowStillVisible) {
+    console.error(`deleteAccountCompletely — profile row never became invisible for userId=${userId}, proceeding to auth delete anyway`);
+  }
+
+  const { error: deleteError } = await supabase.auth.admin.deleteUser(userId);
+  if (deleteError) {
+    console.error(
+      `deleteAccountCompletely — auth.admin.deleteUser() failed for userId=${userId}: message="${deleteError.message}" status=${deleteError.status} code=${(deleteError as { code?: string }).code}`,
+    );
+    return `Failed to delete account: ${deleteError.message || "Unknown error — check server logs"}`;
+  }
+
+  return null;
+}
+
 router.delete("/auth/account", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
   const { password } = req.body as { password?: string };
@@ -552,77 +609,9 @@ router.delete("/auth/account", requireAuth, async (req, res): Promise<void> => {
     }
   }
 
-  // Clean up storage files (photos, video clips, audio prompts) before
-  // removing the account. Both buckets store files under a `${userId}/`
-  // prefix, so we list that "folder" and remove everything in it.
-  for (const bucket of ["profile-photos", "audio-prompts"]) {
-    try {
-      const { data: files } = await supabase.storage.from(bucket).list(userId);
-      if (files && files.length > 0) {
-        const paths = files.map((f) => `${userId}/${f.name}`);
-        await supabase.storage.from(bucket).remove(paths);
-      }
-    } catch {
-      // Non-fatal — don't block account deletion if storage cleanup
-      // fails for one bucket; the account deletion itself still proceeds.
-    }
-  }
-
-  // Delete the profile row explicitly first (in case the FK to auth.users
-  // isn't set up with ON DELETE CASCADE), then delete the auth user.
-  // Previously completely unchecked — a silent failure here (e.g. a
-  // foreign key from another table referencing this profile without
-  // cascade, blocking the delete at the database level) would leave
-  // the profile row intact while the code proceeded to attempt the
-  // auth-user deletion anyway, on a now-incorrect assumption.
-  const { error: profileDeleteError } = await supabase.from("profiles").delete().eq("id", userId);
-  if (profileDeleteError) {
-    console.error(`DELETE /auth/account — profiles.delete() failed for userId=${userId}:`, JSON.stringify(profileDeleteError, null, 2));
-    res.status(500).json({ error: `Failed to delete account: ${profileDeleteError.message}` });
-    return;
-  }
-
-  // Confirmed root cause of the actual failure this was hit for: Supabase's
-  // own documented troubleshooting guide shows auth.admin.deleteUser()
-  // failing with exactly this shape (a generic 500) when the profiles row
-  // still references the user at the moment GoTrue's own internal check
-  // runs — "update or delete on table users violates foreign key
-  // constraint... still referenced from table profiles". The delete above
-  // already succeeded (profileDeleteError is falsy), but GoTrue runs on a
-  // separate connection from this request's own supabase-js client, and
-  // this project has already hit read-after-write lag between separate
-  // connections/replicas repeatedly elsewhere (matches, video_calls) — the
-  // same lag here means GoTrue's check can still see the just-deleted row
-  // for a brief moment. Verifying it's actually gone first, with a short
-  // retry, closes that gap rather than assuming the delete is instantly
-  // visible everywhere.
-  let profileRowStillVisible = true;
-  let verifyAttempts = 0;
-  for (let attempt = 0; attempt < 5; attempt++) {
-    verifyAttempts = attempt + 1;
-    const { data: stillExists } = await supabase.from("profiles").select("id").eq("id", userId).maybeSingle();
-    if (!stillExists) {
-      profileRowStillVisible = false;
-      break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 300));
-  }
-  console.log(
-    `DELETE /auth/account — profile row visibility check for userId=${userId}: stillVisible=${profileRowStillVisible} attempts=${verifyAttempts}`,
-  );
-
-  const { error: deleteError } = await supabase.auth.admin.deleteUser(userId);
-  if (deleteError) {
-    // Logs the FULL error object, not just .message — that's what was
-    // actually producing the unhelpful "{}" shown to the user (a plain
-    // JS Error's message/stack are non-enumerable properties, so
-    // naive stringification of the object itself yields "{}"; this
-    // logs the object's own actual fields explicitly instead so the
-    // real cause is visible in Netlify's logs next time this happens).
-    console.error(
-      `DELETE /auth/account — auth.admin.deleteUser() failed for userId=${userId}: message="${deleteError.message}" status=${deleteError.status} code=${(deleteError as { code?: string }).code}`,
-    );
-    res.status(500).json({ error: `Failed to delete account: ${deleteError.message || "Unknown error — check server logs"}` });
+  const deletionError = await deleteAccountCompletely(userId);
+  if (deletionError) {
+    res.status(500).json({ error: deletionError });
     return;
   }
 
@@ -770,6 +759,51 @@ router.post("/auth/record-google-signup", requireAuth, async (req, res): Promise
   );
 
   res.sendStatus(204);
+});
+
+/** POST /api/auth/_internal/delete-stale-incomplete-accounts — safety
+ *  net against the spam-signup pattern investigated earlier (disposable
+ *  Google accounts, name.randomdigits@gmail.com, that never complete
+ *  onboarding). 24-hour window is a deliberate product decision, not an
+ *  arbitrary default: the email-delay guidance already shown on the OTP
+ *  screen covers up to 20-30 minutes, comfortably within this window —
+ *  and since nothing from the onboarding form actually saves until the
+ *  final submit, a genuine person returning later isn't saved any real
+ *  work by the old incomplete row still existing; they're re-entering
+ *  everything from scratch either way. Called every 4 hours by the
+ *  delete-stale-incomplete-accounts.mts scheduled function — more
+ *  frequently than once a day specifically so an account crossing the
+ *  24-hour mark doesn't sit for up to another full day before being
+ *  caught, which would work against the actual goal of keeping
+ *  accumulated volume down. */
+router.post("/auth/_internal/delete-stale-incomplete-accounts", async (req, res): Promise<void> => {
+  const providedSecret = req.headers["x-internal-cleanup-secret"];
+  if (!process.env.INTERNAL_CLEANUP_SECRET || providedSecret !== process.env.INTERNAL_CLEANUP_SECRET) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data: stale } = await supabase
+    .from("profiles")
+    .select("id")
+    .not("onboarding_completed", "is", true)
+    .lt("created_at", cutoff);
+
+  let deleted = 0;
+  let failed = 0;
+  for (const profile of stale ?? []) {
+    const error = await deleteAccountCompletely(profile.id);
+    if (error) {
+      failed += 1;
+      console.error(`delete-stale-incomplete-accounts — failed for userId=${profile.id}: ${error}`);
+    } else {
+      deleted += 1;
+    }
+  }
+
+  console.log(`delete-stale-incomplete-accounts: deleted=${deleted} failed=${failed}`);
+  res.status(200).json({ deleted, failed });
 });
 
 export default router;
