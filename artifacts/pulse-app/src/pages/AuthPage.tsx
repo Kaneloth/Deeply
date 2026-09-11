@@ -461,15 +461,48 @@ export default function AuthPage() {
         // PublicRoute's own isAuthenticated redirect send everyone
         // (including brand-new users who still need onboarding) straight
         // to /discover.
-        try {
-          const res = await fetch("/api/profile/me", {
-            headers: { Authorization: `Bearer ${access_token}` },
-          });
-          const profile = res.ok ? await res.json() : null;
-          setLocation(profile?.onboarding_completed ? "/discover" : "/onboarding");
-        } catch {
-          setLocation("/discover");
+        //
+        // Retries with the same [0, 400, 1200]ms backoff already proven
+        // in AuthCallbackPage.tsx, for the same reason: this fetch runs
+        // right after the signup trigger creates the profile row, right
+        // in the window this project has repeatedly confirmed can hit
+        // Supabase read-after-write lag. A single, no-retry attempt (the
+        // previous version of this code) meant that lag window got hit
+        // on almost every single new signup — confirmed via a real
+        // incident where brand-new Google sign-ups landed in the main
+        // app with a completely blank profile (no bio, city, or photo —
+        // only a name auto-copied from Google), because the single
+        // attempt failed and fell through to a default.
+        //
+        // On persistent failure after all retries, defaults to
+        // /discover, matching AuthCallbackPage's own deliberate,
+        // already-battle-tested choice — NOT /onboarding. That's a
+        // real, separate incident already documented in that file's own
+        // history: defaulting to /onboarding on failure previously
+        // caused already-onboarded, returning users to get bounced back
+        // through onboarding and risk overwriting their real profile
+        // data with an empty resubmission. Retrying is what actually
+        // fixes this — it reduces how often either risk is ever reached
+        // — not swapping which of the two wrong guesses to prefer.
+        const fetchProfile = () =>
+          fetch("/api/profile/me", { headers: { Authorization: `Bearer ${access_token}` } });
+
+        let onboardingCompleted: boolean | null = null;
+        for (const delayMs of [0, 400, 1200]) {
+          if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+          try {
+            const res = await fetchProfile();
+            if (res.ok) {
+              const profile = await res.json();
+              onboardingCompleted = profile?.onboarding_completed === true;
+              break;
+            }
+          } catch {
+            // Network error — fall through and retry.
+          }
         }
+
+        setLocation(onboardingCompleted === false ? "/onboarding" : "/discover");
       } catch (err) {
         const code = (err as { code?: GoogleSignInErrorCode } | undefined)?.code;
 
