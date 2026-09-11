@@ -2216,6 +2216,48 @@ function AnnouncementsSection({ token, toast }: { token: string | null; toast: a
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [severity, setSeverity] = useState("info");
+  const [targetType, setTargetType] = useState<"all" | "specific">("all");
+  const [recipientSearch, setRecipientSearch] = useState("");
+  const [recipientResults, setRecipientResults] = useState<any[]>([]);
+  const [searchingRecipients, setSearchingRecipients] = useState(false);
+  const [selectedRecipients, setSelectedRecipients] = useState<any[]>([]);
+
+  // Reuses the exact same /admin/users search endpoint UsersSection
+  // already uses, rather than a separate, duplicate lookup — this is
+  // just picking a few specific recipients, not browsing the full user
+  // list, so no pagination needed here.
+  useEffect(() => {
+    if (targetType !== "specific" || !recipientSearch.trim()) {
+      setRecipientResults([]);
+      return;
+    }
+    setSearchingRecipients(true);
+    const t = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ page: "1", search: recipientSearch.trim() });
+        const res = await fetch(`/api/admin/users?${params}`, { headers: { Authorization: `Bearer ${token}` } });
+        const data = await res.json().catch(() => ({}));
+        setRecipientResults(res.ok ? (data.users ?? []) : []);
+      } catch {
+        setRecipientResults([]);
+      } finally {
+        setSearchingRecipients(false);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [targetType, recipientSearch, token]);
+
+  const addRecipient = (u: any) => {
+    if (!selectedRecipients.some((r) => r.id === u.id)) {
+      setSelectedRecipients((prev) => [...prev, u]);
+    }
+    setRecipientSearch("");
+    setRecipientResults([]);
+  };
+
+  const removeRecipient = (id: string) => {
+    setSelectedRecipients((prev) => prev.filter((r) => r.id !== id));
+  };
 
   const fetchAnnouncements = useCallback(async () => {
     setLoading(true);
@@ -2240,6 +2282,10 @@ function AnnouncementsSection({ token, toast }: { token: string | null; toast: a
       toast({ title: "Title and message are both required", variant: "destructive" });
       return;
     }
+    if (targetType === "specific" && selectedRecipients.length === 0) {
+      toast({ title: "Pick at least one recipient, or switch to All Users", variant: "destructive" });
+      return;
+    }
     setCreating(true);
     try {
       const res = await fetch("/api/admin/announcements", {
@@ -2248,13 +2294,21 @@ function AnnouncementsSection({ token, toast }: { token: string | null; toast: a
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ title: title.trim(), body: body.trim(), severity, targetType: "all" }),
+        body: JSON.stringify({
+          title: title.trim(),
+          body: body.trim(),
+          severity,
+          targetType,
+          recipientIds: targetType === "specific" ? selectedRecipients.map((r) => r.id) : undefined,
+        }),
       });
       if (!res.ok) throw new Error("Failed");
       toast({ title: "Announcement posted" });
       setTitle("");
       setBody("");
       setSeverity("info");
+      setTargetType("all");
+      setSelectedRecipients([]);
       fetchAnnouncements();
     } catch {
       toast({ title: "Error", description: "Failed to create announcement.", variant: "destructive" });
@@ -2319,13 +2373,76 @@ function AnnouncementsSection({ token, toast }: { token: string | null; toast: a
           <option value="warning">Warning</option>
           <option value="success">Success</option>
         </select>
+
+        <div className="flex gap-2">
+          {(["all", "specific"] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTargetType(t)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium ${
+                targetType === t ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
+              }`}
+            >
+              {t === "all" ? "All Users" : "Specific Users"}
+            </button>
+          ))}
+        </div>
+
+        {targetType === "specific" && (
+          <div className="space-y-2">
+            {selectedRecipients.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {selectedRecipients.map((r) => (
+                  <span
+                    key={r.id}
+                    className="flex items-center gap-1 pl-2.5 pr-1.5 py-1 rounded-full bg-secondary text-xs font-medium"
+                  >
+                    {r.name}
+                    <button onClick={() => removeRecipient(r.id)} className="text-muted-foreground hover:text-foreground">
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <input
+                value={recipientSearch}
+                onChange={(e) => setRecipientSearch(e.target.value)}
+                placeholder="Search by name to add a recipient..."
+                className="w-full h-9 pl-8 pr-3 rounded-xl bg-background border border-card-border text-sm outline-none"
+              />
+              {searchingRecipients && (
+                <Loader2 size={14} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-muted-foreground" />
+              )}
+            </div>
+            {recipientResults.length > 0 && (
+              <div className="border border-card-border rounded-xl overflow-hidden bg-background max-h-40 overflow-y-auto">
+                {recipientResults.map((u) => (
+                  <button
+                    key={u.id}
+                    onClick={() => addRecipient(u)}
+                    className="w-full flex items-center gap-2 p-2 text-left text-sm hover:bg-secondary/60"
+                  >
+                    <div className="w-6 h-6 rounded-full bg-muted overflow-hidden shrink-0">
+                      {u.photo_url ? <img src={u.photo_url} alt="" className="w-full h-full object-cover" /> : null}
+                    </div>
+                    {u.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <button
           onClick={create}
           disabled={creating}
           className="flex items-center gap-1.5 h-10 px-4 rounded-xl text-sm font-semibold bg-gradient-accent text-white disabled:opacity-50"
         >
           {creating ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-          Post to All Users
+          {targetType === "specific" ? `Post to ${selectedRecipients.length} User${selectedRecipients.length === 1 ? "" : "s"}` : "Post to All Users"}
         </button>
       </div>
 

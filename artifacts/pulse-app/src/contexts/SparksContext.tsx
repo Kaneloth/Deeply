@@ -50,7 +50,7 @@ interface SparksContextType {
 const SparksContext = createContext<SparksContextType | undefined>(undefined);
 
 export function SparksProvider({ children }: { children: ReactNode }) {
-  const { token, isAuthenticated } = useAuth();
+  const { token, isAuthenticated, onboardingCompleted } = useAuth();
   const { toast } = useToast();
   const [balance, setBalance] = useState<number | null>(null);
   const [nextGrantAt, setNextGrantAt] = useState<string | null>(null);
@@ -61,6 +61,21 @@ export function SparksProvider({ children }: { children: ReactNode }) {
 
   const checkThresholds = useCallback(
     (newBalance: number, monthlyGrant: number) => {
+      // Skips the warning logic entirely for an account still mid-
+      // onboarding — confirmed real bug otherwise: a brand-new signup
+      // now correctly starts at a genuine 0 balance (Sparks are only
+      // ever granted once onboarding actually completes — see the
+      // handle_new_user trigger and checkAndApplyMonthlyGrant), but
+      // this logic was never designed with that scenario in mind,
+      // since it never existed before. On the very first app load,
+      // prevBalance.current is null and newBalance is 0, which the "0"
+      // threshold below reads as "already low on first load" — firing
+      // the most severe, destructive-styled "Out of Sparks" warning on
+      // someone who hasn't even finished setting up their account yet.
+      // Once onboarding_completed is true, this runs exactly as before
+      // — Sparks genuinely exist to warn about by then.
+      if (!onboardingCompleted) return;
+
       const prev = prevBalance.current;
 
       for (const t of THRESHOLDS) {
@@ -99,7 +114,7 @@ export function SparksProvider({ children }: { children: ReactNode }) {
 
       prevBalance.current = newBalance;
     },
-    [toast],
+    [toast, onboardingCompleted],
   );
 
   // Deliberately a fixed window rather than tied to any specific
