@@ -53,6 +53,7 @@ router.post("/phone/send-otp", requireAuth, async (req, res): Promise<void> => {
   const smsResult = await sendSms(phoneNumber, `Your Deeply verification code is ${code}. It expires in 10 minutes.`);
 
   if (!smsResult.success) {
+    console.error(`POST /phone/send-otp — SMS send failed for userId=${userId}, phone=${phoneNumber}: ${smsResult.errorMessage}`);
     res.status(502).json({ error: smsResult.errorMessage ?? "We couldn't send the code. Please check your number and try again." });
     return;
   }
@@ -72,6 +73,10 @@ router.post("/phone/send-otp", requireAuth, async (req, res): Promise<void> => {
   );
 
   if (upsertError) {
+    console.error(
+      `POST /phone/send-otp — upsert into phone_otp_verifications failed for userId=${userId}:`,
+      JSON.stringify(upsertError, null, 2),
+    );
     res.status(500).json({ error: `Failed to record verification attempt: ${upsertError.message}` });
     return;
   }
@@ -136,11 +141,16 @@ router.post("/phone/verify-otp", requireAuth, async (req, res): Promise<void> =>
 
   if (profileUpdateError) {
     // 23505 = unique violation on profiles_phone_number_verified_unique
-    // — someone else already has this exact number verified.
+    // — someone else already has this exact number verified. Expected,
+    // routine business logic — not logged as a server error.
     if (profileUpdateError.code === "23505") {
       res.status(409).json({ error: "This phone number is already linked to another account." });
       return;
     }
+    console.error(
+      `POST /phone/verify-otp — profile update failed for userId=${userId}:`,
+      JSON.stringify(profileUpdateError, null, 2),
+    );
     res.status(500).json({ error: `Failed to save phone number: ${profileUpdateError.message}` });
     return;
   }
@@ -162,6 +172,7 @@ router.get("/phone/status", requireAuth, async (req, res): Promise<void> => {
     .single();
 
   if (error || !profile) {
+    console.error(`GET /phone/status — failed to load profile for userId=${userId}:`, JSON.stringify(error, null, 2));
     res.status(500).json({ error: "Failed to load phone status" });
     return;
   }
