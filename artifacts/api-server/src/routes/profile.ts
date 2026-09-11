@@ -176,6 +176,35 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     }
   }
 
+  // Blocks email addresses in bio/city — confirmed real-world need: the
+  // app's own support email is publicly visible in the Play Store
+  // listing, and at least one person has already pasted it directly
+  // into their bio/city fields (twice, across two separate accounts),
+  // apparently mistaking these public-facing profile fields for a way
+  // to reach support — a genuine, existing "Contact Support" form
+  // already exists in Settings for exactly this. Beyond fixing that
+  // specific confusion, blocking contact info in profile fields is also
+  // a standard anti-scam practice on dating platforms generally, since
+  // it prevents moving a conversation off-platform before a match even
+  // happens.
+  //
+  // A simple substring pattern rather than a strict, RFC-5322-precise
+  // email validator — this only needs to catch an email-shaped string
+  // embedded anywhere within a longer bio, not validate that an entire
+  // field IS an email address.
+  //
+  // Deliberately only enforced here, on the user-facing route — not on
+  // /admin/users/:userId/profile below, where admin needs to freely
+  // edit any field for moderation purposes, including this exact
+  // scenario.
+  const EMAIL_PATTERN = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
+  if ((bio && EMAIL_PATTERN.test(bio)) || (city && EMAIL_PATTERN.test(city))) {
+    res.status(400).json({
+      error: "Email addresses aren't allowed in your bio or city. Need to reach us? Use Contact Support in Settings instead.",
+    });
+    return;
+  }
+
   const updates: Record<string, unknown> = {};
   if (name !== undefined) updates.name = name;
   if (age !== undefined) updates.age = age;
