@@ -215,7 +215,9 @@ export async function recordGrantForAbuseCheck(
 export async function checkAndApplyMonthlyGrant(userId: string): Promise<SparksProfile> {
   const { data: profile, error } = await supabase
     .from("profiles")
-    .select("free_sparks_balance, paid_sparks_balance, next_spark_grant_at, is_founder, signup_device_id, normalized_email")
+    .select(
+      "free_sparks_balance, paid_sparks_balance, next_spark_grant_at, is_founder, signup_device_id, normalized_email, onboarding_completed",
+    )
     .eq("id", userId)
     .single();
 
@@ -227,6 +229,29 @@ export async function checkAndApplyMonthlyGrant(userId: string): Promise<SparksP
   const grantDue = new Date(profile.next_spark_grant_at).getTime() <= Date.now();
 
   if (!grantDue) {
+    return profile as SparksProfile;
+  }
+
+  // Confirmed real motive for a mass-signup pattern noticed in
+  // production (many accounts with disposable-looking, bot-generated
+  // email addresses — "name.randomdigits@gmail.com" — that never
+  // complete onboarding): this grant previously fired on ANY Sparks-
+  // related endpoint call, completely independent of onboarding status,
+  // meaning a brand-new, never-onboarded account could collect free
+  // Sparks instantly with zero friction. Gating specifically on
+  // onboarding_completed removes that motive without needing a bigger
+  // system like a signup CAPTCHA.
+  //
+  // Deliberately does NOT advance next_spark_grant_at here — this is
+  // what makes this ONLY ever affect the very first grant, never a
+  // later recurring one. Leaving it untouched means it simply stays
+  // "due"; the moment this same account later completes onboarding and
+  // makes any Sparks-related call, this same check runs again, finds
+  // onboarding_completed now true, and the grant proceeds exactly as it
+  // always did. Once onboarding_completed is true (a permanent, one-way
+  // transition — see AuthContext.tsx), this check can never block
+  // anything again for this account.
+  if (!profile.onboarding_completed) {
     return profile as SparksProfile;
   }
 
