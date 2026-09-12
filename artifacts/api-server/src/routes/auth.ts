@@ -124,6 +124,22 @@ router.post("/auth/signup", async (req, res): Promise<void> => {
     return;
   }
 
+  // Same blocklist checked in /auth/record-google-signup below, for the
+  // same confirmed spam-signup pattern — but genuinely more effective
+  // here specifically: this route runs before supabase.auth.signUp() is
+  // ever called, so a blocked device is prevented from creating an
+  // account at all, rather than needing to be deleted after the fact
+  // (which is all the Google sign-in path can do, since Supabase
+  // creates that account directly, client-side, before this backend
+  // ever sees the request).
+  if (device_id) {
+    const { data: blocked } = await supabase.from("blocked_device_ids").select("device_id").eq("device_id", device_id).maybeSingle();
+    if (blocked) {
+      res.status(403).json({ error: "This device is not permitted to create an account." });
+      return;
+    }
+  }
+
   // Name is no longer collected here — the signup screen asking for it
   // duplicated the Name field onboarding already asks for right after
   // (and for Google sign-in, that name gets auto-populated from Google's
@@ -538,7 +554,7 @@ router.put("/auth/change-password", requireAuth, async (req, res): Promise<void>
  *  Returns an error message on failure, or null on success — callers
  *  decide what to do with that (respond to a request vs. just log and
  *  continue to the next account in a batch). */
-async function deleteAccountCompletely(userId: string): Promise<string | null> {
+export async function deleteAccountCompletely(userId: string): Promise<string | null> {
   for (const bucket of ["profile-photos", "audio-prompts"]) {
     try {
       const { data: files } = await supabase.storage.from(bucket).list(userId);
@@ -727,6 +743,25 @@ router.post("/auth/_internal/backfill-referral-codes", async (req, res): Promise
 router.post("/auth/record-google-signup", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.id;
   const { device_id: deviceId } = req.body as { device_id?: string };
+
+  // Checked first, before anything else — if this device is blocked,
+  // the account this Google sign-in just created (via Supabase's own
+  // OAuth exchange, which already happened client-side before this
+  // endpoint was ever called) is deleted immediately, within this same
+  // request, rather than waiting for the 24-hour scheduled cleanup.
+  // This can't prevent the Google sign-in itself from succeeding —
+  // Supabase creates the account directly, before our backend ever
+  // sees the request — but it does mean every future attempt from this
+  // exact device becomes pointless in real time rather than eventually.
+  if (deviceId) {
+    const { data: blocked } = await supabase.from("blocked_device_ids").select("device_id").eq("device_id", deviceId).maybeSingle();
+    if (blocked) {
+      console.log(`Blocked device_id=${deviceId} attempted signup — deleting userId=${userId} immediately`);
+      await deleteAccountCompletely(userId);
+      res.status(403).json({ error: "This device is not permitted to create an account." });
+      return;
+    }
+  }
 
   const { data: existing } = await supabase
     .from("profiles")

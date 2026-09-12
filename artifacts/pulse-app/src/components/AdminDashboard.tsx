@@ -9,7 +9,7 @@ import {
   ChevronRight, ShieldCheck, AlertTriangle, RefreshCw, Sliders, Receipt, Gift,
 } from "lucide-react";
 
-type Section = "overview" | "reports" | "referral-flags" | "users" | "sparks" | "transactions" | "economy" | "announcements" | "verification";
+type Section = "overview" | "reports" | "referral-flags" | "users" | "sparks" | "transactions" | "economy" | "announcements" | "verification" | "blocked-devices";
 type AdminScope = "manage_reports" | "manage_users" | "manage_sparks" | "view_analytics";
 
 const SECTIONS: { key: Section; label: string; icon: any; scope: AdminScope }[] = [
@@ -18,6 +18,7 @@ const SECTIONS: { key: Section; label: string; icon: any; scope: AdminScope }[] 
   { key: "referral-flags", label: "Referral Review", icon: Gift, scope: "manage_sparks" },
   { key: "users", label: "Users", icon: Users, scope: "manage_users" },
   { key: "verification", label: "Verification", icon: ShieldCheck, scope: "manage_users" },
+  { key: "blocked-devices", label: "Blocked Devices", icon: Ban, scope: "manage_users" },
   { key: "sparks", label: "Sparks", icon: Coins, scope: "manage_sparks" },
   { key: "transactions", label: "Transactions", icon: Receipt, scope: "manage_sparks" },
   { key: "economy", label: "Pricing", icon: Sliders, scope: "manage_sparks" },
@@ -26,7 +27,7 @@ const SECTIONS: { key: Section; label: string; icon: any; scope: AdminScope }[] 
 
 const NAV_GROUPS: { label: string; keys: Section[] }[] = [
   { label: "Overview", keys: ["overview"] },
-  { label: "People & Safety", keys: ["reports", "referral-flags", "users", "verification"] },
+  { label: "People & Safety", keys: ["reports", "referral-flags", "users", "verification", "blocked-devices"] },
   { label: "Money", keys: ["sparks", "transactions", "economy"] },
   { label: "Communication", keys: ["announcements"] },
 ];
@@ -72,6 +73,7 @@ export function AdminDashboard({ access, onClose }: { access: AdminAccess; onClo
       {section === "economy" && <EconomySection token={token} toast={toast} />}
       {section === "verification" && <AdminVerificationSection token={token} toast={toast} />}
       {section === "announcements" && <AnnouncementsSection token={token} toast={toast} />}
+      {section === "blocked-devices" && <BlockedDevicesSection token={token} toast={toast} />}
     </>
   );
 
@@ -2208,6 +2210,135 @@ function EconomySection({ token, toast }: { token: string | null; toast: any }) 
     </div>
   );
 }
+function BlockedDevicesSection({ token, toast }: { token: string | null; toast: any }) {
+  const [blocked, setBlocked] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [deviceId, setDeviceId] = useState("");
+  const [reason, setReason] = useState("");
+
+  const fetchBlocked = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/blocked-device-ids", { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json().catch(() => []);
+      setBlocked(res.ok ? data : []);
+    } catch {
+      setBlocked([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchBlocked();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const addBlock = async () => {
+    if (!deviceId.trim()) {
+      toast({ title: "Device ID is required", variant: "destructive" });
+      return;
+    }
+    setAdding(true);
+    try {
+      const res = await fetch("/api/admin/blocked-device-ids", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ deviceId: deviceId.trim(), reason: reason.trim() || undefined }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({ title: "Error", description: data.error ?? "Failed to block this device.", variant: "destructive" });
+        return;
+      }
+      const deletedCount = data.existingAccountsDeleted ?? 0;
+      toast({
+        title: "Device blocked",
+        description: deletedCount > 0 ? `Also deleted ${deletedCount} existing account${deletedCount === 1 ? "" : "s"} using this device.` : undefined,
+      });
+      setDeviceId("");
+      setReason("");
+      fetchBlocked();
+    } catch {
+      toast({ title: "Error", description: "Failed to block this device.", variant: "destructive" });
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const removeBlock = async (id: string) => {
+    setRemovingId(id);
+    try {
+      await fetch(`/api/admin/blocked-device-ids/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+      setBlocked((prev) => prev.filter((b) => b.device_id !== id));
+    } catch {
+      toast({ title: "Error", description: "Failed to unblock this device.", variant: "destructive" });
+    } finally {
+      setRemovingId(null);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-card border border-card-border rounded-2xl p-4 space-y-3">
+        <h3 className="text-sm font-semibold">Block a device</h3>
+        <p className="text-xs text-muted-foreground">
+          Prevents this device from creating any new account, and immediately deletes any existing account already using it.
+        </p>
+        <input
+          value={deviceId}
+          onChange={(e) => setDeviceId(e.target.value)}
+          placeholder="Device ID (from a profile's signup_device_id)"
+          className="w-full h-10 px-3 rounded-xl bg-background border border-card-border text-sm outline-none"
+        />
+        <input
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="Optional reason (e.g. 'spam signup pattern')"
+          className="w-full h-10 px-3 rounded-xl bg-background border border-card-border text-sm outline-none"
+        />
+        <button
+          onClick={addBlock}
+          disabled={adding}
+          className="flex items-center gap-1.5 h-10 px-4 rounded-xl text-sm font-semibold bg-gradient-accent text-white disabled:opacity-50"
+        >
+          {adding ? <Loader2 size={14} className="animate-spin" /> : <Ban size={14} />}
+          Block Device
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-8">
+          <Loader2 size={20} className="animate-spin text-muted-foreground" />
+        </div>
+      ) : blocked.length === 0 ? (
+        <p className="text-sm text-muted-foreground text-center py-8">No devices currently blocked.</p>
+      ) : (
+        <div className="space-y-2">
+          {blocked.map((b) => (
+            <div key={b.device_id} className="bg-card border border-card-border rounded-2xl p-3 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-mono truncate">{b.device_id}</p>
+                {b.reason && <p className="text-xs text-muted-foreground mt-0.5">{b.reason}</p>}
+                <p className="text-xs text-muted-foreground mt-0.5">Blocked {new Date(b.created_at).toLocaleDateString()}</p>
+              </div>
+              <button
+                onClick={() => removeBlock(b.device_id)}
+                disabled={removingId === b.device_id}
+                className="shrink-0 text-xs font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                {removingId === b.device_id ? <Loader2 size={14} className="animate-spin" /> : "Unblock"}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AnnouncementsSection({ token, toast }: { token: string | null; toast: any }) {
   const [announcements, setAnnouncements] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);

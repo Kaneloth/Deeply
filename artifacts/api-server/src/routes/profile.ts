@@ -4,6 +4,7 @@ import { randomUUID } from "crypto";
 import { requireAuth } from "../middlewares/auth";
 import { supabase } from "../lib/supabase";
 import { spendSparks, addPaidSparks, checkReferralFraudSignals } from "../lib/sparks-helper";
+import { deleteAccountCompletely } from "./auth";
 import { withComputedAge, withComputedAges } from "../lib/age";
 import { isSuperAdmin, requireSuperAdmin, requireAdminScope, type AdminScope } from "../lib/admin-auth";
 import { createNotification, createNotificationForUsers, recordProfileView, scheduleProfileViewNotificationClear } from "../lib/notifications-helper";
@@ -1644,6 +1645,61 @@ router.post("/admin/reports/:reportId/dismiss", requireAuth, requireAdminScope("
     return;
   }
   await cleanupReportScreenshots(updated?.screenshot_urls);
+  res.sendStatus(204);
+});
+
+/** GET /api/admin/blocked-device-ids */
+router.get("/admin/blocked-device-ids", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const { data } = await supabase.from("blocked_device_ids").select("*").order("created_at", { ascending: false });
+  res.json(data ?? []);
+});
+
+/** POST /api/admin/blocked-device-ids — blocks a device_id from ever
+ *  creating an account (checked in both /auth/signup and
+ *  /auth/record-google-signup), and immediately deletes any account(s)
+ *  already using this exact device right now, rather than only taking
+ *  effect for future signups. Confirmed real need: the same device_id
+ *  appearing across multiple spam accounts with different IPs each
+ *  time was the actual reliable signal, not IP — which was already
+ *  confirmed trivially varied between attempts. */
+router.post("/admin/blocked-device-ids", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const adminId = req.user!.id;
+  const { deviceId, reason } = req.body as { deviceId?: string; reason?: string };
+
+  if (!deviceId?.trim()) {
+    res.status(400).json({ error: "deviceId is required" });
+    return;
+  }
+
+  const { error } = await supabase
+    .from("blocked_device_ids")
+    .insert({ device_id: deviceId.trim(), reason: reason?.trim() || null, blocked_by: adminId });
+
+  if (error) {
+    if (error.code === "23505") {
+      res.status(409).json({ error: "This device is already blocked." });
+      return;
+    }
+    res.status(500).json({ error: "Failed to block this device." });
+    return;
+  }
+
+  const { data: existingAccounts } = await supabase.from("profiles").select("id").eq("signup_device_id", deviceId.trim());
+  let deletedCount = 0;
+  for (const account of existingAccounts ?? []) {
+    const deleteError = await deleteAccountCompletely(account.id);
+    if (!deleteError) deletedCount += 1;
+  }
+
+  res.status(201).json({ blocked: true, existingAccountsDeleted: deletedCount });
+});
+
+/** DELETE /api/admin/blocked-device-ids/:deviceId — unblocks a device.
+ *  Does not restore any previously-deleted accounts; those are gone
+ *  permanently, same as any other account deletion in this app. */
+router.delete("/admin/blocked-device-ids/:deviceId", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const deviceId = Array.isArray(req.params.deviceId) ? req.params.deviceId[0] : req.params.deviceId;
+  await supabase.from("blocked_device_ids").delete().eq("device_id", deviceId);
   res.sendStatus(204);
 });
 
