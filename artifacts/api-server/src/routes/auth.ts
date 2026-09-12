@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { supabase } from "../lib/supabase";
 import { requireAuth } from "../middlewares/auth";
+import { requireAdminScope } from "../lib/admin-auth";
 import { recordGrantForAbuseCheck } from "../lib/sparks-helper";
 
 const router: IRouter = Router();
@@ -690,6 +691,17 @@ router.post("/auth/reset-password", async (req, res): Promise<void> => {
   res.sendStatus(204);
 });
 
+/** Shared backfill logic — reused by both the scheduled/internal route
+ *  below and the new admin-triggered one, so there's exactly one place
+ *  this actually runs rather than two copies that could drift apart. */
+async function runReferralCodeBackfill(): Promise<number> {
+  const { data: missing } = await supabase.from("profiles").select("id").is("referral_code", null);
+  for (const profile of missing ?? []) {
+    await assignReferralCode(profile.id);
+  }
+  return missing?.length ?? 0;
+}
+
 /** POST /api/auth/_internal/backfill-referral-codes — safety net, not a
  *  root-cause fix. Called daily by the
  *  netlify/functions/backfill-referral-codes.mts scheduled function.
@@ -707,14 +719,25 @@ router.post("/auth/_internal/backfill-referral-codes", async (req, res): Promise
     return;
   }
 
-  const { data: missing } = await supabase.from("profiles").select("id").is("referral_code", null);
+  const processed = await runReferralCodeBackfill();
+  console.log(`backfill-referral-codes: processed ${processed} profile(s) missing a referral code`);
+  res.status(200).json({ processed });
+});
 
-  for (const profile of missing ?? []) {
-    await assignReferralCode(profile.id);
-  }
-
-  console.log(`backfill-referral-codes: processed ${missing?.length ?? 0} profile(s) missing a referral code`);
-  res.status(200).json({ processed: missing?.length ?? 0 });
+/** POST /api/admin/backfill-referral-codes — same underlying logic as
+ *  the scheduled version above, triggered on-demand by admin instead of
+ *  waiting for the next daily run. Confirmed real need: right before
+ *  sending a "Refer a Friend" announcement, admin needs every profile
+ *  to already have a code THAT MOMENT — a new user checking their
+ *  Profile page in response to the announcement and finding no code at
+ *  all, possibly for up to 24 hours, would undermine the entire point
+ *  of that announcement. Admin-scoped rather than the shared-secret
+ *  protection the internal route uses, since this is a logged-in admin
+ *  action, not a scheduled function. */
+router.post("/admin/backfill-referral-codes", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const processed = await runReferralCodeBackfill();
+  console.log(`admin-triggered backfill-referral-codes: processed ${processed} profile(s) missing a referral code`);
+  res.status(200).json({ processed });
 });
 
 /** POST /api/auth/record-google-signup — closes a confirmed real gap:

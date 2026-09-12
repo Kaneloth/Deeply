@@ -2378,6 +2378,29 @@ function AnnouncementsSection({ token, toast }: { token: string | null; toast: a
   const [recipientResults, setRecipientResults] = useState<any[]>([]);
   const [searchingRecipients, setSearchingRecipients] = useState(false);
   const [selectedRecipients, setSelectedRecipients] = useState<any[]>([]);
+  const [backfilling, setBackfilling] = useState(false);
+
+  const runBackfill = async () => {
+    setBackfilling(true);
+    try {
+      const res = await fetch("/api/admin/backfill-referral-codes", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({ title: "Error", description: "Failed to backfill referral codes.", variant: "destructive" });
+        return;
+      }
+      toast({
+        title: data.processed > 0 ? `Assigned codes to ${data.processed} profile${data.processed === 1 ? "" : "s"}` : "Every profile already has a code",
+      });
+    } catch {
+      toast({ title: "Error", description: "Failed to backfill referral codes.", variant: "destructive" });
+    } finally {
+      setBackfilling(false);
+    }
+  };
 
   // Reuses the exact same /admin/users search endpoint UsersSection
   // already uses, rather than a separate, duplicate lookup — this is
@@ -2508,6 +2531,23 @@ function AnnouncementsSection({ token, toast }: { token: string | null; toast: a
 
   return (
     <div className="space-y-4">
+      <div className="bg-card border border-card-border rounded-2xl p-4 space-y-2">
+        <p className="text-sm font-semibold">Backfill referral codes</p>
+        <p className="text-xs text-muted-foreground">
+          Assigns a code to any profile that doesn't have one yet. Runs automatically once a day, but if you're about to
+          announce the referral feature, run it now first — otherwise a user could check their Profile page and find no
+          code for up to 24 hours.
+        </p>
+        <button
+          onClick={runBackfill}
+          disabled={backfilling}
+          className="flex items-center gap-1.5 h-10 px-4 rounded-xl text-sm font-semibold bg-secondary text-foreground disabled:opacity-50"
+        >
+          {backfilling ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+          Backfill Now
+        </button>
+      </div>
+
       <div className="bg-card border border-card-border rounded-2xl p-4 space-y-3">
         <p className="text-sm font-semibold">New Announcement</p>
         <Input
