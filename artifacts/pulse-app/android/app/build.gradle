@@ -13,7 +13,7 @@ android {
         applicationId "za.co.deeplydating.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 35
+        versionCode 36
         versionName "1.0.4"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
@@ -40,34 +40,23 @@ android {
     }
     buildTypes {
         release {
-            // Was false — confirmed direct cause of Play Console's
-            // "App optimization is below our threshold (Obfuscation 1%)"
-            // warning. This is the actual setting controlling R8
-            // minification/obfuscation for release builds; a
-            // proguard-rules.pro file already exists and is already
-            // wired in below, but with minification off it was never
-            // actually being applied. IMPORTANT: enabling this needs a
-            // full, thorough test of a release build before shipping —
-            // R8 can strip or rename classes that reflection-based
-            // native code (Capacitor plugins, WebView bridge classes)
-            // depends on existing under their original names, if the
-            // existing proguard-rules.pro doesn't already have complete
-            // keep rules for all of them. Test assembleRelease/
-            // bundleRelease thoroughly (all native plugin functionality
-            // — camera, video calls, permissions, etc.) before treating
-            // this as safe to publish.
-            minifyEnabled true
-            // Separate setting from minifyEnabled — that one shrinks/
-            // obfuscates CODE; this one removes unused RESOURCES
-            // (images, layouts, strings) that minifyEnabled alone
-            // doesn't touch. Requires minifyEnabled true to already be
-            // set, which it now is. Addresses the "Resource shrinking
-            // isn't enabled" part of Play Console's R8 optimization
-            // recommendation. Same testing caveat as minifyEnabled
-            // above applies — verify a release build still has every
-            // resource it actually needs (icons, drawables referenced
-            // only from native code or WebView assets) before shipping.
-            shrinkResources true
+            // Reverted — confirmed the local build environment genuinely
+            // cannot support R8's memory requirements. The Gradle daemon
+            // was OOM-killed mid-build even with org.gradle.jvmargs
+            // already carefully tuned to this container's actual
+            // observed available memory (~2.2GB free) — there's no
+            // headroom left to give R8 within that hard ceiling, no
+            // matter how the JVM args are adjusted. This isn't a code
+            // problem; it's an environment constraint. Reverting to
+            // unblock building at all (needed right now specifically to
+            // test the market:// intent-launching fix in
+            // MainActivity.java) rather than continuing to chase a
+            // memory-tuning fix that doesn't exist within this
+            // container's limits. Revisit minification separately,
+            // later, either in an environment with more available
+            // memory or via Play Console's own remote build/App Bundle
+            // processing, which may not share this same constraint.
+            minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
             if (keystorePropertiesFile.exists()) {
                 signingConfig signingConfigs.release
