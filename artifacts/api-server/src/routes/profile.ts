@@ -2425,7 +2425,11 @@ router.get("/announcements", requireAuth, async (req, res): Promise<void> => {
     .eq("user_id", userId);
   const targetedIds = new Set((targeted ?? []).map((t) => t.announcement_id));
 
-  const { data: active } = await supabase.from("announcements").select("*").eq("is_active", true);
+  // Ordered oldest-first — this is what actually makes the "one at a
+  // time, in sequence" queue behavior below predictable. Without an
+  // explicit order, which announcement a user sees first after being
+  // away for a while wouldn't be guaranteed at all.
+  const { data: active } = await supabase.from("announcements").select("*").eq("is_active", true).order("created_at", { ascending: true });
 
   const visible = (active ?? []).filter((a) => {
     if (dismissedIds.has(a.id)) return false;
