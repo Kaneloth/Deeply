@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
+import { Capacitor } from "@capacitor/core";
 import { useAuth } from "@/contexts/AuthContext";
 import { X, Info, AlertTriangle, CheckCircle2, ChevronRight } from "lucide-react";
 
@@ -65,15 +66,32 @@ export function AnnouncementBanner() {
             // now-redundant announcement there too.
             dismiss(current.id);
 
-            // External links (e.g. the Play Store listing, for
-            // encouraging existing web users to get the native app)
-            // need a real browser, not wouter's own internal router —
-            // setLocation would just try (and fail) to interpret a full
-            // URL as an in-app route. Capacitor's Browser plugin has a
-            // web-compatible implementation too (opens a new tab under
-            // the hood there), unlike some native-only plugins used
-            // elsewhere in this app, so no platform check is needed
-            // here — this works correctly either way.
+            // Play Store links specifically need the market:// URI
+            // scheme on native, not a regular https:// URL opened via a
+            // browser — confirmed real bug otherwise: Google's own Play
+            // Store web page detects when it's loaded inside an
+            // embedded WebView (rather than a genuine standalone
+            // browser or the actual Play Store app) and bounces back to
+            // whatever app opened it. market:// bypasses the web/
+            // browser layer entirely, directly triggering Android's own
+            // "open in Play Store app" intent instead of trying to load
+            // a web page at all. Only valid on native Android with the
+            // Play Store app installed — falls back to the regular
+            // https:// handling below on web, where market:// wouldn't
+            // be understood at all.
+            const playStoreMatch = current.action_link!.match(/play\.google\.com\/store\/apps\/details\?id=([\w.]+)/);
+            if (playStoreMatch && Capacitor.getPlatform() === "android") {
+              window.location.href = `market://details?id=${playStoreMatch[1]}`;
+              return;
+            }
+
+            // Any other external link — needs a real browser, not
+            // wouter's own internal router (setLocation would just try,
+            // and fail, to interpret a full URL as an in-app route).
+            // Capacitor's Browser plugin has a web-compatible
+            // implementation too (opens a new tab under the hood
+            // there), unlike some native-only plugins used elsewhere in
+            // this app, so no platform check is needed here.
             if (current.action_link!.startsWith("https://")) {
               try {
                 const { Browser } = await import("@capacitor/browser");
