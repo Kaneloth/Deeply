@@ -1798,7 +1798,7 @@ router.get("/admin/users", requireAuth, requireAdminScope("manage_users"), async
   let query = supabase
     .from("profiles")
     .select(
-      "id, name, age, birthday, city, photo_url, is_admin, admin_scopes, banned, ban_reason, suspended_until, suspension_reason, is_verified, free_sparks_balance, paid_sparks_balance, created_at",
+      "id, name, age, birthday, city, photo_url, is_admin, admin_scopes, banned, ban_reason, suspended_until, suspension_reason, is_verified, free_sparks_balance, paid_sparks_balance, created_at, last_active_at",
       { count: "exact" },
     )
     // Never show the requesting admin their own account here — avoids
@@ -1815,6 +1815,12 @@ router.get("/admin/users", requireAuth, requireAdminScope("manage_users"), async
   else if (filter === "suspended") query = query.gt("suspended_until", new Date().toISOString());
   else if (filter === "verified") query = query.eq("is_verified", true);
   else if (filter === "admins") query = query.eq("is_admin", true);
+  else if (filter === "stale") {
+    // Directly serves the stated purpose of this column — accounts
+    // either never active at all (null) or inactive for 30+ days.
+    const staleCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    query = query.or(`last_active_at.is.null,last_active_at.lt.${staleCutoff}`);
+  }
 
   const from = (pageNum - 1) * PAGE_SIZE;
   const { data, count, error } = await query.range(from, from + PAGE_SIZE - 1);

@@ -1123,7 +1123,7 @@ function UsersSection({ token, toast, isSuperAdmin }: { token: string | null; to
         />
       </div>
       <div className="flex gap-2 overflow-x-auto no-scrollbar">
-        {["all", "banned", "suspended", "verified", "admins"].map((f) => (
+        {["all", "banned", "suspended", "verified", "admins", "stale"].map((f) => (
           <button
             key={f}
             onClick={() => {
@@ -1164,6 +1164,9 @@ function UsersSection({ token, toast, isSuperAdmin }: { token: string | null; to
                     {u.suspended_until && new Date(u.suspended_until) > new Date() && <Tag color="amber">Suspended</Tag>}
                     {u.is_admin && <Tag color="primary">Admin</Tag>}
                   </div>
+                  <p className={`text-xs mt-0.5 ${formatLastActive(u.last_active_at).color}`}>
+                    Active {formatLastActive(u.last_active_at).text}
+                  </p>
                 </div>
               </button>
             ))}
@@ -1178,6 +1181,7 @@ function UsersSection({ token, toast, isSuperAdmin }: { token: string | null; to
                   <th className="p-3 text-left font-medium text-muted-foreground">City</th>
                   <th className="p-3 text-left font-medium text-muted-foreground">Sparks</th>
                   <th className="p-3 text-left font-medium text-muted-foreground">Status</th>
+                  <th className="p-3 text-left font-medium text-muted-foreground">Last Active</th>
                   <th className="p-3 text-right font-medium text-muted-foreground">Joined</th>
                 </tr>
               </thead>
@@ -1209,6 +1213,7 @@ function UsersSection({ token, toast, isSuperAdmin }: { token: string | null; to
                         )}
                       </div>
                     </td>
+                    <td className={`p-3 text-xs ${formatLastActive(u.last_active_at).color}`}>{formatLastActive(u.last_active_at).text}</td>
                     <td className="p-3 text-right text-muted-foreground text-xs">
                       {u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}
                     </td>
@@ -1249,6 +1254,26 @@ function UsersSection({ token, toast, isSuperAdmin }: { token: string | null; to
       )}
     </div>
   );
+}
+
+// Used by the "Last Active" column on the admin Users page. Returns a
+// color cue alongside the text so a genuinely stale account (30+ days,
+// or never active at all) is visually distinguishable at a glance, not
+// just readable as text — directly serving the actual purpose of this
+// column (spotting stale accounts), not just displaying a raw date.
+function formatLastActive(lastActiveAt: string | null | undefined): { text: string; color: string } {
+  if (!lastActiveAt) return { text: "Never", color: "text-muted-foreground" };
+  const diffMs = Date.now() - new Date(lastActiveAt).getTime();
+  const diffMinutes = Math.floor(diffMs / 60_000);
+  const diffHours = Math.floor(diffMinutes / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffDays >= 30) return { text: `${diffDays}d ago`, color: "text-destructive" };
+  if (diffDays >= 7) return { text: `${diffDays}d ago`, color: "text-amber-500" };
+  if (diffDays >= 1) return { text: `${diffDays}d ago`, color: "text-muted-foreground" };
+  if (diffHours >= 1) return { text: `${diffHours}h ago`, color: "text-muted-foreground" };
+  if (diffMinutes >= 1) return { text: `${diffMinutes}m ago`, color: "text-primary" };
+  return { text: "Just now", color: "text-primary" };
 }
 
 function Tag({ children, color }: { children: React.ReactNode; color: "destructive" | "amber" | "primary" }) {

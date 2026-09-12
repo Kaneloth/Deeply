@@ -75,7 +75,7 @@ export async function requireAuth(
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("banned, ban_reason, suspended_until, suspension_reason, is_incognito, incognito_last_charged_at")
+    .select("banned, ban_reason, suspended_until, suspension_reason, is_incognito, incognito_last_charged_at, last_active_at")
     .eq("id", user.id)
     .single();
 
@@ -121,6 +121,31 @@ export async function requireAuth(
           .eq("id", user.id);
       }
     }
+  }
+
+  // Powers the "Last Active" column on the admin Users page — a
+  // genuine activity signal, not just login events, since this
+  // middleware runs on every authenticated request app-wide, not only
+  // at sign-in. Throttled to 30 minutes rather than updating on every
+  // single request: this app has several routine polling requests
+  // (SparksContext's periodic balance check, unread-count polling,
+  // etc.) that would otherwise turn this into a write on nearly every
+  // request across the entire app. Fire-and-forget (not awaited) — a
+  // background metric update should never add latency to the actual
+  // request being served, and a failure here is inconsequential enough
+  // not to affect the request at all.
+  const lastActive = profile?.last_active_at ? new Date(profile.last_active_at) : null;
+  const staleByMoreThan30Min = !lastActive || Date.now() - lastActive.getTime() >= 30 * 60 * 1000;
+  if (staleByMoreThan30Min) {
+    supabase
+      .from("profiles")
+      .update({ last_active_at: new Date().toISOString() })
+      .eq("id", user.id)
+      .then(() => {})
+      .catch(() => {
+        // Non-fatal — this is a background metric, not something that
+        // should ever surface as an error on the actual request.
+      });
   }
 
   req.user = { id: user.id, email: user.email };
