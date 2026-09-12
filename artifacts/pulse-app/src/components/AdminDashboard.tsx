@@ -2217,6 +2217,7 @@ function AnnouncementsSection({ token, toast }: { token: string | null; toast: a
   const [body, setBody] = useState("");
   const [severity, setSeverity] = useState("info");
   const [targetType, setTargetType] = useState<"all" | "specific">("all");
+  const [actionLink, setActionLink] = useState("");
   const [recipientSearch, setRecipientSearch] = useState("");
   const [recipientResults, setRecipientResults] = useState<any[]>([]);
   const [searchingRecipients, setSearchingRecipients] = useState(false);
@@ -2300,6 +2301,7 @@ function AnnouncementsSection({ token, toast }: { token: string | null; toast: a
           severity,
           targetType,
           recipientIds: targetType === "specific" ? selectedRecipients.map((r) => r.id) : undefined,
+          actionLink: actionLink.trim() || undefined,
         }),
       });
       if (!res.ok) throw new Error("Failed");
@@ -2309,6 +2311,7 @@ function AnnouncementsSection({ token, toast }: { token: string | null; toast: a
       setSeverity("info");
       setTargetType("all");
       setSelectedRecipients([]);
+      setActionLink("");
       fetchAnnouncements();
     } catch {
       toast({ title: "Error", description: "Failed to create announcement.", variant: "destructive" });
@@ -2435,6 +2438,18 @@ function AnnouncementsSection({ token, toast }: { token: string | null; toast: a
             )}
           </div>
         )}
+
+        <div className="space-y-1">
+          <input
+            value={actionLink}
+            onChange={(e) => setActionLink(e.target.value)}
+            placeholder="Optional link, e.g. /profile"
+            className="w-full h-10 px-3 rounded-xl bg-background border border-card-border text-sm outline-none"
+          />
+          <p className="text-xs text-muted-foreground">
+            When set, tapping the announcement takes users straight there. Must start with /, e.g. /profile, /discover.
+          </p>
+        </div>
 
         <button
           onClick={create}

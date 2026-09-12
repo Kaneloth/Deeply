@@ -2304,12 +2304,13 @@ router.get("/admin/announcements", requireAuth, requireAdminScope("manage_users"
 /** POST /api/admin/announcements */
 router.post("/admin/announcements", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
   const adminId = req.user!.id;
-  const { title, body, severity, targetType, recipientIds } = req.body as {
+  const { title, body, severity, targetType, recipientIds, actionLink } = req.body as {
     title?: string;
     body?: string;
     severity?: "info" | "warning" | "success";
     targetType?: "all" | "specific";
     recipientIds?: string[];
+    actionLink?: string;
   };
 
   if (!title?.trim() || !body?.trim()) {
@@ -2320,6 +2321,15 @@ router.post("/admin/announcements", requireAuth, requireAdminScope("manage_users
     res.status(400).json({ error: "Pick at least one recipient, or target all users" });
     return;
   }
+  // Deliberately restricted to an in-app path, not any URL — this
+  // navigates via the app's own router (wouter), never opens an
+  // external browser, so anything not starting with "/" would be
+  // meaningless here at best, or a way to embed a misleading full URL
+  // in what looks like an internal link at worst.
+  if (actionLink !== undefined && actionLink !== "" && !actionLink.startsWith("/")) {
+    res.status(400).json({ error: "Link must be an in-app path starting with /, e.g. /profile" });
+    return;
+  }
 
   const { data: announcement, error } = await supabase
     .from("announcements")
@@ -2328,6 +2338,7 @@ router.post("/admin/announcements", requireAuth, requireAdminScope("manage_users
       body: body.trim(),
       severity: severity ?? "info",
       target_type: targetType ?? "all",
+      action_link: actionLink?.trim() || null,
       created_by: adminId,
     })
     .select("id")

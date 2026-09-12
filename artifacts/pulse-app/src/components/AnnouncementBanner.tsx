@@ -1,12 +1,14 @@
 import { useState, useEffect } from "react";
+import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
-import { X, Info, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { X, Info, AlertTriangle, CheckCircle2, ChevronRight } from "lucide-react";
 
 interface Announcement {
   id: string;
   title: string;
   body: string;
   severity: "info" | "warning" | "success";
+  action_link?: string | null;
 }
 
 const SEVERITY_STYLES = {
@@ -17,6 +19,7 @@ const SEVERITY_STYLES = {
 
 export function AnnouncementBanner() {
   const { token } = useAuth();
+  const [, setLocation] = useLocation();
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
 
   useEffect(() => {
@@ -50,10 +53,20 @@ export function AnnouncementBanner() {
   return (
     <div className={`mx-4 mt-3 rounded-2xl border ${style.bg} ${style.border} p-3 flex items-start gap-2.5`}>
       <Icon size={16} className={`${style.iconColor} shrink-0 mt-0.5`} />
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold">{current.title}</p>
-        <p className="text-xs text-muted-foreground mt-0.5">{current.body}</p>
-      </div>
+      {current.action_link ? (
+        <button onClick={() => setLocation(current.action_link!)} className="min-w-0 flex-1 flex items-center gap-1.5 text-left">
+          <span className="min-w-0 flex-1">
+            <p className="text-sm font-semibold">{current.title}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">{current.body}</p>
+          </span>
+          <ChevronRight size={16} className="shrink-0 text-muted-foreground" />
+        </button>
+      ) : (
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold">{current.title}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">{current.body}</p>
+        </div>
+      )}
       <button onClick={() => dismiss(current.id)} className="shrink-0 text-muted-foreground hover:text-foreground">
         <X size={14} />
       </button>
