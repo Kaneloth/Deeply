@@ -2321,13 +2321,17 @@ router.post("/admin/announcements", requireAuth, requireAdminScope("manage_users
     res.status(400).json({ error: "Pick at least one recipient, or target all users" });
     return;
   }
-  // Deliberately restricted to an in-app path, not any URL — this
-  // navigates via the app's own router (wouter), never opens an
-  // external browser, so anything not starting with "/" would be
-  // meaningless here at best, or a way to embed a misleading full URL
-  // in what looks like an internal link at worst.
-  if (actionLink !== undefined && actionLink !== "" && !actionLink.startsWith("/")) {
-    res.status(400).json({ error: "Link must be an in-app path starting with /, e.g. /profile" });
+  // Allows either an in-app path (navigates via the app's own router)
+  // or a full external URL (opens via Capacitor's Browser plugin,
+  // handled on the frontend) — confirmed real, valid need: linking
+  // existing web users to the Play Store listing to encourage
+  // downloading the native app. HTTPS-only for external links, not
+  // HTTP, since this is an admin-entered destination shown to every
+  // targeted user.
+  const isValidInAppPath = actionLink?.startsWith("/");
+  const isValidExternalUrl = actionLink?.startsWith("https://");
+  if (actionLink !== undefined && actionLink !== "" && !isValidInAppPath && !isValidExternalUrl) {
+    res.status(400).json({ error: "Link must be an in-app path starting with /, or a full https:// URL" });
     return;
   }
 

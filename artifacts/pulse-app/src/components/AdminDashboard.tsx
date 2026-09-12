@@ -2447,7 +2447,7 @@ function AnnouncementsSection({ token, toast }: { token: string | null; toast: a
             className="w-full h-10 px-3 rounded-xl bg-background border border-card-border text-sm outline-none"
           />
           <p className="text-xs text-muted-foreground">
-            When set, tapping the announcement takes users straight there. Must start with /, e.g. /profile, /discover.
+            When set, tapping the announcement takes users straight there. Use an in-app path (e.g. /profile) or a full https:// link (e.g. the Play Store listing).
           </p>
         </div>
 

@@ -54,7 +54,41 @@ export function AnnouncementBanner() {
     <div className={`mx-4 mt-3 rounded-2xl border ${style.bg} ${style.border} p-3 flex items-start gap-2.5`}>
       <Icon size={16} className={`${style.iconColor} shrink-0 mt-0.5`} />
       {current.action_link ? (
-        <button onClick={() => setLocation(current.action_link!)} className="min-w-0 flex-1 flex items-center gap-1.5 text-left">
+        <button
+          onClick={async () => {
+            // Dismisses exactly like the X button does (same backend
+            // call, same permanence) before navigating — someone who's
+            // already acted on the call-to-action shouldn't keep seeing
+            // the same banner reappear on whatever screen they land on
+            // next, since AnnouncementBanner renders at the app-shell
+            // level and would otherwise still be showing the identical,
+            // now-redundant announcement there too.
+            dismiss(current.id);
+
+            // External links (e.g. the Play Store listing, for
+            // encouraging existing web users to get the native app)
+            // need a real browser, not wouter's own internal router —
+            // setLocation would just try (and fail) to interpret a full
+            // URL as an in-app route. Capacitor's Browser plugin has a
+            // web-compatible implementation too (opens a new tab under
+            // the hood there), unlike some native-only plugins used
+            // elsewhere in this app, so no platform check is needed
+            // here — this works correctly either way.
+            if (current.action_link!.startsWith("https://")) {
+              try {
+                const { Browser } = await import("@capacitor/browser");
+                await Browser.open({ url: current.action_link! });
+              } catch {
+                // Fallback if the plugin itself fails for any reason —
+                // still gets the person to the destination.
+                window.open(current.action_link!, "_blank");
+              }
+            } else {
+              setLocation(current.action_link!);
+            }
+          }}
+          className="min-w-0 flex-1 flex items-center gap-1.5 text-left"
+        >
           <span className="min-w-0 flex-1">
             <p className="text-sm font-semibold">{current.title}</p>
             <p className="text-xs text-muted-foreground mt-0.5">{current.body}</p>
