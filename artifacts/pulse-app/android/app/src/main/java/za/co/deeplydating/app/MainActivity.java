@@ -1,7 +1,13 @@
 package za.co.deeplydating.app;
 
 import android.Manifest;
+import android.content.ActivityNotFoundException;
+import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.net.Uri;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebView;
+import com.getcapacitor.BridgeWebViewClient;
 import android.os.Bundle;
 import android.view.View;
 import android.webkit.PermissionRequest;
@@ -139,6 +145,49 @@ public class MainActivity extends BridgeActivity {
                     permissionsToRequest.toArray(new String[0]),
                     VIDEO_CALL_PERMISSION_REQUEST_CODE
                 );
+            }
+        });
+
+        // Explicit fix for announcement links using non-http(s) schemes
+        // (market:// specifically, for linking straight to the Play
+        // Store app rather than its web listing — see
+        // AnnouncementBanner.tsx). Confirmed real bug otherwise: plain
+        // Android WebViews only know how to handle http:// and https://
+        // — any other scheme is simply swallowed silently rather than
+        // handed off to whatever app owns it, which is exactly what
+        // "the link bounces back into the app" actually is: nothing
+        // happened at all, because the WebView never knew what to do
+        // with it.
+        //
+        // Capacitor's own default BridgeWebViewClient already calls
+        // bridge.launchIntent(url) for non-http(s) schemes internally —
+        // this override takes direct, explicit control instead of
+        // relying on that internal behavior working correctly on every
+        // Android version, which couldn't be confirmed without direct
+        // device-level debugging. Extends BridgeWebViewClient
+        // specifically (not a plain WebViewClient) — Capacitor relies on
+        // its own WebViewClient to inject the JavaScript bridge plugins
+        // depend on; replacing it with an unrelated WebViewClient would
+        // silently break every native plugin in this app.
+        getBridge().getWebView().setWebViewClient(new BridgeWebViewClient(getBridge()) {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                Uri url = request.getUrl();
+                String scheme = url.getScheme();
+                if ("http".equals(scheme) || "https".equals(scheme)) {
+                    // Let Capacitor's own default handling (including
+                    // its JS bridge injection) continue exactly as normal.
+                    return super.shouldOverrideUrlLoading(view, request);
+                }
+                try {
+                    Intent intent = new Intent(Intent.ACTION_VIEW, url);
+                    startActivity(intent);
+                } catch (ActivityNotFoundException e) {
+                    // No app on the device can handle this scheme (e.g.
+                    // Play Store itself isn't installed) — nothing more
+                    // to do; at least this doesn't crash.
+                }
+                return true;
             }
         });
     }
