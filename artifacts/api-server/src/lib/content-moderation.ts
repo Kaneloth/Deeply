@@ -14,6 +14,15 @@ const REJECT_LIKELIHOODS = new Set(["LIKELY", "VERY_LIKELY"]);
 export interface SafetyCheckResult {
   safe: boolean;
   reason?: string;
+  // Whether Vision detected at least one human face. Only meaningful
+  // when safe is true and the API call itself succeeded — undefined in
+  // any failure/fail-open case, since we genuinely don't know either
+  // way then. Powers the separate "must be a photo of yourself" check
+  // on setting a main photo (see profile.ts's set-main route) — kept
+  // as part of this same result rather than a second Vision call,
+  // since FACE_DETECTION can be requested in the exact same request as
+  // SAFE_SEARCH_DETECTION below.
+  hasFace?: boolean;
 }
 
 /**
@@ -48,7 +57,7 @@ export async function checkImageSafety(buffer: Buffer): Promise<SafetyCheckResul
           requests: [
             {
               image: { content: base64Image },
-              features: [{ type: "SAFE_SEARCH_DETECTION" }],
+              features: [{ type: "SAFE_SEARCH_DETECTION" }, { type: "FACE_DETECTION" }],
             },
           ],
         }),
@@ -63,6 +72,11 @@ export async function checkImageSafety(buffer: Buffer): Promise<SafetyCheckResul
 
     const data = await response.json();
     const safeSearch = data?.responses?.[0]?.safeSearchAnnotation;
+    // An empty or missing faceAnnotations array means Vision detected
+    // no face at all in the image — this is the actual signal used to
+    // block a non-person photo (an object, a pet, a logo, etc.) from
+    // being set as someone's main/display photo elsewhere.
+    const hasFace = (data?.responses?.[0]?.faceAnnotations?.length ?? 0) > 0;
 
     if (!safeSearch) {
       logger.warn({ data }, "Vision API returned no safeSearchAnnotation — failing open");
@@ -81,7 +95,7 @@ export async function checkImageSafety(buffer: Buffer): Promise<SafetyCheckResul
       };
     }
 
-    return { safe: true };
+    return { safe: true, hasFace };
   } catch (err) {
     logger.error({ err }, "checkImageSafety threw — failing open");
     return { safe: true };

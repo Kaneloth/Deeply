@@ -1010,12 +1010,14 @@ router.post(
 
     // Content moderation — images only (see doc comment in
     // content-moderation.ts for why video isn't covered here).
+    let hasFace: boolean | null = null;
     if (!isVideo) {
       const safety = await checkImageSafety(req.file.buffer);
       if (!safety.safe) {
         res.status(400).json({ error: safety.reason ?? "This photo can't be uploaded." });
         return;
       }
+      hasFace = safety.hasFace ?? null;
     }
 
     let sparksCharged = 0;
@@ -1056,7 +1058,7 @@ router.post(
 
     const { data: photo, error: insertError } = await supabase
       .from("profile_photos")
-      .insert({ user_id: userId, photo_url: publicUrl, storage_path: storagePath, position, media_type: mediaType })
+      .insert({ user_id: userId, photo_url: publicUrl, storage_path: storagePath, position, media_type: mediaType, has_face: hasFace })
       .select("id, photo_url, media_type, position, created_at")
       .single();
 
@@ -1142,7 +1144,7 @@ router.put("/profile/me/photos/:photoId/set-main", requireAuth, async (req, res)
 
   const { data: target } = await supabase
     .from("profile_photos")
-    .select("id, photo_url, media_type, position")
+    .select("id, photo_url, media_type, position, has_face")
     .eq("id", photoId)
     .eq("user_id", userId)
     .single();
@@ -1157,6 +1159,41 @@ router.put("/profile/me/photos/:photoId/set-main", requireAuth, async (req, res)
   }
   if (target.position === 0) {
     res.json({ success: true }); // already main — nothing to do
+    return;
+  }
+
+  // has_face is null specifically for photos uploaded before this
+  // feature existed — lazily backfilled here, the first time someone
+  // tries to set an older photo as their main one, rather than a
+  // separate bulk migration over every existing photo in the app.
+  // Fetches the image bytes from its already-stored public URL, since
+  // only the URL (not the original upload buffer) is kept after upload.
+  let hasFace = target.has_face;
+  if (hasFace === null || hasFace === undefined) {
+    try {
+      const imageRes = await fetch(target.photo_url);
+      if (imageRes.ok) {
+        const buffer = Buffer.from(await imageRes.arrayBuffer());
+        const safety = await checkImageSafety(buffer);
+        hasFace = safety.hasFace ?? null;
+        if (hasFace !== null) {
+          await supabase.from("profile_photos").update({ has_face: hasFace }).eq("id", photoId);
+        }
+      }
+    } catch {
+      // Non-fatal — if the backfill check itself fails for any reason
+      // (network issue, Vision API error), fall through and allow the
+      // photo to be set as main. Same fail-open philosophy already used
+      // throughout content-moderation.ts: an outage in this check
+      // shouldn't block an otherwise-ordinary action indefinitely.
+      hasFace = null;
+    }
+  }
+
+  // Only explicitly rejects when a face was confirmed absent — null
+  // (backfill itself failed) still fails open, same reasoning as above.
+  if (hasFace === false) {
+    res.status(400).json({ error: "Your main photo needs to be a clear photo of your face. Choose a different photo, or add a new one." });
     return;
   }
 
