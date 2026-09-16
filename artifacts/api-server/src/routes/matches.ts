@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { randomUUID } from "crypto";
 import { requireAuth } from "../middlewares/auth";
 import { supabase } from "../lib/supabase";
 import { attachPhotoGalleries } from "../lib/photo-galleries";
@@ -6,6 +7,7 @@ import { getBlockedUserIds } from "../lib/blocks-helper";
 import { withComputedAge } from "../lib/age";
 import { rememberMatched, getStickyMatched, forgetMatched } from "../lib/discover-exclusions";
 import { checkChatUnlockExpiry } from "../lib/chat-unlock-helper";
+import { createNotification } from "../lib/notifications-helper";
 
 const router: IRouter = Router();
 
@@ -203,9 +205,17 @@ async function formatMatchesBatch(rawMatches: Record<string, any>[], viewerId: s
   return rawMatches.map((m) => {
     const matchedUser = m.user1_id === viewerId ? m.user2 : m.user1;
     const hydrated = matchedUser ? hydratedById.get(matchedUser.id) : undefined;
+    // is_snoozed derived here rather than trusted as a stored value —
+    // matches the exact same on-the-fly comparison used everywhere else
+    // this needs checking (discover.ts's notSnoozedFilter, profile.ts's
+    // unsnooze), so a match's snooze indicator can never disagree with
+    // whether they're actually still hidden from new people right now.
+    const isSnoozed = !!matchedUser?.snooze_until && new Date(matchedUser.snooze_until).getTime() > Date.now();
     return {
       id: m.id,
-      matched_user: hydrated ? renameLookingFor(withComputedAge(hydrated)) : null,
+      matched_user: hydrated
+        ? { ...renameLookingFor(withComputedAge(hydrated)), is_snoozed: isSnoozed, away_status: isSnoozed ? matchedUser.away_status ?? null : null }
+        : null,
       message_count: m.message_count,
       created_at: m.created_at,
       chat_unlock_status: m.chat_unlock_status,
@@ -522,6 +532,328 @@ router.delete("/matches/:matchId", requireAuth, async (req, res): Promise<void> 
   await forgetMatched(userId, partnerId);
 
   res.sendStatus(204);
+});
+
+const VERIFICATION_REQUEST_TTL_MS = 72 * 60 * 60 * 1000;
+
+/** Marks a pending verification_requests row as expired if its 72-hour
+ *  window has passed — same lazy, on-read pattern already established
+ *  for chat-unlock expiry in this file (see checkChatUnlockExpiry),
+ *  rather than a separate scheduled sweep. Returns the row with its
+ *  status corrected if it just expired, or unchanged otherwise. */
+async function checkVerificationRequestExpiry(row: Record<string, any>): Promise<Record<string, any>> {
+  if (row.status !== "pending" || new Date(row.expires_at).getTime() > Date.now()) return row;
+  await supabase.from("verification_requests").update({ status: "expired" }).eq("id", row.id);
+  return { ...row, status: "expired" };
+}
+
+/** POST /api/matches/:matchId/request-verification — asks a match to
+ *  complete selfie verification, directly from the chat. Deliberately
+ *  non-blocking: this never gates messaging, it's a prompt shown to the
+ *  recipient that they can act on or dismiss at their own pace. */
+router.post("/matches/:matchId/request-verification", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const matchId = Array.isArray(req.params.matchId) ? req.params.matchId[0] : req.params.matchId;
+
+  const { data: match } = await supabase.from("matches").select("id, user1_id, user2_id").eq("id", matchId).single();
+  if (!match || (match.user1_id !== userId && match.user2_id !== userId)) {
+    res.status(404).json({ error: "Match not found" });
+    return;
+  }
+
+  const recipientId = match.user1_id === userId ? match.user2_id : match.user1_id;
+
+  const [{ data: requesterProfile }, { data: recipientProfile }] = await Promise.all([
+    supabase.from("profiles").select("name").eq("id", userId).single(),
+    supabase.from("profiles").select("photo_verified").eq("id", recipientId).single(),
+  ]);
+
+  if (recipientProfile?.photo_verified) {
+    res.status(400).json({ error: "This person is already verified." });
+    return;
+  }
+
+  const { data: existing } = await supabase
+    .from("verification_requests")
+    .select("id, status, expires_at")
+    .eq("match_id", matchId)
+    .eq("status", "pending")
+    .maybeSingle();
+
+  if (existing) {
+    const checked = await checkVerificationRequestExpiry(existing);
+    if (checked.status === "pending") {
+      res.status(409).json({ error: "A verification request is already pending for this match." });
+      return;
+    }
+  }
+
+  const { data: created, error } = await supabase
+    .from("verification_requests")
+    .insert({
+      requester_id: userId,
+      recipient_id: recipientId,
+      match_id: matchId,
+      expires_at: new Date(Date.now() + VERIFICATION_REQUEST_TTL_MS).toISOString(),
+    })
+    .select("id, status, expires_at, created_at")
+    .single();
+
+  if (error || !created) {
+    // The partial unique index (one_pending_verification_request_per_match)
+    // is the real, race-safe backstop behind the pre-check above — a
+    // 23505 here means two requests were created concurrently and this
+    // one lost, not a genuine server error.
+    if ((error as { code?: string })?.code === "23505") {
+      res.status(409).json({ error: "A verification request is already pending for this match." });
+      return;
+    }
+    res.status(500).json({ error: "Failed to create verification request." });
+    return;
+  }
+
+  // Non-confrontational, gentle tone per the feature's explicit
+  // requirement — a nudge, not an accusation.
+  await createNotification(
+    recipientId,
+    "verification_requested",
+    `${requesterProfile?.name ?? "Your match"} has requested that you verify your profile.`,
+    "It only takes 30 seconds.",
+    { verification_request_id: created.id, match_id: matchId },
+  );
+
+  res.status(201).json(created);
+});
+
+/** GET /api/matches/:matchId/verification-request — the current (or
+ *  most recent) request for this match, so both sides can see its
+ *  status in the chat header/info panel. */
+router.get("/matches/:matchId/verification-request", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const matchId = Array.isArray(req.params.matchId) ? req.params.matchId[0] : req.params.matchId;
+
+  const { data: match } = await supabase.from("matches").select("id, user1_id, user2_id").eq("id", matchId).single();
+  if (!match || (match.user1_id !== userId && match.user2_id !== userId)) {
+    res.status(404).json({ error: "Match not found" });
+    return;
+  }
+
+  const { data: latest } = await supabase
+    .from("verification_requests")
+    .select("id, requester_id, recipient_id, status, created_at, expires_at, completed_at")
+    .eq("match_id", matchId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!latest) {
+    res.json(null);
+    return;
+  }
+
+  res.json(await checkVerificationRequestExpiry(latest));
+});
+
+/** POST /api/verification-requests/:requestId/decline — only the
+ *  recipient can decline their own request. Per the spec, this simply
+ *  removes it from their notifications (marks it declined) and lets
+ *  the requester know — it was never blocking anything to begin with. */
+router.post("/verification-requests/:requestId/decline", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const requestId = Array.isArray(req.params.requestId) ? req.params.requestId[0] : req.params.requestId;
+
+  const { data: request } = await supabase
+    .from("verification_requests")
+    .select("id, requester_id, recipient_id, status")
+    .eq("id", requestId)
+    .single();
+
+  if (!request || request.recipient_id !== userId) {
+    res.status(404).json({ error: "Request not found" });
+    return;
+  }
+  if (request.status !== "pending") {
+    res.status(400).json({ error: "This request is no longer pending." });
+    return;
+  }
+
+  const { error } = await supabase.from("verification_requests").update({ status: "declined" }).eq("id", requestId);
+  if (error) {
+    res.status(500).json({ error: "Failed to decline request." });
+    return;
+  }
+
+  await createNotification(request.requester_id, "verification_declined", "Your match has declined your verification request.");
+
+  res.sendStatus(204);
+});
+
+const SHARED_DATE_EXPIRY_BUFFER_MS = 48 * 60 * 60 * 1000;
+
+/** POST /api/matches/:matchId/share-date — creates or updates (upserts)
+ *  this match's shared date. Per spec, editing later reflects in the
+ *  SAME link rather than minting a new token each time — the partial
+ *  unique index on shared_dates enforces this at the database level. */
+router.post("/matches/:matchId/share-date", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const matchId = Array.isArray(req.params.matchId) ? req.params.matchId[0] : req.params.matchId;
+  const { date_time: dateTime, location, notes } = req.body as { date_time?: string; location?: string; notes?: string };
+
+  const { data: match } = await supabase.from("matches").select("id, user1_id, user2_id").eq("id", matchId).single();
+  if (!match || (match.user1_id !== userId && match.user2_id !== userId)) {
+    res.status(404).json({ error: "Match not found" });
+    return;
+  }
+  if (!dateTime || !location?.trim()) {
+    res.status(400).json({ error: "date_time and location are required" });
+    return;
+  }
+  const parsedDateTime = new Date(dateTime);
+  if (isNaN(parsedDateTime.getTime())) {
+    res.status(400).json({ error: "date_time is not a valid date" });
+    return;
+  }
+
+  const { data: existing } = await supabase
+    .from("shared_dates")
+    .select("id, token")
+    .eq("match_id", matchId)
+    .is("revoked_at", null)
+    .maybeSingle();
+
+  const expiresAt = new Date(parsedDateTime.getTime() + SHARED_DATE_EXPIRY_BUFFER_MS).toISOString();
+
+  if (existing) {
+    const { error } = await supabase
+      .from("shared_dates")
+      .update({ date_time: parsedDateTime.toISOString(), location: location.trim(), notes: notes?.trim() || null, expires_at: expiresAt })
+      .eq("id", existing.id);
+    if (error) {
+      res.status(500).json({ error: "Failed to update shared date" });
+      return;
+    }
+    res.json({ token: existing.token });
+    return;
+  }
+
+  // Unguessable per spec — a UUID, not a short/sequential id.
+  const token = randomUUID();
+  const { error } = await supabase.from("shared_dates").insert({
+    user_id: userId,
+    match_id: matchId,
+    token,
+    date_time: parsedDateTime.toISOString(),
+    location: location.trim(),
+    notes: notes?.trim() || null,
+    expires_at: expiresAt,
+  });
+  if (error) {
+    res.status(500).json({ error: "Failed to create shared date" });
+    return;
+  }
+
+  res.status(201).json({ token });
+});
+
+/** GET /api/matches/:matchId/share-date — the current active share for
+ *  this match, if any, so the app can show "you've shared this date"
+ *  state and let the owner edit or revoke it. */
+router.get("/matches/:matchId/share-date", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const matchId = Array.isArray(req.params.matchId) ? req.params.matchId[0] : req.params.matchId;
+
+  const { data: match } = await supabase.from("matches").select("id, user1_id, user2_id").eq("id", matchId).single();
+  if (!match || (match.user1_id !== userId && match.user2_id !== userId)) {
+    res.status(404).json({ error: "Match not found" });
+    return;
+  }
+
+  const { data } = await supabase
+    .from("shared_dates")
+    .select("id, token, date_time, location, notes, expires_at")
+    .eq("match_id", matchId)
+    .is("revoked_at", null)
+    .maybeSingle();
+
+  res.json(data ?? null);
+});
+
+/** POST /api/shared-dates/:id/revoke — only the person who created the
+ *  share can revoke it. Once revoked, the public page immediately stops
+ *  serving it (GET /public/shared-dates/:token checks revoked_at). */
+router.post("/shared-dates/:id/revoke", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+
+  const { data: existing } = await supabase.from("shared_dates").select("id, user_id").eq("id", id).single();
+  if (!existing || existing.user_id !== userId) {
+    res.status(404).json({ error: "Shared date not found" });
+    return;
+  }
+
+  await supabase.from("shared_dates").update({ revoked_at: new Date().toISOString() }).eq("id", id);
+  res.sendStatus(204);
+});
+
+/** GET /api/public/shared-dates/:token — deliberately NO requireAuth.
+ *  The recipient of a shared link never needs (or has) an account —
+ *  this is the one genuinely public-facing endpoint in this entire API.
+ *  Authorization is by possessing the unguessable token itself, not by
+ *  being logged in. Returns ONLY what the spec's privacy note allows:
+ *  the match's name/age/photo — explicitly never verification status,
+ *  and never the sharer's own email/phone/contact info, only their
+ *  name for the "shared by X" line. */
+router.get("/public/shared-dates/:token", async (req, res): Promise<void> => {
+  const token = Array.isArray(req.params.token) ? req.params.token[0] : req.params.token;
+
+  const { data: shared } = await supabase
+    .from("shared_dates")
+    .select("id, user_id, match_id, date_time, location, notes, expires_at, revoked_at")
+    .eq("token", token)
+    .maybeSingle();
+
+  if (!shared || shared.revoked_at || new Date(shared.expires_at).getTime() <= Date.now()) {
+    res.status(404).json({ error: "This link is no longer available." });
+    return;
+  }
+
+  const { data: match } = await supabase.from("matches").select("user1_id, user2_id").eq("id", shared.match_id).single();
+  if (!match) {
+    res.status(404).json({ error: "This link is no longer available." });
+    return;
+  }
+  const matchedUserId = match.user1_id === shared.user_id ? match.user2_id : match.user1_id;
+
+  const [{ data: sharer }, { data: matchedProfile }] = await Promise.all([
+    supabase.from("profiles").select("name").eq("id", shared.user_id).single(),
+    supabase.from("profiles").select("name, age, birthday, photo_url").eq("id", matchedUserId).single(),
+  ]);
+
+  res.json({
+    shared_by_name: sharer?.name ?? null,
+    date_time: shared.date_time,
+    location: shared.location,
+    notes: shared.notes,
+    matched_user: matchedProfile
+      ? { name: matchedProfile.name, age: withComputedAge(matchedProfile).age, photo_url: matchedProfile.photo_url }
+      : null,
+  });
+});
+
+/** POST /api/matches/_internal/cleanup-expired-shared-dates — called
+ *  daily by the scheduled function. Actually deletes expired rows,
+ *  rather than relying solely on the public endpoint's own read-time
+ *  expiry check — per spec's explicit "auto-cleanup" requirement. */
+router.post("/matches/_internal/cleanup-expired-shared-dates", async (req, res): Promise<void> => {
+  const providedSecret = req.headers["x-internal-cleanup-secret"];
+  if (!process.env.INTERNAL_CLEANUP_SECRET || providedSecret !== process.env.INTERNAL_CLEANUP_SECRET) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const { data: deleted } = await supabase.from("shared_dates").delete().lt("expires_at", new Date().toISOString()).select("id");
+  console.log(`cleanup-expired-shared-dates: deleted ${deleted?.length ?? 0} row(s)`);
+  res.status(200).json({ deleted: deleted?.length ?? 0 });
 });
 
 export default router;

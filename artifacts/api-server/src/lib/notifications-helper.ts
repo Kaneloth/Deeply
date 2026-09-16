@@ -3,6 +3,14 @@ import { supabase } from "./supabase";
 // chat_unlock_refunded/chat_missed_connection/chat_unlocked/chat_revived
 // added for the new chat-unlock economy — see chat-unlock-helper.ts and
 // messages.ts's POST /matches/:matchId/messages for where each is fired.
+// snooze_ended/snooze_reminder added for Snooze Mode — see profile.ts's
+// PUT/POST /profile/me/(un)snooze and the snooze-reminder scheduled
+// function.
+// verification_requested/verification_completed/verification_declined
+// added for Request Verification in Chat — see matches.ts's
+// /matches/:matchId/request-verification and profile.ts's admin
+// verification-approval route, which is the actual "completed" trigger
+// point (see its own doc comment for why this isn't instant).
 export type NotificationType =
   | "announcement"
   | "spark_grant"
@@ -11,7 +19,12 @@ export type NotificationType =
   | "chat_unlock_refunded"
   | "chat_missed_connection"
   | "chat_unlocked"
-  | "chat_revived";
+  | "chat_revived"
+  | "snooze_ended"
+  | "snooze_reminder"
+  | "verification_requested"
+  | "verification_completed"
+  | "verification_declined";
 
 /** Creates a standalone notification for one user. Used for one-off
  *  events (Spark grant, low balance) where there's no batching concern. */

@@ -678,6 +678,84 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   res.json({ ...withComputedAge(profile), ...(founderSlotCapForResponse !== null ? { founder_cap: founderSlotCapForResponse } : {}) });
 });
 
+// A far-future date represents "indefinite" (until manually turned
+// off) — see the migration's comment for why this avoids needing a
+// separate boolean/flag column: is_snoozed stays derivable everywhere
+// with one simple comparison (snooze_until > now()).
+const INDEFINITE_SNOOZE_DATE = "2099-12-31T00:00:00.000Z";
+
+/** PUT /api/profile/me/snooze — starts (or extends/updates) a snooze
+ *  period. Available to all users, not gated behind any paid feature,
+ *  per the spec's explicit requirement. Resets snooze_reminder_sent so
+ *  the 30-day gentle reminder correctly fires again for this new
+ *  period, rather than staying permanently silenced by a reminder that
+ *  already fired for a previous, separate snooze. */
+router.put("/profile/me/snooze", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const { duration, away_status: awayStatus } = req.body as {
+    duration?: "24h" | "72h" | "1w" | "indefinite";
+    away_status?: string;
+  };
+
+  const DURATIONS: Record<string, number> = {
+    "24h": 24 * 60 * 60 * 1000,
+    "72h": 72 * 60 * 60 * 1000,
+    "1w": 7 * 24 * 60 * 60 * 1000,
+  };
+
+  if (!duration || (duration !== "indefinite" && !DURATIONS[duration])) {
+    res.status(400).json({ error: "duration must be one of: 24h, 72h, 1w, indefinite" });
+    return;
+  }
+
+  const snoozeUntil = duration === "indefinite" ? INDEFINITE_SNOOZE_DATE : new Date(Date.now() + DURATIONS[duration]).toISOString();
+
+  const { error } = await supabase
+    .from("profiles")
+    .update({
+      snooze_until: snoozeUntil,
+      away_status: awayStatus?.trim() || null,
+      snooze_started_at: new Date().toISOString(),
+      snooze_reminder_sent: false,
+    })
+    .eq("id", userId);
+
+  if (error) {
+    res.status(500).json({ error: "Failed to start snooze" });
+    return;
+  }
+
+  res.json({ snooze_until: snoozeUntil, away_status: awayStatus?.trim() || null });
+});
+
+/** POST /api/profile/me/unsnooze — ends snooze immediately, whether it
+ *  was set for a fixed duration or indefinitely. Sends the "welcome
+ *  back" notification the spec calls for — but only if the person was
+ *  actually snoozed in the first place, so calling this redundantly
+ *  (e.g. a double-tap) doesn't spam a second notification. */
+router.post("/profile/me/unsnooze", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+
+  const { data: profile } = await supabase.from("profiles").select("snooze_until").eq("id", userId).single();
+  const wasSnoozed = !!profile?.snooze_until && new Date(profile.snooze_until).getTime() > Date.now();
+
+  const { error } = await supabase
+    .from("profiles")
+    .update({ snooze_until: null, away_status: null, snooze_started_at: null, snooze_reminder_sent: false })
+    .eq("id", userId);
+
+  if (error) {
+    res.status(500).json({ error: "Failed to end snooze" });
+    return;
+  }
+
+  if (wasSnoozed) {
+    await createNotification(userId, "snooze_ended", "Your profile is active again. Welcome back!");
+  }
+
+  res.sendStatus(204);
+});
+
 /** GET /api/profile/boost/status — is a boost currently active, and when
  *  can the user next activate one. */
 router.get("/profile/boost/status", requireAuth, async (req, res): Promise<void> => {
@@ -3507,6 +3585,29 @@ router.post(
       return;
     }
 
+    // This is the genuine, real completion point for Request
+    // Verification in Chat — NOT the moment someone submits their
+    // selfie. Selfie verification isn't instant in this app; it only
+    // becomes real once admin actually reviews and approves it here,
+    // which could be well after submission. Resolving any pending
+    // request at THIS point, rather than at submission time, means the
+    // requester's notification reflects what's actually true rather
+    // than a fictional immediate completion. Only for photo (selfie)
+    // verification specifically — a pending request is about selfie
+    // verification, not the separate, paid ID verification.
+    if (badgeField === "photo_verified") {
+      const { data: pendingRequests } = await supabase
+        .from("verification_requests")
+        .select("id, requester_id")
+        .eq("recipient_id", submission.user_id)
+        .eq("status", "pending");
+
+      for (const request of pendingRequests ?? []) {
+        await supabase.from("verification_requests").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", request.id);
+        await createNotification(request.requester_id, "verification_completed", "Your match has completed verification ✅");
+      }
+    }
+
     const paths = [submission.selfie_path, submission.id_front_path, submission.id_back_path].filter(Boolean) as string[];
     if (paths.length > 0) {
       await supabase.storage.from(VERIFICATION_BUCKET).remove(paths).catch(() => {});
@@ -3641,6 +3742,37 @@ router.put("/admin/economy-config", requireAuth, requireAdminScope("manage_spark
 
   invalidateEconomyConfigCache();
   res.sendStatus(204);
+});
+
+/** POST /api/profile/_internal/snooze-reminder-check — called daily by
+ *  the snooze-reminder-check.mts scheduled function. Sends the gentle
+ *  "still taking a break?" reminder to anyone who's been snoozed for
+ *  30+ days and hasn't already received it this snooze period —
+ *  snooze_reminder_sent (reset to false any time snooze is started or
+ *  extended) ensures this fires at most once per period, not once a
+ *  day forever after the 30-day mark. */
+router.post("/profile/_internal/snooze-reminder-check", async (req, res): Promise<void> => {
+  const providedSecret = req.headers["x-internal-cleanup-secret"];
+  if (!process.env.INTERNAL_CLEANUP_SECRET || providedSecret !== process.env.INTERNAL_CLEANUP_SECRET) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: dueForReminder } = await supabase
+    .from("profiles")
+    .select("id")
+    .gt("snooze_until", new Date().toISOString())
+    .lte("snooze_started_at", thirtyDaysAgo)
+    .eq("snooze_reminder_sent", false);
+
+  for (const profile of dueForReminder ?? []) {
+    await createNotification(profile.id, "snooze_reminder", "Still taking a break? Your profile is paused.");
+    await supabase.from("profiles").update({ snooze_reminder_sent: true }).eq("id", profile.id);
+  }
+
+  console.log(`snooze-reminder-check: notified ${dueForReminder?.length ?? 0} profile(s)`);
+  res.status(200).json({ notified: dueForReminder?.length ?? 0 });
 });
 
 export default router;
