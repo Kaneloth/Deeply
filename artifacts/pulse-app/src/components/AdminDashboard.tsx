@@ -1349,6 +1349,20 @@ function UserDetailSheet({
     }
   };
 
+  const handleGrantFounder = async () => {
+    try {
+      const result = await call(`/api/admin/users/${user.id}/grant-founder`, {});
+      if (result.alreadyFounder) {
+        toast({ title: "Already a founder" });
+        return;
+      }
+      onUpdated({ is_founder: true });
+      toast({ title: `Founder status granted (rank #${result.rank})` });
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Action failed.", variant: "destructive" });
+    }
+  };
+
   const handleSuspend = async () => {
     if (!suspendReason) {
       toast({ title: "Pick a reason first", variant: "destructive" });
@@ -1477,6 +1491,20 @@ function UserDetailSheet({
             >
               {user.banned ? "Unban User" : "Ban User"}
             </button>
+          </div>
+
+          <div className="border-t border-border pt-4">
+            {user.is_founder ? (
+              <p className="text-xs text-muted-foreground text-center">Already a founder</p>
+            ) : (
+              <button
+                disabled={busy}
+                onClick={handleGrantFounder}
+                className="w-full h-10 rounded-xl text-xs font-semibold border border-primary/30 text-primary disabled:opacity-50"
+              >
+                Grant Founder Status
+              </button>
+            )}
           </div>
 
           {!user.banned && (

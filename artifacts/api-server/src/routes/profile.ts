@@ -92,6 +92,81 @@ router.get("/profile/referral/validate", requireAuth, async (req, res): Promise<
 });
 
 /** PUT /api/profile/me */
+/** Attempts to claim a founder slot for userId via the atomic,
+ *  capped claim_founder_slot RPC — returns null if the cap has already
+ *  been reached (not an error, just no slot left), or the computed
+ *  values needed to actually grant founder status if a slot was
+ *  claimed. Deliberately does NOT write to profiles itself: the two
+ *  callers apply this differently — onboarding completion merges the
+ *  result into a single larger batched update, while the admin
+ *  manual-grant endpoint below applies it immediately on its own. This
+ *  is the one place the underlying logic lives, so both stay in sync
+ *  rather than risking two copies drifting apart over time.
+ *
+ *  Reused for a confirmed real need: some legitimate early testers
+ *  never got founder status because their accounts were later
+ *  affected by unrelated device/account blocking, before they could
+ *  complete onboarding and trigger this normally. Reusing the same
+ *  capped RPC for a manual admin grant keeps the founder count
+ *  meaningful — it doesn't bypass the cap, just lets admin trigger the
+ *  same atomic claim for a specific person who should have gotten one
+ *  the first time. */
+async function tryClaimFounderSlot(
+  userId: string,
+): Promise<{ founderSlotCap: number; rank: number; toppedUpFree: number | null } | null> {
+  const { founder_slot_cap: founderSlotCap } = await getEconomyConfig();
+  const { data: rank, error: founderClaimError } = await supabase.rpc("claim_founder_slot", { cap: founderSlotCap });
+  if (founderClaimError) {
+    // Previously silently swallowed — this destructured only `data`, so
+    // a failing RPC call (e.g. a permissions/RLS issue) was
+    // indistinguishable from "all slots are genuinely taken": both just
+    // left `rank` null and skipped awarding anything, with zero
+    // visibility into which one actually happened. Logging this doesn't
+    // fix the underlying cause on its own, but means a real failure now
+    // shows up instead of silently looking like the founders program
+    // just ran out.
+    console.error(`FOUNDER CLAIM DEBUG: claim_founder_slot RPC failed for userId=${userId}: ${founderClaimError.message}`);
+  }
+  if (typeof rank !== "number") return null;
+
+  // Corrects a real ordering bug, not a hypothetical one: a brand new
+  // profile's next_spark_grant_at is already due immediately, so this
+  // account has already received its FIRST monthly grant via the
+  // normal sparks-check flow — necessarily calculated BEFORE is_founder
+  // could possibly exist yet, since that only happens here. That first
+  // grant was therefore always the standard, non-doubled amount, for
+  // every founder, every time — not an edge case.
+  //
+  // Rather than restructure when the very first grant fires (a bigger,
+  // riskier change), this simply tops the balance up by one more base
+  // grant's worth the one time founder status is newly discovered,
+  // bringing this month's total to the correct doubled amount
+  // regardless of whether any of it was already spent in the meantime.
+  const { data: currentBalance } = await supabase
+    .from("profiles")
+    .select("free_sparks_balance, paid_sparks_balance")
+    .eq("id", userId)
+    .single();
+
+  let toppedUpFree: number | null = null;
+  if (currentBalance) {
+    const { sparks_monthly_grant: baseGrantAmount } = await getEconomyConfig();
+    toppedUpFree = currentBalance.free_sparks_balance + baseGrantAmount;
+
+    supabase
+      .from("sparks_transactions")
+      .insert({
+        user_id: userId,
+        amount: baseGrantAmount,
+        reason: "Founder status granted — Sparks top-up to 2x",
+        balance_after: toppedUpFree + currentBalance.paid_sparks_balance,
+      })
+      .then(() => {});
+  }
+
+  return { founderSlotCap, rank, toppedUpFree };
+}
+
 router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   const {
     name, age, bio, city, photo_url, personality_tags,
@@ -374,63 +449,14 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
     // only existed recently and only affects people who used a code.
     if (currentProfile && !currentProfile.onboarding_completed) {
       try {
-        const { founder_slot_cap: founderSlotCap } = await getEconomyConfig();
-        const { data: rank, error: founderClaimError } = await supabase.rpc("claim_founder_slot", { cap: founderSlotCap });
-        if (founderClaimError) {
-          // Previously silently swallowed — this destructured only
-          // `data`, so a failing RPC call (e.g. a permissions/RLS issue)
-          // was indistinguishable from "all slots are genuinely taken":
-          // both just left `rank` null and skipped awarding anything,
-          // with zero visibility into which one actually happened.
-          // Logging this doesn't fix the underlying cause on its own,
-          // but means a real failure now shows up instead of silently
-          // looking like the founders program just ran out.
-          console.error(
-            `FOUNDER CLAIM DEBUG: claim_founder_slot RPC failed for userId=${req.user!.id}: ${founderClaimError.message}`,
-          );
-        }
-        if (typeof rank === "number") {
-          founderSlotCapForResponse = founderSlotCap;
+        const founderResult = await tryClaimFounderSlot(req.user!.id);
+        if (founderResult) {
+          founderSlotCapForResponse = founderResult.founderSlotCap;
           updates.is_founder = true;
-          updates.founder_rank = rank;
+          updates.founder_rank = founderResult.rank;
           updates.free_verification = true;
-
-          // Corrects a real ordering bug, not a hypothetical one: a brand
-          // new profile's next_spark_grant_at is already due immediately,
-          // so this account has already received its FIRST monthly grant
-          // via the normal sparks-check flow — necessarily calculated
-          // BEFORE is_founder could possibly exist yet, since that only
-          // happens here, during onboarding completion, a separate and
-          // later request than signup. That first grant was therefore
-          // always the standard, non-doubled amount, for every founder,
-          // every time — not an edge case.
-          //
-          // Rather than restructure when the very first grant fires (a
-          // bigger, riskier change), this simply tops the balance up by
-          // one more base grant's worth the one time founder status is
-          // newly discovered, bringing this month's total to the correct
-          // doubled amount regardless of whether any of it was already
-          // spent in the meantime.
-          const { data: currentBalance } = await supabase
-            .from("profiles")
-            .select("free_sparks_balance, paid_sparks_balance")
-            .eq("id", req.user!.id)
-            .single();
-
-          if (currentBalance) {
-            const { sparks_monthly_grant: baseGrantAmount } = await getEconomyConfig();
-            const toppedUpFree = currentBalance.free_sparks_balance + baseGrantAmount;
-            updates.free_sparks_balance = toppedUpFree;
-
-            supabase
-              .from("sparks_transactions")
-              .insert({
-                user_id: req.user!.id,
-                amount: baseGrantAmount,
-                reason: "Founder status granted — Sparks top-up to 2x",
-                balance_after: toppedUpFree + currentBalance.paid_sparks_balance,
-              })
-              .then(() => {});
+          if (founderResult.toppedUpFree !== null) {
+            updates.free_sparks_balance = founderResult.toppedUpFree;
           }
         }
       } catch (founderErr) {
@@ -2133,6 +2159,54 @@ router.post("/admin/users/:userId/sparks", requireAuth, requireAdminScope("manag
   }
 
   res.json({ balance: newBalance });
+});
+
+/** POST /api/admin/users/:userId/grant-founder — manually triggers the
+ *  same atomic, capped claim_founder_slot RPC the onboarding-completion
+ *  flow uses automatically, for a specific user chosen by admin.
+ *  Confirmed real need: some legitimate early testers never got founder
+ *  status because their accounts were later affected by unrelated
+ *  device/account blocking, before they ever completed onboarding
+ *  normally. Doesn't bypass the founder cap — if every slot is already
+ *  taken, this returns the same "no slots left" outcome the automatic
+ *  path would, since it's the exact same underlying RPC. Already a
+ *  founder is treated as success (no-op), not an error — retrying this
+ *  for someone who already has it shouldn't surface a confusing failure. */
+router.post("/admin/users/:userId/grant-founder", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const userId = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
+
+  const { data: profile } = await supabase.from("profiles").select("is_founder").eq("id", userId).single();
+  if (!profile) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+  if (profile.is_founder) {
+    res.json({ granted: true, alreadyFounder: true });
+    return;
+  }
+
+  const founderResult = await tryClaimFounderSlot(userId);
+  if (!founderResult) {
+    res.status(409).json({ error: "No founder slots remaining." });
+    return;
+  }
+
+  const updates: Record<string, unknown> = {
+    is_founder: true,
+    founder_rank: founderResult.rank,
+    free_verification: true,
+  };
+  if (founderResult.toppedUpFree !== null) {
+    updates.free_sparks_balance = founderResult.toppedUpFree;
+  }
+
+  const { error } = await supabase.from("profiles").update(updates).eq("id", userId);
+  if (error) {
+    res.status(500).json({ error: `Founder slot was claimed, but updating the profile failed: ${error.message}` });
+    return;
+  }
+
+  res.json({ granted: true, rank: founderResult.rank });
 });
 
 // ============================================================
