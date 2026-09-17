@@ -639,16 +639,42 @@ router.delete("/auth/account", requireAuth, async (req, res): Promise<void> => {
  *  responds with success regardless of whether the email exists, so this
  *  can't be used to enumerate registered accounts. */
 router.post("/auth/forgot-password", async (req, res): Promise<void> => {
-  const { email, redirectTo } = req.body as { email?: string; redirectTo?: string };
+  const { email, device_id: deviceId } = req.body as { email?: string; device_id?: string };
 
   if (!email) {
     res.status(400).json({ error: "email is required" });
     return;
   }
 
+  // Logged unconditionally, before anything else — this is the actual,
+  // correct place to capture the requester's real IP, unlike email
+  // delivery logs (Brevo, etc.), which only ever show the sending
+  // infrastructure's own IP, never the person who triggered the
+  // request. Confirmed this app's forgot-password flow goes through
+  // this backend directly (not Supabase's client SDK), so this IP is
+  // genuinely the requester's, not some intermediary's. Never blocks
+  // or delays the actual reset flow — logging failure is non-fatal.
+  supabase
+    .from("password_reset_attempts")
+    .insert({
+      email: email.toLowerCase().trim(),
+      ip: getClientIp(req),
+      device_id: deviceId ?? null,
+      user_agent: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : null,
+    })
+    .then(() => {})
+    .catch((err) => console.error("Failed to log password reset attempt:", err));
+
   try {
+    // Constructed server-side, deliberately ignoring any client-
+    // provided redirectTo — window.location.origin on the client is
+    // unreliable inside the native app's WebView (resolves to an
+    // internal origin, not the real public domain), which was breaking
+    // every native user's reset link. Same fix already applied to
+    // Share Date links, same reasoning.
+    const baseUrl = process.env.APP_BASE_URL ?? "https://app.deeplydating.co.za";
     await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: redirectTo || undefined,
+      redirectTo: `${baseUrl}/reset-password`,
     });
   } catch {
     // Intentionally swallowed — see the doc comment above.

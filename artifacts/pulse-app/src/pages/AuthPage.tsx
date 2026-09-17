@@ -353,12 +353,32 @@ export default function AuthPage() {
     }
     setIsSendingReset(true);
     try {
+      // device_id capture mirrors the same pattern already used at
+      // signup — non-fatal on failure, since this is purely for abuse
+      // investigation, never something that should block a legitimate
+      // password reset.
+      let device_id: string | undefined;
+      if (Capacitor.isNativePlatform()) {
+        try {
+          const info = await Device.getId();
+          device_id = info.identifier;
+        } catch {
+          // Non-fatal — see reasoning above.
+        }
+      }
       const res = await fetch("/api/auth/forgot-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: forgotEmail.trim(),
-          redirectTo: `${window.location.origin}/reset-password`,
+          device_id,
+          // redirectTo deliberately NOT sent from here anymore —
+          // window.location.origin is unreliable inside the native
+          // app's WebView (resolves to an internal origin, not the
+          // real public domain), which was breaking every native
+          // user's reset link. The backend now constructs this itself
+          // using its own known-correct base URL, the same fix already
+          // applied to Share Date links.
         }),
       });
       if (!res.ok) {
