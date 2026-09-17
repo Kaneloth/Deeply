@@ -7,6 +7,7 @@ import {
   X, Users, Flag, Coins, Megaphone, LayoutDashboard, Loader2, Search,
   Ban, ShieldOff, Crown, Plus, Trash2, CheckCircle2, XCircle, ChevronLeft,
   ChevronRight, ShieldCheck, AlertTriangle, RefreshCw, Sliders, Receipt, Gift,
+  ChevronDown, ArrowUpAZ, ArrowDownAZ,
 } from "lucide-react";
 
 type Section = "overview" | "reports" | "referral-flags" | "users" | "sparks" | "transactions" | "economy" | "announcements" | "verification" | "blocked-devices";
@@ -1038,12 +1039,120 @@ function AdminVerificationSection({ token, toast }: { token: string | null; toas
 // ============================================================
 // Users
 // ============================================================
+function ColumnHeaderMenu({
+  label,
+  column,
+  sortBy,
+  sortOrder,
+  onSort,
+  filterable,
+  selectedValues,
+  onFilterChange,
+  isOpen,
+  onToggle,
+  token,
+}: {
+  label: string;
+  column: string;
+  sortBy: string | null;
+  sortOrder: "asc" | "desc";
+  onSort: (column: string, order: "asc" | "desc") => void;
+  filterable?: boolean;
+  selectedValues?: string[];
+  onFilterChange?: (values: string[]) => void;
+  isOpen: boolean;
+  onToggle: () => void;
+  token: string | null;
+}) {
+  const [distinctValues, setDistinctValues] = useState<string[]>([]);
+  const [loadingValues, setLoadingValues] = useState(false);
+  const isActive = sortBy === column || (selectedValues && selectedValues.length > 0);
+
+  useEffect(() => {
+    if (!isOpen || !filterable || distinctValues.length > 0) return;
+    setLoadingValues(true);
+    fetch(`/api/admin/users/distinct-values?column=${column}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : { values: [] }))
+      .then((body) => setDistinctValues(body.values ?? []))
+      .catch(() => setDistinctValues([]))
+      .finally(() => setLoadingValues(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, filterable, column, token]);
+
+  return (
+    <div className="relative">
+      <button onClick={onToggle} className={`flex items-center gap-1 ${isActive ? "text-primary" : ""}`}>
+        {label}
+        <ChevronDown size={12} />
+      </button>
+      {isOpen && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={onToggle} />
+          <div className="absolute left-0 top-full mt-1 z-50 w-48 bg-card border border-card-border rounded-xl shadow-lg p-2 text-left font-normal normal-case">
+            <button
+              onClick={() => onSort(column, "asc")}
+              className={`w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded-lg hover:bg-secondary ${sortBy === column && sortOrder === "asc" ? "bg-secondary text-primary" : ""}`}
+            >
+              <ArrowUpAZ size={13} /> Sort A-Z
+            </button>
+            <button
+              onClick={() => onSort(column, "desc")}
+              className={`w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded-lg hover:bg-secondary ${sortBy === column && sortOrder === "desc" ? "bg-secondary text-primary" : ""}`}
+            >
+              <ArrowDownAZ size={13} /> Sort Z-A
+            </button>
+            {filterable && (
+              <>
+                <div className="border-t border-card-border my-1.5" />
+                <p className="px-2 py-1 text-xs text-muted-foreground">Filter by</p>
+                <div className="max-h-40 overflow-y-auto">
+                  {loadingValues ? (
+                    <div className="flex justify-center py-3">
+                      <Loader2 size={14} className="animate-spin text-muted-foreground" />
+                    </div>
+                  ) : distinctValues.length === 0 ? (
+                    <p className="px-2 py-1.5 text-xs text-muted-foreground">No values found</p>
+                  ) : (
+                    distinctValues.map((v) => (
+                      <label key={v} className="flex items-center gap-2 px-2 py-1.5 text-xs rounded-lg hover:bg-secondary cursor-pointer capitalize">
+                        <input
+                          type="checkbox"
+                          checked={selectedValues?.includes(v) ?? false}
+                          onChange={(e) => {
+                            const current = selectedValues ?? [];
+                            onFilterChange?.(e.target.checked ? [...current, v] : current.filter((x) => x !== v));
+                          }}
+                        />
+                        {v}
+                      </label>
+                    ))
+                  )}
+                </div>
+                {selectedValues && selectedValues.length > 0 && (
+                  <button onClick={() => onFilterChange?.([])} className="w-full text-center px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground mt-1">
+                    Clear filter
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function UsersSection({ token, toast, isSuperAdmin }: { token: string | null; toast: any; isSuperAdmin: boolean }) {
   const [users, setUsers] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
+  const [sortBy, setSortBy] = useState<string | null>(null);
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
+  const [genderFilter, setGenderFilter] = useState<string[]>([]);
+  const [cityFilter, setCityFilter] = useState<string[]>([]);
+  const [openHeaderMenu, setOpenHeaderMenu] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1070,6 +1179,12 @@ function UsersSection({ token, toast, isSuperAdmin }: { token: string | null; to
       const params = new URLSearchParams({ page: String(page) });
       if (search.trim()) params.set("search", search.trim());
       if (filter !== "all") params.set("filter", filter);
+      if (sortBy) {
+        params.set("sortBy", sortBy);
+        params.set("sortOrder", sortOrder);
+      }
+      if (genderFilter.length > 0) params.set("gender", genderFilter.join(","));
+      if (cityFilter.length > 0) params.set("city", cityFilter.join(","));
       const res = await fetch(`/api/admin/users?${params}`, { headers: { Authorization: `Bearer ${tokenRef.current}` } });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? `Failed to load users (${res.status})`);
@@ -1085,7 +1200,7 @@ function UsersSection({ token, toast, isSuperAdmin }: { token: string | null; to
     } finally {
       setLoading(false);
     }
-  }, [page, search, filter, toast]);
+  }, [page, search, filter, sortBy, sortOrder, genderFilter, cityFilter, toast]);
 
   useEffect(() => {
     const t = setTimeout(fetchUsers, 300);
@@ -1177,12 +1292,111 @@ function UsersSection({ token, toast, isSuperAdmin }: { token: string | null; to
               <thead className="bg-secondary/60">
                 <tr>
                   <th className="p-3 text-left font-medium text-muted-foreground">User</th>
-                  <th className="p-3 text-left font-medium text-muted-foreground">Age</th>
-                  <th className="p-3 text-left font-medium text-muted-foreground">City</th>
-                  <th className="p-3 text-left font-medium text-muted-foreground">Sparks</th>
+                  <th className="p-3 text-left font-medium text-muted-foreground">
+                    <ColumnHeaderMenu
+                      label="Gender"
+                      column="gender"
+                      sortBy={sortBy}
+                      sortOrder={sortOrder}
+                      onSort={(c, o) => {
+                        setSortBy(c);
+                        setSortOrder(o);
+                        setOpenHeaderMenu(null);
+                      }}
+                      filterable
+                      selectedValues={genderFilter}
+                      onFilterChange={setGenderFilter}
+                      isOpen={openHeaderMenu === "gender"}
+                      onToggle={() => setOpenHeaderMenu((v) => (v === "gender" ? null : "gender"))}
+                      token={token}
+                    />
+                  </th>
+                  <th className="p-3 text-left font-medium text-muted-foreground">
+                    <ColumnHeaderMenu
+                      label="Age"
+                      column="age"
+                      sortBy={sortBy}
+                      sortOrder={sortOrder}
+                      onSort={(c, o) => {
+                        setSortBy(c);
+                        setSortOrder(o);
+                        setOpenHeaderMenu(null);
+                      }}
+                      isOpen={openHeaderMenu === "age"}
+                      onToggle={() => setOpenHeaderMenu((v) => (v === "age" ? null : "age"))}
+                      token={token}
+                    />
+                  </th>
+                  <th className="p-3 text-left font-medium text-muted-foreground">
+                    <ColumnHeaderMenu
+                      label="City"
+                      column="city"
+                      sortBy={sortBy}
+                      sortOrder={sortOrder}
+                      onSort={(c, o) => {
+                        setSortBy(c);
+                        setSortOrder(o);
+                        setOpenHeaderMenu(null);
+                      }}
+                      filterable
+                      selectedValues={cityFilter}
+                      onFilterChange={setCityFilter}
+                      isOpen={openHeaderMenu === "city"}
+                      onToggle={() => setOpenHeaderMenu((v) => (v === "city" ? null : "city"))}
+                      token={token}
+                    />
+                  </th>
+                  <th className="p-3 text-left font-medium text-muted-foreground">
+                    <ColumnHeaderMenu
+                      label="Sparks"
+                      column="free_sparks_balance"
+                      sortBy={sortBy}
+                      sortOrder={sortOrder}
+                      onSort={(c, o) => {
+                        setSortBy(c);
+                        setSortOrder(o);
+                        setOpenHeaderMenu(null);
+                      }}
+                      isOpen={openHeaderMenu === "free_sparks_balance"}
+                      onToggle={() => setOpenHeaderMenu((v) => (v === "free_sparks_balance" ? null : "free_sparks_balance"))}
+                      token={token}
+                    />
+                  </th>
                   <th className="p-3 text-left font-medium text-muted-foreground">Status</th>
-                  <th className="p-3 text-left font-medium text-muted-foreground">Last Active</th>
-                  <th className="p-3 text-right font-medium text-muted-foreground">Joined</th>
+                  <th className="p-3 text-left font-medium text-muted-foreground">
+                    <ColumnHeaderMenu
+                      label="Last Active"
+                      column="last_active_at"
+                      sortBy={sortBy}
+                      sortOrder={sortOrder}
+                      onSort={(c, o) => {
+                        setSortBy(c);
+                        setSortOrder(o);
+                        setOpenHeaderMenu(null);
+                      }}
+                      isOpen={openHeaderMenu === "last_active_at"}
+                      onToggle={() => setOpenHeaderMenu((v) => (v === "last_active_at" ? null : "last_active_at"))}
+                      token={token}
+                    />
+                  </th>
+                  <th className="p-3 text-right font-medium text-muted-foreground">
+                    <div className="flex justify-end">
+                      <ColumnHeaderMenu
+                        label="Joined"
+                        column="created_at"
+                        sortBy={sortBy}
+                        sortOrder={sortOrder}
+                        onSort={(c, o) => {
+                          setSortBy(c);
+                          setSortOrder(o);
+                          setOpenHeaderMenu(null);
+                        }}
+                        isOpen={openHeaderMenu === "created_at"}
+                        onToggle={() => setOpenHeaderMenu((v) => (v === "created_at" ? null : "created_at"))}
+                        token={token}
+                      />
+                    </div>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -1200,6 +1414,7 @@ function UsersSection({ token, toast, isSuperAdmin }: { token: string | null; to
                         <span className="font-medium">{u.name}</span>
                       </div>
                     </td>
+                    <td className="p-3 text-muted-foreground capitalize">{u.gender || "—"}</td>
                     <td className="p-3 text-muted-foreground">{u.age}</td>
                     <td className="p-3 text-muted-foreground">{u.city || "—"}</td>
                     <td className="p-3 text-muted-foreground">{(u.free_sparks_balance ?? 0) + (u.paid_sparks_balance ?? 0)}</td>
@@ -1506,6 +1721,21 @@ function UserDetailSheet({
               </button>
             )}
           </div>
+
+          {user.last_shared_date_time && (
+            <div className="border-t border-border pt-4 space-y-1.5">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Last Shared Date</p>
+              <p className="text-xs">
+                With <span className="font-medium">{user.last_shared_date_with_name ?? "Unknown"}</span> —{" "}
+                {new Date(user.last_shared_date_time).toLocaleString()}
+              </p>
+              <p className="text-xs text-muted-foreground">{user.last_shared_date_location}</p>
+              {user.last_shared_date_notes && <p className="text-xs text-muted-foreground italic">"{user.last_shared_date_notes}"</p>}
+              <p className="text-xs text-muted-foreground">
+                Shared on {new Date(user.last_shared_date_created_at).toLocaleDateString()}
+              </p>
+            </div>
+          )}
 
           {!user.banned && (
             <div className="space-y-2 border-t border-border pt-4">

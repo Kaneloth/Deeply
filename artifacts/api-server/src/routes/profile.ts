@@ -1932,14 +1932,39 @@ router.post("/admin/referral-flags/:id/reject", requireAuth, requireAdminScope("
 /** GET /api/admin/users — search + paginate */
 router.get("/admin/users", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
   const adminUserId = req.user!.id;
-  const { search, filter, page = "1" } = req.query as { search?: string; filter?: string; page?: string };
+  const { search, filter, page = "1", sortBy, sortOrder, gender, city } = req.query as {
+    search?: string;
+    filter?: string;
+    page?: string;
+    sortBy?: string;
+    sortOrder?: string;
+    gender?: string;
+    city?: string;
+  };
   const PAGE_SIZE = 25;
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
+
+  // Allowlisted rather than passing sortBy straight through — this
+  // becomes a raw column name in the query below, so validating it
+  // against known-safe options first, rather than trusting the request
+  // directly, is the safe way to do this.
+  const SORTABLE_COLUMNS = new Set(["name", "gender", "age", "birthday", "city", "free_sparks_balance", "last_active_at", "created_at"]);
+  const requestedSort = sortBy && SORTABLE_COLUMNS.has(sortBy) ? sortBy : "created_at";
+  const ascendingRequested = sortOrder === "asc";
+  // Displayed age is computed fresh from birthday (see withComputedAges
+  // below), not necessarily the same as whatever's in the raw age
+  // column — sorting by that column directly could disagree with what
+  // admin actually sees. birthday is the real source of truth, and the
+  // relationship is inverted: an earlier birthdate means an OLDER
+  // person, so "age ascending" (youngest first) means birthday
+  // DESCENDING (most recent birthdate first).
+  const sortColumn = requestedSort === "age" ? "birthday" : requestedSort;
+  const ascending = requestedSort === "age" ? !ascendingRequested : ascendingRequested;
 
   let query = supabase
     .from("profiles")
     .select(
-      "id, name, age, birthday, city, photo_url, is_admin, admin_scopes, banned, ban_reason, suspended_until, suspension_reason, is_verified, free_sparks_balance, paid_sparks_balance, created_at, last_active_at",
+      "id, name, gender, age, birthday, city, photo_url, is_admin, admin_scopes, banned, ban_reason, suspended_until, suspension_reason, is_verified, free_sparks_balance, paid_sparks_balance, created_at, last_active_at, last_shared_date_with_name, last_shared_date_time, last_shared_date_location, last_shared_date_notes, last_shared_date_created_at",
       { count: "exact" },
     )
     // Never show the requesting admin their own account here — avoids
@@ -1947,7 +1972,7 @@ router.get("/admin/users", requireAuth, requireAdminScope("manage_users"), async
     // which (given bans/suspensions now take effect immediately) could
     // lock them out of their own account.
     .neq("id", adminUserId)
-    .order("created_at", { ascending: false });
+    .order(sortColumn, { ascending });
 
   if (search?.trim()) {
     query = query.ilike("name", `%${search.trim()}%`);
@@ -1962,6 +1987,10 @@ router.get("/admin/users", requireAuth, requireAdminScope("manage_users"), async
     const staleCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     query = query.or(`last_active_at.is.null,last_active_at.lt.${staleCutoff}`);
   }
+  // Value-based column filters (checkbox-list style) — multiple values
+  // selected means "any of these", same semantics as Excel's AutoFilter.
+  if (gender?.trim()) query = query.in("gender", gender.split(",").filter(Boolean));
+  if (city?.trim()) query = query.in("city", city.split(",").filter(Boolean));
 
   const from = (pageNum - 1) * PAGE_SIZE;
   const { data, count, error } = await query.range(from, from + PAGE_SIZE - 1);
@@ -1972,6 +2001,28 @@ router.get("/admin/users", requireAuth, requireAdminScope("manage_users"), async
   }
 
   res.json({ users: withComputedAges(data ?? []), total: count ?? 0, page: pageNum, pageSize: PAGE_SIZE });
+});
+
+/** GET /api/admin/users/distinct-values?column=gender|city — powers the
+ *  checkbox-list filter in each sortable column's header dropdown.
+ *  Allowlisted for the same reason sortBy is above — this becomes a raw
+ *  column name in the query. */
+router.get("/admin/users/distinct-values", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const { column } = req.query as { column?: string };
+  const ALLOWED_COLUMNS = new Set(["gender", "city"]);
+  if (!column || !ALLOWED_COLUMNS.has(column)) {
+    res.status(400).json({ error: "column must be one of: gender, city" });
+    return;
+  }
+
+  const { data, error } = await supabase.from("profiles").select(column).not(column, "is", null);
+  if (error) {
+    res.status(500).json({ error: "Failed to load distinct values" });
+    return;
+  }
+
+  const values = Array.from(new Set((data ?? []).map((row: any) => row[column]).filter(Boolean))).sort();
+  res.json({ values });
 });
 
 /** POST /api/admin/users/:userId/ban */

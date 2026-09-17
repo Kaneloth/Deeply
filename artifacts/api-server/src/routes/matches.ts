@@ -731,6 +731,22 @@ router.post("/matches/:matchId/share-date", requireAuth, async (req, res): Promi
 
   const expiresAt = new Date(parsedDateTime.getTime() + SHARED_DATE_EXPIRY_BUFFER_MS).toISOString();
 
+  // Persistent snapshot on the profile itself, kept indefinitely for
+  // admin lookup — deliberately independent of shared_dates' own
+  // 48-hour auto-cleanup, which only governs when the public link
+  // stops working for the recipient, a separate concern from this
+  // safety record. Overwritten on every share, not just the first.
+  const matchedUserId = match.user1_id === userId ? match.user2_id : match.user1_id;
+  const { data: matchedProfile } = await supabase.from("profiles").select("name").eq("id", matchedUserId).single();
+  const snapshotUpdate = {
+    last_shared_date_with_name: matchedProfile?.name ?? null,
+    last_shared_date_match_id: matchId,
+    last_shared_date_time: parsedDateTime.toISOString(),
+    last_shared_date_location: location.trim(),
+    last_shared_date_notes: notes?.trim() || null,
+    last_shared_date_created_at: new Date().toISOString(),
+  };
+
   if (existing) {
     const { error } = await supabase
       .from("shared_dates")
@@ -740,6 +756,7 @@ router.post("/matches/:matchId/share-date", requireAuth, async (req, res): Promi
       res.status(500).json({ error: "Failed to update shared date" });
       return;
     }
+    await supabase.from("profiles").update(snapshotUpdate).eq("id", userId);
     res.json({ token: existing.token, url: `${SHARE_DATE_BASE_URL}/date/${existing.token}` });
     return;
   }
@@ -759,6 +776,7 @@ router.post("/matches/:matchId/share-date", requireAuth, async (req, res): Promi
     res.status(500).json({ error: "Failed to create shared date" });
     return;
   }
+  await supabase.from("profiles").update(snapshotUpdate).eq("id", userId);
 
   res.status(201).json({ token, url: `${SHARE_DATE_BASE_URL}/date/${token}` });
 });
