@@ -909,6 +909,20 @@ export default function SettingsPage() {
             </button>
           )}
 
+          <button
+            onClick={() => openExternalLink("https://deeplydating.co.za/safety.html")}
+            className="w-full flex items-center justify-between bg-card border border-card-border rounded-2xl p-4"
+          >
+            <div className="flex items-center gap-3">
+              <ShieldCheck size={18} className="text-muted-foreground" />
+              <div className="text-left">
+                <p className="text-sm font-medium">Safety Tips</p>
+                <p className="text-xs text-muted-foreground">How we help you date safely, and advice for staying safe</p>
+              </div>
+            </div>
+            <ChevronRight size={16} className="text-muted-foreground shrink-0" />
+          </button>
+
           <div className="bg-card border border-card-border rounded-2xl p-4 space-y-3">
             <div className="flex items-center gap-3">
               <Moon size={18} className="text-muted-foreground" />
