@@ -11,6 +11,7 @@ import { AppShell } from '@/components/AppShell';
 import { patchConsoleIntoDebugLog } from '@/lib/debugLog';
 patchConsoleIntoDebugLog();
 import NotFound from '@/pages/not-found';
+import SharedDatePage from '@/pages/SharedDatePage';
 import AuthPage from '@/pages/AuthPage';
 import OnboardingPage from '@/pages/OnboardingPage';
 import DiscoverPage from '@/pages/DiscoverPage';
@@ -157,6 +158,7 @@ function Router() {
         <Route path="/" component={PublicAuthRoute} />
         <Route path="/reset-password" component={ResetPasswordPage} />
         <Route path="/auth/callback" component={AuthCallbackPage} />
+        <Route path="/date/:token" component={SharedDatePage} />
         
         {/* Protected Routes */}
         <Route path="/onboarding" component={ProtectedOnboardingRoute} />

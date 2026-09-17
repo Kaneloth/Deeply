@@ -39,7 +39,7 @@ function AppShellInner({ children }: AppShellProps) {
   // usual spot right before the JSX return — this effect needs it as a
   // dependency, and hooks must be called unconditionally before any
   // early return, so the value has to exist before that point too.
-  const hideChrome = location === "/" || location === "/onboarding" || location === "/reset-password";
+  const hideChrome = location === "/" || location === "/onboarding" || location === "/reset-password" || location.startsWith("/date/");
   const mainShouldExist = !blockInfo && !hideChrome;
 
   const mainRef = useRef<HTMLDivElement>(null);

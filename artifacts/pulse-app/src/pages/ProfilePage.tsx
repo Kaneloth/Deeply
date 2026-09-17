@@ -1097,7 +1097,11 @@ export default function ProfilePage() {
       <PageHeader title="Profile" />
 
       <div className="flex flex-col items-center mb-10">
-        <div className="relative w-44 h-44 flex items-center justify-center">
+        <button
+          onClick={() => setShowAddSheet(true)}
+          className="relative w-44 h-44 flex items-center justify-center"
+          aria-label="Add or change profile photo"
+        >
           <div className="w-28 h-28 rounded-full border-4 border-background bg-muted overflow-hidden shadow-2xl relative z-10">
             {profile?.photo_url ? (
               <img src={profile.photo_url} alt="Profile" className="w-full h-full object-cover" />
@@ -1107,10 +1111,17 @@ export default function ProfilePage() {
               </div>
             )}
           </div>
+          {/* Small camera-badge overlay — the same visual affordance
+              used on Instagram/WhatsApp to signal a tappable avatar,
+              since without it there's no visual cue this now does
+              anything different than before. */}
+          <div className="absolute bottom-2 right-2 z-20 w-8 h-8 rounded-full bg-primary border-2 border-background flex items-center justify-center shadow-md">
+            <Camera size={14} className="text-primary-foreground" />
+          </div>
           {/* Decorative rings */}
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-36 h-36 rounded-full border border-primary/20" />
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-44 h-44 rounded-full border border-primary/10" />
-        </div>
+        </button>
         
         <div className="mt-4 flex items-center gap-2">
           <div className="flex items-center gap-2 bg-secondary/50 border border-border px-3 py-1.5 rounded-full">
@@ -1128,89 +1139,6 @@ export default function ProfilePage() {
           )}
         </div>
       </div>
-
-      {/* Sparks */}
-      <button
-        onClick={() => setShowSparksModal(true)}
-        className="w-full flex items-center justify-between bg-card border border-card-border rounded-2xl p-4 mb-8"
-      >
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center shrink-0">
-            <SparkIcon size={18} className="text-primary" />
-          </div>
-          <div className="text-left">
-            <p className="font-['Syne'] font-bold text-base">{balance ?? 0} Sparks</p>
-            <p className="text-xs text-muted-foreground">Tap to recharge or see what they're for</p>
-          </div>
-        </div>
-      </button>
-
-      <VerificationSection />
-
-      {/* Boost Section */}
-      <div className="bg-card border border-card-border rounded-2xl p-5 mb-8">
-        <div className="flex items-center gap-3 mb-3">
-          <div className="w-10 h-10 rounded-full bg-gradient-accent flex items-center justify-center text-white shrink-0">
-            <Rocket size={18} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <h3 className="font-['Syne'] font-bold text-base">Boost</h3>
-            <p className="text-xs text-muted-foreground">Priority placement in Discover for 5 hours</p>
-          </div>
-        </div>
-
-        {boostStatus?.is_active && boostStatus.boosted_until ? (
-          <div className="text-center py-2">
-            <p className="text-sm font-semibold text-primary">
-              Boosted — <BoostCountdown until={boostStatus.boosted_until} /> left
-            </p>
-          </div>
-        ) : (
-          <Button
-            onClick={handleBoost}
-            disabled={isBoosting || (boostStatus !== null && !boostStatus.can_boost)}
-            className="w-full h-12 rounded-xl bg-gradient-accent border-0 text-white font-semibold"
-          >
-            {isBoosting
-              ? "Boosting..."
-              : boostStatus && !boostStatus.can_boost
-                ? "Available again tomorrow"
-                : "Boost My Profile"}
-          </Button>
-        )}
-      </div>
-
-      {referralProgramEnabled && profile?.referral_code && (
-        <div className="bg-card border border-card-border rounded-2xl p-5 mb-8">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-full bg-gradient-accent flex items-center justify-center text-white shrink-0">
-              <Gift size={18} />
-            </div>
-            <div className="flex-1 min-w-0">
-              <h3 className="font-['Syne'] font-bold text-base">Refer a Friend</h3>
-              <p className="text-xs text-muted-foreground">
-                Earn Sparks for every friend who joins using your code
-                {typeof profile.referral_count === "number" && profile.referral_count > 0
-                  ? ` — ${profile.referral_count} so far`
-                  : ""}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between bg-secondary rounded-xl px-4 py-3 mb-3">
-            <span className="font-mono font-semibold tracking-wide">{profile.referral_code}</span>
-            <span className="text-xs text-muted-foreground">Quote this to support too</span>
-          </div>
-
-          <Button
-            onClick={handleShareReferralCode}
-            className="w-full h-12 rounded-xl bg-gradient-accent border-0 text-white font-semibold flex items-center justify-center gap-2"
-          >
-            <Share2 size={16} />
-            {referralCopied ? "Copied!" : "Share Your Code"}
-          </Button>
-        </div>
-      )}
 
       {/* Photos Section */}
       <div className="bg-card border border-card-border rounded-2xl p-5 mb-8">
@@ -1320,6 +1248,90 @@ export default function ProfilePage() {
           className="hidden"
         />
       </div>
+
+      {/* Sparks */}
+      <button
+        onClick={() => setShowSparksModal(true)}
+        className="w-full flex items-center justify-between bg-card border border-card-border rounded-2xl p-4 mb-8"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center shrink-0">
+            <SparkIcon size={18} className="text-primary" />
+          </div>
+          <div className="text-left">
+            <p className="font-['Syne'] font-bold text-base">{balance ?? 0} Sparks</p>
+            <p className="text-xs text-muted-foreground">Tap to recharge or see what they're for</p>
+          </div>
+        </div>
+      </button>
+
+      <VerificationSection />
+
+      {/* Boost Section */}
+      <div className="bg-card border border-card-border rounded-2xl p-5 mb-8">
+        <div className="flex items-center gap-3 mb-3">
+          <div className="w-10 h-10 rounded-full bg-gradient-accent flex items-center justify-center text-white shrink-0">
+            <Rocket size={18} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="font-['Syne'] font-bold text-base">Boost</h3>
+            <p className="text-xs text-muted-foreground">Priority placement in Discover for 5 hours</p>
+          </div>
+        </div>
+
+        {boostStatus?.is_active && boostStatus.boosted_until ? (
+          <div className="text-center py-2">
+            <p className="text-sm font-semibold text-primary">
+              Boosted — <BoostCountdown until={boostStatus.boosted_until} /> left
+            </p>
+          </div>
+        ) : (
+          <Button
+            onClick={handleBoost}
+            disabled={isBoosting || (boostStatus !== null && !boostStatus.can_boost)}
+            className="w-full h-12 rounded-xl bg-gradient-accent border-0 text-white font-semibold"
+          >
+            {isBoosting
+              ? "Boosting..."
+              : boostStatus && !boostStatus.can_boost
+                ? "Available again tomorrow"
+                : "Boost My Profile"}
+          </Button>
+        )}
+      </div>
+
+      {referralProgramEnabled && profile?.referral_code && (
+        <div className="bg-card border border-card-border rounded-2xl p-5 mb-8">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-10 h-10 rounded-full bg-gradient-accent flex items-center justify-center text-white shrink-0">
+              <Gift size={18} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-['Syne'] font-bold text-base">Refer a Friend</h3>
+              <p className="text-xs text-muted-foreground">
+                Earn Sparks for every friend who joins using your code
+                {typeof profile.referral_count === "number" && profile.referral_count > 0
+                  ? ` — ${profile.referral_count} so far`
+                  : ""}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between bg-secondary rounded-xl px-4 py-3 mb-3">
+            <span className="font-mono font-semibold tracking-wide">{profile.referral_code}</span>
+            <span className="text-xs text-muted-foreground">Quote this to support too</span>
+          </div>
+
+          <Button
+            onClick={handleShareReferralCode}
+            className="w-full h-12 rounded-xl bg-gradient-accent border-0 text-white font-semibold flex items-center justify-center gap-2"
+          >
+            <Share2 size={16} />
+            {referralCopied ? "Copied!" : "Share Your Code"}
+          </Button>
+        </div>
+      )}
+
 
       {/* Add Photo/Video choice sheet */}
       <AnimatePresence>

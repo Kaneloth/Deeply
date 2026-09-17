@@ -175,6 +175,12 @@ export default function SettingsPage() {
   const [isIncognito, setIsIncognito] = useState(false);
   const [incognitoEnabled, setIncognitoEnabled] = useState(false);
   const [isTogglingIncognito, setIsTogglingIncognito] = useState(false);
+  const [snoozeUntil, setSnoozeUntil] = useState<string | null>(null);
+  const [awayStatus, setAwayStatus] = useState("");
+  const [snoozeDuration, setSnoozeDuration] = useState<"24h" | "72h" | "1w" | "indefinite">("72h");
+  const [awayStatusPreset, setAwayStatusPreset] = useState("Taking a break");
+  const [customAwayStatus, setCustomAwayStatus] = useState("");
+  const [isSnoozing, setIsSnoozing] = useState(false);
 
   const [profileViewsVisible, setProfileViewsVisible] = useState(true);
   const [isTogglingProfileViews, setIsTogglingProfileViews] = useState(false);
@@ -311,6 +317,47 @@ export default function SettingsPage() {
     }
   };
 
+  const AWAY_STATUS_PRESETS = ["Taking a break", "Traveling", "Focused on work"];
+
+  const handleStartSnooze = async () => {
+    setIsSnoozing(true);
+    try {
+      const finalAwayStatus = awayStatusPreset === "Custom" ? customAwayStatus.trim() : awayStatusPreset;
+      const res = await fetch("/api/profile/me/snooze", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ duration: snoozeDuration, away_status: finalAwayStatus || undefined }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "Failed to start snooze");
+      setSnoozeUntil(body.snooze_until);
+      setAwayStatus(body.away_status ?? "");
+      toast({ title: "Profile snoozed", description: "You're hidden from new people. Your matches can still reach you." });
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to start snooze.", variant: "destructive" });
+    } finally {
+      setIsSnoozing(false);
+    }
+  };
+
+  const handleEndSnooze = async () => {
+    setIsSnoozing(true);
+    try {
+      const res = await fetch("/api/profile/me/unsnooze", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Failed to end snooze");
+      setSnoozeUntil(null);
+      setAwayStatus("");
+      toast({ title: "Your profile is active again. Welcome back!" });
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to end snooze.", variant: "destructive" });
+    } finally {
+      setIsSnoozing(false);
+    }
+  };
+
   const handleToggleProfileViews = async () => {
     const next = !profileViewsVisible;
     setIsTogglingProfileViews(true);
@@ -428,6 +475,8 @@ export default function SettingsPage() {
           setIsIncognito(!!body.is_incognito);
           setProfileViewsVisible(body.notify_profile_views ?? true);
           setShareReadReceipts(body.share_read_receipts ?? true);
+          setSnoozeUntil(body.snooze_until ?? null);
+          setAwayStatus(body.away_status ?? "");
         }
       })
       .catch(() => {});
@@ -859,6 +908,73 @@ export default function SettingsPage() {
               </div>
             </button>
           )}
+
+          <div className="bg-card border border-card-border rounded-2xl p-4 space-y-3">
+            <div className="flex items-center gap-3">
+              <Moon size={18} className="text-muted-foreground" />
+              <div>
+                <p className="text-sm font-medium">Snooze</p>
+                <p className="text-xs text-muted-foreground">
+                  {snoozeUntil
+                    ? `Hidden from new people${awayStatus ? ` · ${awayStatus}` : ""}`
+                    : "Take a break. Your matches and chats will still be here when you're ready."}
+                </p>
+              </div>
+            </div>
+
+            {snoozeUntil ? (
+              <button
+                onClick={handleEndSnooze}
+                disabled={isSnoozing}
+                className="w-full h-10 rounded-xl text-xs font-semibold bg-primary text-primary-foreground disabled:opacity-50"
+              >
+                {isSnoozing ? "Ending snooze..." : "End Snooze"}
+              </button>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {(["24h", "72h", "1w", "indefinite"] as const).map((d) => (
+                    <button
+                      key={d}
+                      onClick={() => setSnoozeDuration(d)}
+                      className={`py-2 px-2 rounded-lg text-xs font-medium leading-tight ${
+                        snoozeDuration === d ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
+                      }`}
+                    >
+                      {d === "24h" ? "24 hours" : d === "72h" ? "72 hours" : d === "1w" ? "1 week" : "Until I'm back"}
+                    </button>
+                  ))}
+                </div>
+                <select
+                  value={awayStatusPreset}
+                  onChange={(e) => setAwayStatusPreset(e.target.value)}
+                  className="w-full h-9 rounded-lg bg-background border border-card-border text-xs px-3"
+                >
+                  {AWAY_STATUS_PRESETS.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                  <option value="Custom">Custom...</option>
+                </select>
+                {awayStatusPreset === "Custom" && (
+                  <Input
+                    value={customAwayStatus}
+                    onChange={(e) => setCustomAwayStatus(e.target.value)}
+                    placeholder="e.g. Back in a couple weeks"
+                    className="h-9 text-xs bg-background border-card-border rounded-lg"
+                  />
+                )}
+                <button
+                  onClick={handleStartSnooze}
+                  disabled={isSnoozing}
+                  className="w-full h-10 rounded-xl text-xs font-semibold border border-primary/30 text-primary disabled:opacity-50"
+                >
+                  {isSnoozing ? "Starting..." : "Start Snooze"}
+                </button>
+              </>
+            )}
+          </div>
 
           <div className="bg-card border border-card-border rounded-2xl overflow-hidden">
             <button

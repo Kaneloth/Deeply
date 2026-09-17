@@ -6,7 +6,7 @@ import { useSparks } from "@/contexts/SparksContext";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, Send, Undo2, Eye, CheckCheck, Smile, ImagePlus, X, MoreVertical, UserX, Flag, Copy, Trash2, Reply, Loader2, Lock, Clock, HeartCrack, Video, Phone, PhoneOff } from "lucide-react";
+import { ChevronLeft, Send, Undo2, Eye, CheckCheck, Smile, ImagePlus, X, MoreVertical, UserX, Flag, Copy, Trash2, Reply, Loader2, Lock, Clock, HeartCrack, Video, Phone, PhoneOff, ShieldCheck, MapPin } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { EmojiPicker } from "@/components/EmojiPicker";
 import ReactionPicker from "emoji-picker-react";
@@ -22,6 +22,7 @@ interface MatchedUser {
   id: string;
   name: string;
   photo_url: string | null;
+  photo_verified: boolean;
 }
 
 // Chat-unlock status — see the backend's chat-unlock-helper.ts for the
@@ -202,6 +203,21 @@ export default function ChatPage() {
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
+  const [verificationRequest, setVerificationRequest] = useState<{
+    id: string;
+    requester_id: string;
+    recipient_id: string;
+    status: "pending" | "completed" | "declined" | "expired";
+  } | null>(null);
+  const [isRequestingVerification, setIsRequestingVerification] = useState(false);
+  const [isDecliningVerification, setIsDecliningVerification] = useState(false);
+  const [showShareDateModal, setShowShareDateModal] = useState(false);
+  const [sharedDate, setSharedDate] = useState<{ id?: string; token: string; url?: string; date_time: string; location: string; notes: string | null } | null>(null);
+  const [shareDateTime, setShareDateTime] = useState("");
+  const [shareLocation, setShareLocation] = useState("");
+  const [shareNotes, setShareNotes] = useState("");
+  const [isSharingDate, setIsSharingDate] = useState(false);
+  const [isRevokingDate, setIsRevokingDate] = useState(false);
 
   // Video calling — see video-calls.ts for the full backend state
   // machine this mirrors. myGender determines whether the request/call
@@ -853,6 +869,137 @@ export default function ChatPage() {
     const interval = setInterval(fetchVideoCallStatus, 3000);
     return () => clearInterval(interval);
   }, [matchId, token]);
+
+  // Fetched once on open, not continuously polled like video calls
+  // above — a verification request lives for up to 72 hours and isn't
+  // a live, time-critical signal the way an incoming call is. The
+  // primary delivery mechanism is the notifications system (the bell),
+  // per the feature's own spec; this just needs to reflect the current
+  // status while the chat happens to be open.
+  useEffect(() => {
+    if (!matchId) return;
+    fetch(`/api/matches/${matchId}/verification-request`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => setVerificationRequest(body ?? null))
+      .catch(() => {});
+  }, [matchId, token]);
+
+  const handleRequestVerification = async () => {
+    if (!matchId) return;
+    setIsRequestingVerification(true);
+    try {
+      const res = await fetch(`/api/matches/${matchId}/request-verification`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "Failed to send request");
+      setVerificationRequest(body);
+      toast({ title: "Verification request sent" });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to send verification request.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRequestingVerification(false);
+    }
+  };
+
+  const handleDeclineVerificationRequest = async () => {
+    if (!verificationRequest) return;
+    setIsDecliningVerification(true);
+    try {
+      const res = await fetch(`/api/verification-requests/${verificationRequest.id}/decline`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Failed to decline");
+      setVerificationRequest((prev) => (prev ? { ...prev, status: "declined" } : null));
+    } catch {
+      toast({ title: "Error", description: "Failed to decline request.", variant: "destructive" });
+    } finally {
+      setIsDecliningVerification(false);
+    }
+  };
+
+  // Fetched once on open, same reasoning as verification requests above
+  // — this isn't a live signal, just current state to reflect while the
+  // chat happens to be open.
+  useEffect(() => {
+    if (!matchId) return;
+    fetch(`/api/matches/${matchId}/share-date`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (body) {
+          setSharedDate(body);
+          // Pre-fills the form with the existing share's details too,
+          // not just the match's own info — per spec, editing later
+          // should feel like editing what's already there, not
+          // starting over from a blank form.
+          setShareDateTime(body.date_time ? new Date(body.date_time).toISOString().slice(0, 16) : "");
+          setShareLocation(body.location ?? "");
+          setShareNotes(body.notes ?? "");
+        }
+      })
+      .catch(() => {});
+  }, [matchId, token]);
+
+  const handleShareDate = async () => {
+    if (!matchId || !shareDateTime || !shareLocation.trim()) {
+      toast({ title: "Date/time and location are required", variant: "destructive" });
+      return;
+    }
+    setIsSharingDate(true);
+    try {
+      const res = await fetch(`/api/matches/${matchId}/share-date`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          date_time: new Date(shareDateTime).toISOString(),
+          location: shareLocation.trim(),
+          notes: shareNotes.trim() || undefined,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "Failed to create link");
+      setSharedDate((prev) => ({
+        id: prev?.id,
+        token: body.token,
+        url: body.url,
+        date_time: new Date(shareDateTime).toISOString(),
+        location: shareLocation.trim(),
+        notes: shareNotes.trim() || null,
+      }));
+      toast({ title: "Link ready to share" });
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to create link.", variant: "destructive" });
+    } finally {
+      setIsSharingDate(false);
+    }
+  };
+
+  const handleRevokeSharedDate = async () => {
+    if (!sharedDate?.id) return;
+    setIsRevokingDate(true);
+    try {
+      const res = await fetch(`/api/shared-dates/${sharedDate.id}/revoke`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Failed to revoke");
+      setSharedDate(null);
+      setShareDateTime("");
+      setShareLocation("");
+      setShareNotes("");
+      toast({ title: "Link revoked" });
+    } catch {
+      toast({ title: "Error", description: "Failed to revoke link.", variant: "destructive" });
+    } finally {
+      setIsRevokingDate(false);
+    }
+  };
 
   // Covers whichever party did NOT directly call accept/answer/call
   // themselves (those three already store their own credentials
@@ -1511,6 +1658,27 @@ export default function ChatPage() {
                   >
                     <Flag size={15} /> Report and block
                   </button>
+                  {!match.matched_user?.photo_verified && (!verificationRequest || verificationRequest.status !== "pending") && (
+                    <button
+                      onClick={() => {
+                        setShowHeaderMenu(false);
+                        handleRequestVerification();
+                      }}
+                      disabled={isRequestingVerification}
+                      className="flex items-center gap-2.5 w-full px-4 py-3 text-sm text-foreground hover:bg-secondary transition-colors disabled:opacity-50 whitespace-nowrap border-t border-card-border"
+                    >
+                      <ShieldCheck size={15} className="text-muted-foreground" /> Request Verification
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      setShowHeaderMenu(false);
+                      setShowShareDateModal(true);
+                    }}
+                    className="flex items-center gap-2.5 w-full px-4 py-3 text-sm text-foreground hover:bg-secondary transition-colors whitespace-nowrap border-t border-card-border"
+                  >
+                    <MapPin size={15} className="text-muted-foreground" /> Share Date
+                  </button>
                 </div>
               </>
             )}
@@ -1541,6 +1709,34 @@ export default function ChatPage() {
                 ? "Your match didn't reply in time — your Sparks were refunded. Send another message to try again."
                 : "You missed this connection — reply now to revive it (full unlock cost)."}
             </span>
+          </div>
+        )}
+
+        {verificationRequest?.status === "pending" && verificationRequest.requester_id === userId && (
+          <div className="flex items-center gap-1.5 mt-2.5 text-xs text-muted-foreground">
+            <ShieldCheck size={13} className="text-primary shrink-0" />
+            <span>Verification requested — you'll be notified if they complete it.</span>
+          </div>
+        )}
+        {verificationRequest?.status === "pending" && verificationRequest.recipient_id === userId && (
+          <div className="flex items-center gap-2 mt-2.5 p-2.5 rounded-xl bg-primary/5 border border-primary/20">
+            <ShieldCheck size={16} className="text-primary shrink-0" />
+            <p className="text-xs flex-1">
+              Want to be sure you're talking to a real person? {match.matched_user?.name} would like you to verify your profile.
+            </p>
+            <button
+              onClick={() => setLocation("/profile")}
+              className="text-xs font-semibold text-primary shrink-0"
+            >
+              Verify
+            </button>
+            <button
+              onClick={handleDeclineVerificationRequest}
+              disabled={isDecliningVerification}
+              className="text-xs text-muted-foreground shrink-0 disabled:opacity-50"
+            >
+              Dismiss
+            </button>
           </div>
         )}
       </header>
@@ -1724,6 +1920,104 @@ export default function ChatPage() {
           onClose={() => setShowReportModal(false)}
           onSuccess={() => setLocation("/matches")}
         />
+      )}
+
+      {showShareDateModal && (
+        <div className="fixed inset-0 z-[100] bg-black/40 flex items-end sm:items-center justify-center">
+          <div className="w-full max-w-sm bg-card rounded-t-3xl sm:rounded-3xl p-5 pb-8 space-y-4 max-h-[90dvh] overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold">Share Date</h3>
+              <button onClick={() => setShowShareDateModal(false)} className="text-muted-foreground">
+                <X size={18} />
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Let someone you trust know where you'll be and who you're meeting.
+            </p>
+
+            <div className="flex items-center gap-3 p-3 bg-secondary/50 rounded-xl">
+              <div className="w-10 h-10 rounded-full bg-secondary overflow-hidden shrink-0">
+                {match.matched_user?.photo_url ? (
+                  <img src={match.matched_user.photo_url} alt="" className="w-full h-full object-cover" />
+                ) : null}
+              </div>
+              <p className="text-sm font-medium">{match.matched_user?.name}</p>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-muted-foreground">Date & time</label>
+                <input
+                  type="datetime-local"
+                  value={shareDateTime}
+                  onChange={(e) => setShareDateTime(e.target.value)}
+                  className="w-full h-10 px-3 rounded-xl bg-background border border-card-border text-sm mt-1"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Location</label>
+                <input
+                  value={shareLocation}
+                  onChange={(e) => setShareLocation(e.target.value)}
+                  placeholder="e.g. Cafe on Main St"
+                  className="w-full h-10 px-3 rounded-xl bg-background border border-card-border text-sm mt-1"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Notes (optional)</label>
+                <textarea
+                  value={shareNotes}
+                  onChange={(e) => setShareNotes(e.target.value)}
+                  placeholder="e.g. I'll text you when I'm home"
+                  rows={2}
+                  className="w-full px-3 py-2 rounded-xl bg-background border border-card-border text-sm mt-1 resize-none"
+                />
+              </div>
+            </div>
+
+            {sharedDate ? (
+              <div className="space-y-2">
+                <div className="p-3 bg-primary/5 border border-primary/20 rounded-xl space-y-2">
+                  <p className="text-xs text-muted-foreground">Your link</p>
+                  <p className="text-xs font-mono break-all">{sharedDate.url}</p>
+                  <button
+                    onClick={() => {
+                      if (sharedDate.url) {
+                        navigator.clipboard.writeText(sharedDate.url);
+                        toast({ title: "Link copied" });
+                      }
+                    }}
+                    className="text-xs font-semibold text-primary"
+                  >
+                    Copy Link
+                  </button>
+                </div>
+                <button
+                  onClick={handleShareDate}
+                  disabled={isSharingDate}
+                  className="w-full h-10 rounded-xl text-sm font-semibold bg-gradient-accent text-white disabled:opacity-50"
+                >
+                  {isSharingDate ? "Updating..." : "Update Link"}
+                </button>
+                <button
+                  onClick={handleRevokeSharedDate}
+                  disabled={isRevokingDate}
+                  className="w-full h-10 rounded-xl text-sm font-semibold text-destructive disabled:opacity-50"
+                >
+                  {isRevokingDate ? "Revoking..." : "Revoke Link"}
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={handleShareDate}
+                disabled={isSharingDate}
+                className="w-full h-10 rounded-xl text-sm font-semibold bg-gradient-accent text-white disabled:opacity-50"
+              >
+                {isSharingDate ? "Generating..." : "Generate Link"}
+              </button>
+            )}
+          </div>
+        </div>
       )}
 
       {/* Messages Area */}
