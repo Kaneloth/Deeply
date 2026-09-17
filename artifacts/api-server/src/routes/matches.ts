@@ -689,6 +689,14 @@ router.post("/verification-requests/:requestId/decline", requireAuth, async (req
 });
 
 const SHARED_DATE_EXPIRY_BUFFER_MS = 48 * 60 * 60 * 1000;
+// Same fallback pattern already used in this project's scheduled
+// functions (e.g. delete-stale-incomplete-accounts.mts). Constructed
+// server-side deliberately — window.location.origin on the client is
+// unreliable inside a native app's WebView, where it typically
+// resolves to an internal origin (e.g. https://localhost) rather than
+// the real public domain, which is exactly what caused shared links to
+// be broken/unrecognizable when pasted elsewhere.
+const SHARE_DATE_BASE_URL = process.env.APP_BASE_URL ?? "https://app.deeplydating.co.za";
 
 /** POST /api/matches/:matchId/share-date — creates or updates (upserts)
  *  this match's shared date. Per spec, editing later reflects in the
@@ -732,7 +740,7 @@ router.post("/matches/:matchId/share-date", requireAuth, async (req, res): Promi
       res.status(500).json({ error: "Failed to update shared date" });
       return;
     }
-    res.json({ token: existing.token });
+    res.json({ token: existing.token, url: `${SHARE_DATE_BASE_URL}/date/${existing.token}` });
     return;
   }
 
@@ -752,7 +760,7 @@ router.post("/matches/:matchId/share-date", requireAuth, async (req, res): Promi
     return;
   }
 
-  res.status(201).json({ token });
+  res.status(201).json({ token, url: `${SHARE_DATE_BASE_URL}/date/${token}` });
 });
 
 /** GET /api/matches/:matchId/share-date — the current active share for
@@ -775,7 +783,7 @@ router.get("/matches/:matchId/share-date", requireAuth, async (req, res): Promis
     .is("revoked_at", null)
     .maybeSingle();
 
-  res.json(data ?? null);
+  res.json(data ? { ...data, url: `${SHARE_DATE_BASE_URL}/date/${data.token}` } : null);
 });
 
 /** POST /api/shared-dates/:id/revoke — only the person who created the
