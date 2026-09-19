@@ -7,7 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ProfileCard, type ProfileCardData } from "@/components/ProfileCard";
-import { X, Heart, MessageCircle, Star, RotateCcw, Mic } from "lucide-react";
+import { X, Heart, MessageCircle, Star, RotateCcw, Mic, ShieldCheck } from "lucide-react";
+import { Capacitor } from "@capacitor/core";
+import { Browser } from "@capacitor/browser";
 import { useToast } from "@/hooks/use-toast";
 import { useSparks } from "@/contexts/SparksContext";
 import { useDiscoverControls } from "@/contexts/DiscoverControlsContext";
@@ -195,6 +197,53 @@ export default function DiscoverPage() {
   // setting is actually known, same fix shape as the onboarding guard's
   // "don't render on a stale/default value" fix earlier this session.
   const [voiceQuestionNudgeSettingsLoaded, setVoiceQuestionNudgeSettingsLoaded] = useState(false);
+
+  // Post-onboarding safety-video prompt — shown once, at the top of
+  // Discover, until the person either watches it or dismisses it.
+  // Deliberately server-persisted (not localStorage like the voice-
+  // question nudge above) via the profile itself, so it survives
+  // across devices/reinstalls rather than just this one device.
+  const [showSafetyVideoPrompt, setShowSafetyVideoPrompt] = useState(false);
+  const [isHandlingSafetyVideo, setIsHandlingSafetyVideo] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/profile/me", { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (body && !body.safety_video_watched_at && !body.safety_video_prompt_dismissed_at) {
+          setShowSafetyVideoPrompt(true);
+        }
+      })
+      .catch(() => {});
+  }, [token]);
+
+  const markSafetyVideoInteraction = async (action: "watched" | "dismissed") => {
+    setIsHandlingSafetyVideo(true);
+    try {
+      await fetch("/api/profile/me/safety-video-interaction", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action }),
+      });
+    } catch {
+      // Non-fatal — this is a one-time awareness prompt, not something
+      // that should ever block or retry aggressively if the network
+      // call itself fails. Worst case it reappears once more next time.
+    } finally {
+      setShowSafetyVideoPrompt(false);
+      setIsHandlingSafetyVideo(false);
+    }
+  };
+
+  const handleWatchSafetyVideo = async () => {
+    await markSafetyVideoInteraction("watched");
+    const url = "https://deeplydating.co.za/safety.html#video";
+    if (Capacitor.isNativePlatform()) {
+      await Browser.open({ url });
+    } else {
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+  };
 
   const voiceQuestionNudgeStorageKey = `deeply_voice_question_nudge_dismissed_at_${userId}`;
 
@@ -668,6 +717,31 @@ export default function DiscoverPage() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden px-2 pb-1 pt-2">
+      {showSafetyVideoPrompt && visibleCards.length > 0 && (
+        <div className="flex items-center gap-3 bg-gradient-accent rounded-2xl p-3 mb-2 text-white shadow-lg shrink-0">
+          <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+            <ShieldCheck size={16} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold leading-tight">Your safety, built in</p>
+            <p className="text-xs text-white/80 leading-tight">See how video calls, verification, and date sharing work</p>
+          </div>
+          <button
+            onClick={handleWatchSafetyVideo}
+            disabled={isHandlingSafetyVideo}
+            className="px-3 py-1.5 rounded-full bg-white text-primary text-xs font-semibold shrink-0 disabled:opacity-50"
+          >
+            Watch
+          </button>
+          <button
+            onClick={() => markSafetyVideoInteraction("dismissed")}
+            disabled={isHandlingSafetyVideo}
+            className="text-white/70 shrink-0 disabled:opacity-50"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
       {voiceQuestionNudgeSettingsLoaded && voiceQuestionNudgeEnabled && hasActiveVoiceQuestion === false && !voiceQuestionNudgeDismissed && visibleCards.length > 0 && (
         <div className="flex items-center gap-3 bg-gradient-accent rounded-2xl p-3 mb-2 text-white shadow-lg shrink-0">
           <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center shrink-0">

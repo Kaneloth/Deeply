@@ -22,7 +22,7 @@ import { PhoneVerificationFlow } from "@/components/PhoneVerificationFlow";
 import {
   LogOut, Moon, Sun, Type, Lock, HelpCircle, LifeBuoy, Trash2,
   ChevronRight, AlertTriangle, Eye, EyeOff, Mail, EyeOff as IncognitoIcon,
-  ShieldOff, X as XIcon, ScanEye, Send, FileText, ShieldCheck,
+  ShieldOff, X as XIcon, ScanEye, Send, FileText, ShieldCheck, PlayCircle,
   Fingerprint, Loader2, Info, CheckCheck, Phone, Users,
 } from "lucide-react";
 
@@ -918,6 +918,20 @@ export default function SettingsPage() {
               <div className="text-left">
                 <p className="text-sm font-medium">Safety Tips</p>
                 <p className="text-xs text-muted-foreground">How we help you date safely, and advice for staying safe</p>
+              </div>
+            </div>
+            <ChevronRight size={16} className="text-muted-foreground shrink-0" />
+          </button>
+
+          <button
+            onClick={() => openExternalLink("https://deeplydating.co.za/safety.html#video")}
+            className="w-full flex items-center justify-between bg-card border border-card-border rounded-2xl p-4"
+          >
+            <div className="flex items-center gap-3">
+              <PlayCircle size={18} className="text-muted-foreground" />
+              <div className="text-left">
+                <p className="text-sm font-medium">Safety Video</p>
+                <p className="text-xs text-muted-foreground">A quick look at how Deeply keeps you safe</p>
               </div>
             </div>
             <ChevronRight size={16} className="text-muted-foreground shrink-0" />

@@ -3826,4 +3826,28 @@ router.post("/profile/_internal/snooze-reminder-check", async (req, res): Promis
   res.status(200).json({ notified: dueForReminder?.length ?? 0 });
 });
 
+/** POST /api/profile/me/safety-video-interaction — marks either that the
+ *  person tapped Watch, or dismissed the post-onboarding safety-video
+ *  prompt on Discover with "Later". Either one means the prompt stops
+ *  showing for them going forward. Kept as its own small endpoint
+ *  rather than folded into PUT /profile/me, which already carries its
+ *  own unrelated, more complex founder-claim side effects. */
+router.post("/profile/me/safety-video-interaction", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.id;
+  const { action } = req.body as { action?: "watched" | "dismissed" };
+
+  if (action !== "watched" && action !== "dismissed") {
+    res.status(400).json({ error: "action must be 'watched' or 'dismissed'" });
+    return;
+  }
+
+  const field = action === "watched" ? "safety_video_watched_at" : "safety_video_prompt_dismissed_at";
+  await supabase
+    .from("profiles")
+    .update({ [field]: new Date().toISOString() })
+    .eq("id", userId);
+
+  res.sendStatus(204);
+});
+
 export default router;
