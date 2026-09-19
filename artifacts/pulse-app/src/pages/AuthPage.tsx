@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { Device } from "@capacitor/device";
+import { getOrCreateWebDeviceFingerprint } from "@/lib/webDeviceFingerprint";
 import { GoogleSignIn, ErrorCode as GoogleSignInErrorCode } from "@capawesome/capacitor-google-sign-in";
 import { BiometricAuth, AndroidBiometryStrength } from "@aparajita/capacitor-biometric-auth";
 import {
@@ -302,12 +303,12 @@ export default function AuthPage() {
       // onboarding instead, not at signup — see OnboardingPage.tsx.
       const { confirmPassword, ...payload } = data;
 
-      // Native-only — there's no equally reliable device identifier on
-      // web, so this is simply omitted there (undefined, never sent as
-      // an empty string or fabricated value). This feeds the grant-
-      // abuse cooldown check in sparks-helper.ts; a missing value there
-      // just means that specific defense doesn't apply to this signup,
-      // not an error.
+      // Native uses the real device identifier. Web falls back to a
+      // persistent, localStorage-based fingerprint (see
+      // webDeviceFingerprint.ts for its real limits — much weaker than
+      // a genuine device ID, but still better than sending nothing at
+      // all). This feeds the grant-abuse cooldown check in
+      // sparks-helper.ts either way.
       let device_id: string | undefined;
       if (Capacitor.isNativePlatform()) {
         try {
@@ -318,6 +319,8 @@ export default function AuthPage() {
           // read a device identifier that's only used for abuse
           // detection, not required for the account to function.
         }
+      } else {
+        device_id = getOrCreateWebDeviceFingerprint();
       }
 
       const res = await fetch("/api/auth/signup", {
@@ -365,6 +368,8 @@ export default function AuthPage() {
         } catch {
           // Non-fatal — see reasoning above.
         }
+      } else {
+        device_id = getOrCreateWebDeviceFingerprint();
       }
       const res = await fetch("/api/auth/forgot-password", {
         method: "POST",

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabaseClient } from "@/lib/supabaseClient";
+import { getOrCreateWebDeviceFingerprint } from "@/lib/webDeviceFingerprint";
 
 /** Landing point for /auth/callback — this is the redirectTo URL passed
  *  to supabase.auth.signInWithOAuth. Supabase's client-side SDK parses
@@ -40,17 +41,25 @@ export default function AuthCallbackPage() {
       // abuse-cooldown system had zero visibility into any Google
       // sign-up — confirmed via a real investigation into a suspected
       // mass-signup pattern where every matching account showed null
-      // for these fields. No device_id sent here — this is the web-only
+      // for these fields.
+      //
+      // device_id here is the web fallback fingerprint (see
+      // webDeviceFingerprint.ts) — this page is exclusively the web
       // flow, native sign-in uses Credential Manager directly and never
-      // reaches this page at all. Idempotent on the backend (only ever
-      // sets these once), so safe to call on every sign-in, not just a
-      // genuinely new signup. Fire-and-forget — this is abuse-detection
+      // reaches this page at all, so there's no real device to
+      // identify here regardless. Confirmed via a later investigation
+      // that null device_id for web Google sign-ins was expected
+      // behavior all along, not a regression — this fallback gives web
+      // signups a weaker, but genuinely present, signal instead of
+      // nothing. Idempotent on the backend (only ever sets these once),
+      // so safe to call on every sign-in, not just a genuinely new
+      // signup. Fire-and-forget — this is abuse-detection
       // infrastructure, not something that should ever block or delay
       // getting this person into the app.
       fetch("/api/auth/record-google-signup", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${access_token}` },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ device_id: getOrCreateWebDeviceFingerprint() }),
       }).catch(() => {});
 
       // New Google sign-ups get a profiles row via the same DB trigger
