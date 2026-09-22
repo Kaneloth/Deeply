@@ -2338,6 +2338,42 @@ router.post("/admin/users/:userId/grant-founder", requireAuth, requireAdminScope
   res.json({ granted: true, rank: founderResult.rank });
 });
 
+/** DELETE /api/admin/users/:userId — permanently removes a user account
+ *  from the dashboard, without an admin having to run SQL by hand.
+ *  Reuses the exact same deleteAccountCompletely() sequence as a user's
+ *  own self-serve account deletion (DELETE /auth/account) and the
+ *  blocked-device-ids cleanup — storage cleanup, profile row delete,
+ *  then the read-after-write-safe auth.admin.deleteUser() call — so this
+ *  never becomes a second, subtly-different deletion path to maintain.
+ *  Available to any manage_users admin (not gated further to
+ *  super-admin) and blocked against deleting the admin's own account,
+ *  matching the same self-lockout guard used by ban/suspend above. No
+ *  further "type the name to confirm" safeguard here — that's enforced
+ *  client-side only, as a deliberate choice to keep the dashboard flow
+ *  quick for admins who already know what they're doing. */
+router.delete("/admin/users/:userId", requireAuth, requireAdminScope("manage_users"), async (req, res): Promise<void> => {
+  const userId = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
+
+  if (userId === req.user!.id) {
+    res.status(400).json({ error: "You can't delete your own account" });
+    return;
+  }
+
+  const { data: profile } = await supabase.from("profiles").select("id, name").eq("id", userId).maybeSingle();
+  if (!profile) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+
+  const deletionError = await deleteAccountCompletely(userId);
+  if (deletionError) {
+    res.status(500).json({ error: deletionError });
+    return;
+  }
+
+  res.json({ deleted: true });
+});
+
 // ============================================================
 // Admin financial reporting — Transactions (real-money flow) and
 // Sparks Transactions (usage ledger). Both support pagination, filters,

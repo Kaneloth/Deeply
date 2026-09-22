@@ -1465,6 +1465,10 @@ function UsersSection({ token, toast, isSuperAdmin }: { token: string | null; to
             setUsers((prev) => prev.map((u) => (u.id === selected.id ? { ...u, ...patch } : u)));
             setSelected((prev: any) => ({ ...prev, ...patch }));
           }}
+          onDeleted={() => {
+            setUsers((prev) => prev.filter((u) => u.id !== selected.id));
+            setSelected(null);
+          }}
         />
       )}
     </div>
@@ -1507,6 +1511,7 @@ function UserDetailSheet({
   isSuperAdmin,
   onClose,
   onUpdated,
+  onDeleted,
 }: {
   user: any;
   token: string | null;
@@ -1514,6 +1519,7 @@ function UserDetailSheet({
   isSuperAdmin: boolean;
   onClose: () => void;
   onUpdated: (patch: any) => void;
+  onDeleted: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [banReason, setBanReason] = useState("");
@@ -1634,6 +1640,27 @@ function UserDetailSheet({
       toast({ title: scopes.length > 0 ? "Admin access updated" : "Admin access revoked" });
     } catch (err) {
       toast({ title: "Error", description: err instanceof Error ? err.message : "Failed", variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    if (!window.confirm(`Permanently delete ${user.name}'s account? This can't be undone.`)) {
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/admin/users/${user.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "Failed to delete user");
+      toast({ title: "User deleted" });
+      onDeleted();
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to delete user.", variant: "destructive" });
     } finally {
       setBusy(false);
     }
@@ -1815,6 +1842,19 @@ function UserDetailSheet({
               </button>
             </div>
           )}
+
+          <div className="border-t border-border pt-4">
+            <button
+              disabled={busy}
+              onClick={handleDeleteUser}
+              className="w-full h-10 rounded-xl text-xs font-semibold bg-destructive text-destructive-foreground disabled:opacity-50"
+            >
+              Delete User
+            </button>
+            <p className="text-[10px] text-muted-foreground text-center mt-1.5">
+              Permanently removes the account. This can't be undone.
+            </p>
+          </div>
         </div>
         )}
       </div>
