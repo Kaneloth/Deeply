@@ -210,7 +210,11 @@ router.post("/video-calls/request", requireAuth, async (req, res): Promise<void>
     return;
   }
 
-  (async () => {
+  // AWAITED, not fire-and-forget — see the note on the "New Message"
+  // push in messages.ts: an unawaited promise here was getting silently
+  // killed by this Lambda-backed function the moment the response below
+  // was sent, before the push ever had a chance to run.
+  try {
     const { data: requesterProfile } = await supabase.from("profiles").select("name").eq("id", userId).single();
     await createNotification(
       acceptorId,
@@ -219,7 +223,9 @@ router.post("/video-calls/request", requireAuth, async (req, res): Promise<void>
       "Accept to enable video calls for this match.",
       { match_id: matchId, video_call_id: created.id },
     );
-  })().catch(() => {});
+  } catch {
+    // Best-effort — never fail the call request over a notification problem.
+  }
 
   res.status(201).json({ id: created.id });
 });
@@ -409,10 +415,17 @@ router.post("/video-calls/call", requireAuth, async (req, res): Promise<void> =>
 
   // Time-sensitive — this is a live, ringing call, not a one-time
   // enablement request, so the acceptor needs to know right now, not
-  // just next time they happen to open the app. Fire-and-forget for the
-  // same reason as everywhere else: a push failure must never delay or
-  // block the actual call setup response below.
-  (async () => {
+  // just next time they happen to open the app.
+  //
+  // AWAITED, not fire-and-forget: this used to skip waiting on the
+  // theory that a push failure must never delay the call setup response
+  // below. In practice, on this Lambda-backed Netlify function, that
+  // meant the promise was killed outright the instant the response was
+  // sent — the push never even got a chance to fail visibly, let alone
+  // succeed. A few hundred ms of added latency here is a much better
+  // trade than a ringing call that silently never notifies the other
+  // side. Errors are still swallowed — never fail the call itself.
+  try {
     const { data: requesterProfile } = await supabase.from("profiles").select("name").eq("id", userId).single();
     await createNotification(
       acceptorId,
@@ -421,7 +434,9 @@ router.post("/video-calls/call", requireAuth, async (req, res): Promise<void> =>
       "Tap to answer.",
       { match_id: matchId, video_call_id: created.id },
     );
-  })().catch(() => {});
+  } catch {
+    // Best-effort — never fail the call setup over a notification problem.
+  }
 
   const token = generateAgoraToken(channelName, uidFromUserId(userId));
   res.status(201).json({ id: created.id, channel_name: channelName, agora_app_id: AGORA_APP_ID, token, uid: uidFromUserId(userId) });

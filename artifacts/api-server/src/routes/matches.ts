@@ -781,15 +781,25 @@ router.post("/matches/:matchId/share-date", requireAuth, async (req, res): Promi
   // Self-confirmation push, sent only on the initial share (this branch),
   // not on every later edit above — it's meant to reassure the person
   // their safety link actually saved, not to re-notify them every time
-  // they tweak a note. Fire-and-forget: this is a nice-to-have, never
-  // something that should block the response carrying their new link.
-  createNotification(
-    userId,
-    "date_shared",
-    "Your date details were saved",
-    "Your trusted contact can now see this date's details via the link you share with them.",
-    { match_id: matchId },
-  ).catch(() => {});
+  // they tweak a note.
+  //
+  // AWAITED, not fire-and-forget: this used to be an unawaited
+  // `.catch(() => {})` call on the theory that this nice-to-have should
+  // never block the response carrying the new link. On this Lambda-
+  // backed Netlify function, "unawaited" meant "killed before it could
+  // run" the moment the response below was sent. Errors are still
+  // swallowed — never fail the share itself over a notification problem.
+  try {
+    await createNotification(
+      userId,
+      "date_shared",
+      "Your date details were saved",
+      "Your trusted contact can now see this date's details via the link you share with them.",
+      { match_id: matchId },
+    );
+  } catch {
+    // Best-effort — see comment above.
+  }
 
   res.status(201).json({ token, url: `${SHARE_DATE_BASE_URL}/date/${token}` });
 });

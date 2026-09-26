@@ -467,10 +467,15 @@ async function createMatchWithAnyPendingMessages(
   // create a match (a normal mutual swipe, a paid message-before-match,
   // or the reverse-swipe-with-message flow) notifies both people exactly
   // once, from one place, instead of needing the same two calls
-  // duplicated at every call site. Best-effort: a failure to fetch
-  // names or send push must never affect the match itself, which is why
-  // this is fire-and-forget rather than awaited into the response.
-  (async () => {
+  // duplicated at every call site. A failure to fetch names or send push
+  // must never affect the match itself, so errors are swallowed below —
+  // but the call itself IS awaited, not fire-and-forget: this runs as a
+  // Netlify (Lambda-backed) function, and an unawaited promise here was
+  // getting silently killed the moment the caller's HTTP response was
+  // sent, before the push ever had a chance to actually go out (zero log
+  // output in Netlify's function logs despite the match itself always
+  // succeeding — confirmed while diagnosing why push never arrived).
+  try {
     const { data: names } = await supabase.from("profiles").select("id, name").in("id", [userId, targetId]);
     const userName = names?.find((p) => p.id === userId)?.name ?? "Someone";
     const targetName = names?.find((p) => p.id === targetId)?.name ?? "Someone";
@@ -482,7 +487,9 @@ async function createMatchWithAnyPendingMessages(
         match_id: match!.id,
       }),
     ]);
-  })().catch(() => {});
+  } catch {
+    // Best-effort — never fail match creation over a notification problem.
+  }
 
   return match;
 }
