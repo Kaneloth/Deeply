@@ -391,24 +391,38 @@ router.post("/matches/:matchId/messages", requireAuth, async (req, res): Promise
   // now and would just get pinged for a message already on their screen.
   // Not a presence system — just a cheap, good-enough heuristic using a
   // column already returned by get_match_by_id's to_jsonb(m) above,
-  // needing no new query. Best-effort and fire-and-forget: never lets a
-  // notification problem slow down or fail a message send.
-  (async () => {
+  // needing no new query.
+  //
+  // AWAITED, not fire-and-forget — this used to be an unawaited async
+  // IIFE (`(async () => {...})().catch(() => {})`) on the theory that a
+  // notification problem should never slow down a message send. That
+  // reasoning doesn't hold in this Lambda-backed Netlify function: once
+  // `res.json(...)` below sends the response, the execution environment
+  // can be frozen immediately, silently killing any promise still in
+  // flight — which is exactly what was happening here (confirmed via
+  // Netlify function logs showing zero log output for this code path
+  // despite the message itself sending successfully). Awaiting adds a
+  // small delay to the response, but that's the trade for the push
+  // actually having a chance to run. Errors are still swallowed — a
+  // notification failure must never fail the message send itself.
+  try {
     const recipientLastViewedAt = otherUserId === match.user1_id ? match.user1_last_viewed_at : match.user2_last_viewed_at;
-    if (recipientLastViewedAt && Date.now() - new Date(recipientLastViewedAt).getTime() < 30_000) return;
+    if (!recipientLastViewedAt || Date.now() - new Date(recipientLastViewedAt).getTime() >= 30_000) {
+      const senderName = (userId === match.user1_id ? match.user1?.name : match.user2?.name) ?? "Someone";
+      const preview =
+        type === "text"
+          ? message.content.length > 80
+            ? `${message.content.slice(0, 80)}…`
+            : message.content
+          : type === "gif"
+            ? "Sent a GIF"
+            : "Sent a sticker";
 
-    const senderName = (userId === match.user1_id ? match.user1?.name : match.user2?.name) ?? "Someone";
-    const preview =
-      type === "text"
-        ? message.content.length > 80
-          ? `${message.content.slice(0, 80)}…`
-          : message.content
-        : type === "gif"
-          ? "Sent a GIF"
-          : "Sent a sticker";
-
-    await createNotification(otherUserId, "new_message", senderName, preview, { match_id: matchId, message_id: message.id });
-  })().catch(() => {});
+      await createNotification(otherUserId, "new_message", senderName, preview, { match_id: matchId, message_id: message.id });
+    }
+  } catch {
+    // Best-effort — never fail the message send over a notification problem.
+  }
 
   const [{ reply_to }] = await attachReplyContext([message]);
 
