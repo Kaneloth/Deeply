@@ -11,6 +11,7 @@ import gifsRouter from "./gifs";
 import phoneVerificationRouter from "./phone-verification";
 import blockedContactsRouter from "./blocked-contacts";
 import videoCallsRouter from "./video-calls";
+import pushTokensRouter from "./push-tokens";
 
 const router: IRouter = Router();
 
@@ -26,5 +27,6 @@ router.use(gifsRouter);
 router.use(phoneVerificationRouter);
 router.use(blockedContactsRouter);
 router.use(videoCallsRouter);
+router.use(pushTokensRouter);
 
 export default router;

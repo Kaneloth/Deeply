@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { sendPushToUser } from "./push-notifications-helper";
 
 // chat_unlock_refunded/chat_missed_connection/chat_unlocked/chat_revived
 // added for the new chat-unlock economy — see chat-unlock-helper.ts and
@@ -11,6 +12,11 @@ import { supabase } from "./supabase";
 // /matches/:matchId/request-verification and profile.ts's admin
 // verification-approval route, which is the actual "completed" trigger
 // point (see its own doc comment for why this isn't instant).
+// new_match/new_message/video_call_invite/date_shared added for Push
+// Notifications — see discover.ts's createMatchWithAnyPendingMessages,
+// messages.ts's POST /matches/:matchId/messages, video-calls.ts's
+// POST /video-calls/request and /video-calls/call, and matches.ts's
+// POST /matches/:matchId/share-date respectively.
 export type NotificationType =
   | "announcement"
   | "spark_grant"
@@ -24,10 +30,50 @@ export type NotificationType =
   | "snooze_reminder"
   | "verification_requested"
   | "verification_completed"
-  | "verification_declined";
+  | "verification_declined"
+  | "new_match"
+  | "new_message"
+  | "video_call_invite"
+  | "date_shared";
+
+// Push notifications are a POPIA "direct marketing" concern (see the
+// Information Regulator's Dec 2024 Guidance Note) unless the message is
+// a routine service/activity confirmation, not a promotion. Rather than
+// deciding that per call-site — where it's easy to get wrong once and
+// forget — this is one single, explicit allowlist that every
+// createNotification/createNotificationForUsers call is checked
+// against. A type not listed here NEVER pushes, no matter where it's
+// called from; adding push to a new notification type is a deliberate,
+// one-line, reviewable change here, not an accidental side effect of
+// writing a new createNotification() call somewhere.
+//
+// Every type below is a factual confirmation of something that already
+// happened to the user's own account (a match, a message, a call
+// invite, a verification event, a Sparks grant, their own date-share
+// being saved) — never a promotion, an offer, or a "come back" nudge.
+// `announcement` and `spark_low` are deliberately EXCLUDED: announcements
+// can carry promotional content depending on what an admin writes, and
+// a low-balance warning reads as a nudge to spend/top up. Both stay
+// in-app-only (the notification bell) unless a future decision
+// explicitly re-adds them here with its own reasoning.
+const PUSH_ENABLED_TYPES: ReadonlySet<NotificationType> = new Set([
+  "spark_grant",
+  "verification_requested",
+  "verification_completed",
+  "verification_declined",
+  "new_match",
+  "new_message",
+  "video_call_invite",
+  "date_shared",
+]);
 
 /** Creates a standalone notification for one user. Used for one-off
- *  events (Spark grant, low balance) where there's no batching concern. */
+ *  events (Spark grant, low balance) where there's no batching concern.
+ *  Also fires a push notification for it — but ONLY if `type` is in
+ *  PUSH_ENABLED_TYPES above; see that allowlist's own comment for why
+ *  this is gated centrally rather than left to each caller. Push is
+ *  fire-and-forget: a failed/slow push must never delay or fail the
+ *  in-app notification, which is why this isn't awaited. */
 export async function createNotification(
   userId: string,
   type: NotificationType,
@@ -43,12 +89,21 @@ export async function createNotification(
     data: data ?? null,
     is_read: false,
   });
+
+  if (PUSH_ENABLED_TYPES.has(type)) {
+    sendPushToUser(userId, title, body ?? "", data).catch(() => {});
+  }
 }
 
 /** Fans a notification out to many users at once — used for admin
  *  announcements (all users, or a specific target list). Best-effort:
  *  failures here shouldn't block the announcement itself from being
- *  created. */
+ *  created. Push is intentionally NOT sent here even for an allowlisted
+ *  type — in practice this is only ever called with "announcement",
+ *  which is never push-eligible (see PUSH_ENABLED_TYPES), so there's
+ *  nothing to gate; if a future caller ever fans an allowlisted type out
+ *  to many users, add the same per-user push loop createNotification
+ *  uses above rather than assuming this function already does it. */
 export async function createNotificationForUsers(
   userIds: string[],
   type: NotificationType,

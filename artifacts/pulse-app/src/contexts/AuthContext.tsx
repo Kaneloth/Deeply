@@ -7,6 +7,7 @@ import { useLocation } from "wouter";
 import type { BlockInfo } from "@/components/BlockedAccountScreen";
 import { setUser as setSentryUser } from "@/lib/sentry";
 import { clearAllPersistentCaches } from "@/lib/persistentCache";
+import { initPushNotifications, unregisterPushToken } from "@/lib/pushNotifications";
 
 const ACCESS_TOKEN_KEY = "deeply_access_token";
 const REFRESH_TOKEN_KEY = "deeply_refresh_token";
@@ -82,6 +83,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = () => {
     clearRefreshTimer();
+    // Fire BEFORE the access token is removed below — this needs a
+    // still-valid bearer token to authenticate the unregister call, and
+    // must run while we still have one. Best-effort/non-blocking: never
+    // holds up the rest of logout, which must complete regardless.
+    const currentAccessToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+    if (currentAccessToken) {
+      unregisterPushToken(currentAccessToken).catch(() => {});
+    }
     localStorage.removeItem(ACCESS_TOKEN_KEY);
     localStorage.removeItem(REFRESH_TOKEN_KEY);
     localStorage.removeItem(EXPIRES_AT_KEY);
@@ -361,6 +370,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.error("Failed to initialize GoogleSignIn:", err);
     });
   }, []);
+
+  // Native only, re-runs whenever `token` changes — covers both a fresh
+  // login and (if this device's permission was previously denied and
+  // later granted in OS settings, or the token cache was cleared) a
+  // later app resume while already authenticated. initPushNotifications
+  // itself is idempotent about listener setup, so calling this more
+  // than once per session is harmless. Deliberately does NOT run on
+  // logout (token becomes null) — unregisterPushToken above is what
+  // handles that side, using the JWT that's about to be cleared.
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform() || !token) return;
+    initPushNotifications(token).catch((err) => {
+      console.error("Failed to initialize push notifications:", err);
+    });
+  }, [token]);
 
   return (
     <AuthContext.Provider

@@ -4,6 +4,7 @@ import { requireAuth } from "../middlewares/auth";
 import { supabase } from "../lib/supabase";
 import { spendSparks } from "../lib/sparks-helper";
 import { logger } from "../lib/logger";
+import { createNotification } from "../lib/notifications-helper";
 
 const router: IRouter = Router();
 
@@ -209,6 +210,17 @@ router.post("/video-calls/request", requireAuth, async (req, res): Promise<void>
     return;
   }
 
+  (async () => {
+    const { data: requesterProfile } = await supabase.from("profiles").select("name").eq("id", userId).single();
+    await createNotification(
+      acceptorId,
+      "video_call_invite",
+      `${requesterProfile?.name ?? "Your match"} wants to video call you`,
+      "Accept to enable video calls for this match.",
+      { match_id: matchId, video_call_id: created.id },
+    );
+  })().catch(() => {});
+
   res.status(201).json({ id: created.id });
 });
 
@@ -394,6 +406,22 @@ router.post("/video-calls/call", requireAuth, async (req, res): Promise<void> =>
 
   const channelName = `vcall_${created.id}`;
   await supabase.from("video_calls").update({ channel_name: channelName }).eq("id", created.id);
+
+  // Time-sensitive — this is a live, ringing call, not a one-time
+  // enablement request, so the acceptor needs to know right now, not
+  // just next time they happen to open the app. Fire-and-forget for the
+  // same reason as everywhere else: a push failure must never delay or
+  // block the actual call setup response below.
+  (async () => {
+    const { data: requesterProfile } = await supabase.from("profiles").select("name").eq("id", userId).single();
+    await createNotification(
+      acceptorId,
+      "video_call_invite",
+      `${requesterProfile?.name ?? "Your match"} is calling you`,
+      "Tap to answer.",
+      { match_id: matchId, video_call_id: created.id },
+    );
+  })().catch(() => {});
 
   const token = generateAgoraToken(channelName, uidFromUserId(userId));
   res.status(201).json({ id: created.id, channel_name: channelName, agora_app_id: AGORA_APP_ID, token, uid: uidFromUserId(userId) });

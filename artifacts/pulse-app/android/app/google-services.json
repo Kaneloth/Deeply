@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "399786039088",
+    "project_id": "deeply-4de3f",
+    "storage_bucket": "deeply-4de3f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:399786039088:android:865192478d0afd69185af5",
+        "android_client_info": {
+          "package_name": "za.co.deeplydating.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAlIGmtsYIhYJHwcZyooe9wRYMOxGhbruo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -7,6 +7,7 @@ import { attachVoiceQuestions } from "../lib/voice-questions-helper";
 import { withComputedAge, withComputedAges, calculateAge } from "../lib/age";
 import { consumeFreeInviteOrCharge } from "../lib/invites-quota";
 import { getExcludedCandidateIds, getPendingInviterIds, getCandidateExclusionSets, rememberRevealed, getStickyRevealed, rememberReshuffleTimestamp, getStickyReshuffleTimestamp, rememberMatched } from "../lib/discover-exclusions";
+import { createNotification } from "../lib/notifications-helper";
 import { haversineDistanceKm } from "../lib/geo";
 import { genderSatisfiesPreference, passesDealbreakers, passesAgeRange, computeCompatibilityScore, passesEnabledPreferenceFilters, passesHeightRange } from "../lib/matching";
 import { getEconomyConfig } from "../lib/economy-config";
@@ -459,6 +460,29 @@ async function createMatchWithAnyPendingMessages(
       .insert(pendingMessages.map((m) => ({ match_id: match!.id, sender_id: m.sender_id, content: m.content })));
     await supabase.from("matches").update({ message_count: pendingMessages.length }).eq("id", match.id);
   }
+
+  // "New Match" push, the single highest-value trigger in the whole
+  // feature per the plan this was built from — fired here rather than
+  // at each of this function's three call sites, so every path that can
+  // create a match (a normal mutual swipe, a paid message-before-match,
+  // or the reverse-swipe-with-message flow) notifies both people exactly
+  // once, from one place, instead of needing the same two calls
+  // duplicated at every call site. Best-effort: a failure to fetch
+  // names or send push must never affect the match itself, which is why
+  // this is fire-and-forget rather than awaited into the response.
+  (async () => {
+    const { data: names } = await supabase.from("profiles").select("id, name").in("id", [userId, targetId]);
+    const userName = names?.find((p) => p.id === userId)?.name ?? "Someone";
+    const targetName = names?.find((p) => p.id === targetId)?.name ?? "Someone";
+    await Promise.all([
+      createNotification(userId, "new_match", `You matched with ${targetName}!`, "Say hello and start the conversation.", {
+        match_id: match!.id,
+      }),
+      createNotification(targetId, "new_match", `You matched with ${userName}!`, "Say hello and start the conversation.", {
+        match_id: match!.id,
+      }),
+    ]);
+  })().catch(() => {});
 
   return match;
 }

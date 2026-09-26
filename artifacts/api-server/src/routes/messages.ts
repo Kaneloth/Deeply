@@ -5,6 +5,7 @@ import { spendSparks } from "../lib/sparks-helper";
 import { isBlockedEitherWay } from "../lib/blocks-helper";
 import { getEconomyConfig } from "../lib/economy-config";
 import { checkChatUnlockExpiry, processChatUnlockForSend, refundIfUnsendingUnlockMessage, CHAT_UNLOCK_SELECT_FIELDS } from "../lib/chat-unlock-helper";
+import { createNotification } from "../lib/notifications-helper";
 
 const router: IRouter = Router();
 
@@ -382,6 +383,32 @@ router.post("/matches/:matchId/messages", requireAuth, async (req, res): Promise
     .update({ message_count: match.message_count + 1 })
     .eq("id", matchId)
     .then(() => {});
+
+  // "New Message" push — skipped when the recipient's own
+  // last-viewed-this-chat timestamp (see migration_match_last_viewed.sql)
+  // is within the last 30 seconds, on the theory that a timestamp that
+  // fresh means they very likely still have this exact chat open right
+  // now and would just get pinged for a message already on their screen.
+  // Not a presence system — just a cheap, good-enough heuristic using a
+  // column already returned by get_match_by_id's to_jsonb(m) above,
+  // needing no new query. Best-effort and fire-and-forget: never lets a
+  // notification problem slow down or fail a message send.
+  (async () => {
+    const recipientLastViewedAt = otherUserId === match.user1_id ? match.user1_last_viewed_at : match.user2_last_viewed_at;
+    if (recipientLastViewedAt && Date.now() - new Date(recipientLastViewedAt).getTime() < 30_000) return;
+
+    const senderName = (userId === match.user1_id ? match.user1?.name : match.user2?.name) ?? "Someone";
+    const preview =
+      type === "text"
+        ? message.content.length > 80
+          ? `${message.content.slice(0, 80)}…`
+          : message.content
+        : type === "gif"
+          ? "Sent a GIF"
+          : "Sent a sticker";
+
+    await createNotification(otherUserId, "new_message", senderName, preview, { match_id: matchId, message_id: message.id });
+  })().catch(() => {});
 
   const [{ reply_to }] = await attachReplyContext([message]);
 

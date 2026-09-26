@@ -778,6 +778,19 @@ router.post("/matches/:matchId/share-date", requireAuth, async (req, res): Promi
   }
   await supabase.from("profiles").update(snapshotUpdate).eq("id", userId);
 
+  // Self-confirmation push, sent only on the initial share (this branch),
+  // not on every later edit above — it's meant to reassure the person
+  // their safety link actually saved, not to re-notify them every time
+  // they tweak a note. Fire-and-forget: this is a nice-to-have, never
+  // something that should block the response carrying their new link.
+  createNotification(
+    userId,
+    "date_shared",
+    "Your date details were saved",
+    "Your trusted contact can now see this date's details via the link you share with them.",
+    { match_id: matchId },
+  ).catch(() => {});
+
   res.status(201).json({ token, url: `${SHARE_DATE_BASE_URL}/date/${token}` });
 });
 
