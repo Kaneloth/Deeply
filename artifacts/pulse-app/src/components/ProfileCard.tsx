@@ -1,11 +1,9 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { MapPin, Baby, Users, Cigarette, Wine, Mic, Play, Pause, BadgeCheck, Camera, Wind, PenTool, PawPrint, Dumbbell, PartyPopper, Ruler, Crown, Search, Sparkles, GraduationCap, Languages, Heart, X } from "lucide-react";
 import { AudioRecorderControl } from "@/components/AudioRecorderControl";
 import { PhotoCarousel, type CarouselPhoto } from "@/components/PhotoCarousel";
 import { TATTOO_OPTIONS, VAPING_OPTIONS, PETS_OPTIONS, ACTIVITY_LEVEL_OPTIONS, NIGHTLIFE_OPTIONS, cmToDisplay } from "@/lib/lifestylePreferenceOptions";
 import { RELATIONSHIP_TYPES, LOVE_LANGUAGE_OPTIONS } from "@/lib/preferenceOptions";
-
-const PULL_REVEAL_THRESHOLD_PX = 50;
 
 // No is_expired flag here on purpose — the backend's attach-helper only
 // ever includes a voice_question on a candidate at all when it's
@@ -123,86 +121,68 @@ function SectionHeader({ icon: Icon, label }: { icon: React.ComponentType<{ size
 export function ProfileCard({
   profile,
   active = true,
-  enablePullReveal = false,
   canReplyToVoiceQuestion = false,
   onReplyToVoiceQuestion,
+  swipeContext,
 }: {
   profile: ProfileCardData;
   active?: boolean;
-  /** Opt-in only — makes sense on Discover, where another card is
-   *  already stacked underneath this one. Elsewhere (Search, Invites,
-   *  MatchDetail) there's nothing to reveal, so this stays off by
-   *  default. */
-  enablePullReveal?: boolean;
-  /** Separate from enablePullReveal on purpose, even though both are
-   *  currently only ever true on Discover — replying to a voice
-   *  question and revealing the next card are unrelated capabilities
-   *  that just happen to share a page today. Keeping them independent
-   *  props means either can change without silently affecting the
-   *  other. Search/Invites/MatchDetail still show and can PLAY a voice
-   *  question if one is present — replying specifically is the
-   *  Discover-only action, matching where this whole feature is meant
-   *  to live. */
+  /** Separate from swipeContext on purpose, even though both are
+   *  currently only ever set on Discover — replying to a voice
+   *  question and the swipe gesture are unrelated capabilities that
+   *  just happen to share a page today. Search/Invites/MatchDetail
+   *  still show and can PLAY a voice question if one is present —
+   *  replying specifically is the Discover-only action, matching where
+   *  this whole feature is meant to live. */
   canReplyToVoiceQuestion?: boolean;
   /** Only called when the recording is actually saved — the parent
    *  page owns the real API call (charging Sparks, handling a match,
    *  toasts, errors). ProfileCard only owns the recording UI itself and
    *  its own submitting/loading state while that call is in flight. */
   onReplyToVoiceQuestion?: (blob: Blob) => Promise<void>;
+  /** 2026-09-27 — present only when this card is rendered inside
+   *  DiscoverPage's SwipeCard. Every earlier version of this gesture
+   *  split the decision across two independent handlers — Framer's own
+   *  drag recognizer up in SwipeCard, and a second axis-lock down here
+   *  for the pull-to-reveal-next-card peek — and the two were
+   *  constantly racing each other for the same touch (confirmed
+   *  on-device: a real horizontal swipe would get handed to Framer,
+   *  then a fraction of a second later this component's own listener
+   *  would also see the same touch stream and occasionally decide it
+   *  was a pull, or the reverse). Splitting an axis-lock decision
+   *  across two independent listeners is fundamentally unreliable no
+   *  matter how carefully each one is tuned — only one of them can ever
+   *  be "correct" for a given touch, and there's no way for either to
+   *  know what the other decided.
+   *
+   *  So the fix is structural: SwipeCard now owns the ENTIRE gesture —
+   *  it decides once, per touch, whether the movement is horizontal
+   *  (the swipe-to-decide gesture) or vertical (scrolling this card's
+   *  own content, or — only when already at the very top — peeking at
+   *  the next card) — and drives everything imperatively from outside:
+   *  this component's own scroll position (via the shared scrollRef)
+   *  and its peek transform (via pullY). This component no longer runs
+   *  any gesture recognition of its own; it just renders whatever
+   *  state it's handed. Absent on every other page that renders this
+   *  card (Search, Invites, MatchDetail) — there, this reverts to an
+   *  ordinary natively-scrolling card, since there's no competing
+   *  horizontal drag to arbitrate against in the first place. */
+  swipeContext?: {
+    scrollRef: React.RefObject<HTMLDivElement>;
+    pullY: number;
+  };
 }) {
   const photos = profile.photos.length > 0 ? profile.photos : [];
   const [isPlayingVoiceQuestion, setIsPlayingVoiceQuestion] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Pull-down-to-reveal-next-card. Only claims the gesture when: the
-  // drag is downward AND the scroll container is already at the very
-  // top — otherwise this is either a normal scroll-back-up, or a
-  // horizontal photo swipe (which PhotoCarousel's own touch handling
-  // already deals with independently; this never interferes with that,
-  // since it only acts on vertical-down-at-top drags).
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const [pullY, setPullY] = useState(0);
+  // Falls back to an ordinary local ref outside Discover (no swipeContext
+  // provided), so this card still scrolls exactly as it always has on
+  // Search/Invites/MatchDetail — nothing about those pages changes.
+  const localScrollRef = useRef<HTMLDivElement>(null);
+  const scrollRef = swipeContext?.scrollRef ?? localScrollRef;
+  const pullY = swipeContext?.pullY ?? 0;
   const isPulling = pullY !== 0;
-  const pullStateRef = useRef({ startY: 0, active: false, axisLocked: false, isPullGesture: false });
-
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el || !active || !enablePullReveal) return;
-
-    const onMove = (e: TouchEvent) => {
-      const s = pullStateRef.current;
-      if (!s.active) return;
-
-      const dy = e.touches[0].clientY - s.startY;
-
-      if (!s.axisLocked) {
-        if (Math.abs(dy) < 8) return;
-        s.axisLocked = true;
-        s.isPullGesture = dy > 0 && el.scrollTop <= 0;
-      }
-
-      if (!s.isPullGesture) return;
-      e.preventDefault();
-      const eased = dy < PULL_REVEAL_THRESHOLD_PX ? dy : PULL_REVEAL_THRESHOLD_PX + (dy - PULL_REVEAL_THRESHOLD_PX) * 0.35;
-      setPullY(eased);
-    };
-
-    el.addEventListener("touchmove", onMove, { passive: false });
-    return () => el.removeEventListener("touchmove", onMove);
-  }, [active, enablePullReveal]);
-
-  const handlePullTouchStart = (e: React.TouchEvent) => {
-    if (!active || !enablePullReveal) return;
-    pullStateRef.current = { startY: e.touches[0].clientY, active: true, axisLocked: false, isPullGesture: false };
-  };
-
-  const handlePullTouchEnd = () => {
-    pullStateRef.current.active = false;
-    // Always springs back — this is a peek, not a decision. The card
-    // underneath is only ever previewed, never actually swiped away by
-    // this gesture.
-    setPullY(0);
-  };
 
   const togglePlayVoiceQuestion = () => {
     if (!profile.voice_question) return;
@@ -268,13 +248,27 @@ export function ProfileCard({
         transform: pullY !== 0 ? `translateY(${pullY}px) scale(${1 - Math.min(pullY, 100) / 800})` : undefined,
         opacity: pullY !== 0 ? Math.max(0.4, 1 - pullY / 150) : 1,
         transition: isPulling ? "none" : "transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 0.3s ease-out",
+        // 2026-09-27 — always on, not toggled based on pullY. Without
+        // this, the browser only promotes this element to its own GPU
+        // compositing layer the moment `transform` first becomes
+        // non-undefined (pullY going from 0 to nonzero), and demotes it
+        // again the moment it returns to 0 — and that promote/demote
+        // right at release is exactly what produced the brief visible
+        // "blink" reported when a pull or an incomplete swipe springs
+        // back to rest. Keeping the layer permanently allocated means
+        // there's nothing left to (de)allocate at the exact instant the
+        // spring-back animation starts.
+        willChange: "transform",
       }}
     >
       <div
         ref={scrollRef}
         className="w-full h-full overflow-y-auto"
-        onTouchStart={handlePullTouchStart}
-        onTouchEnd={handlePullTouchEnd}
+        // Only forced off when a parent SwipeCard is driving this card's
+        // gestures — see the swipeContext comment above. Outside
+        // Discover, this stays native (touch-action: auto), same as
+        // it's always been.
+        style={swipeContext ? { touchAction: "none" } : undefined}
       >
         {/* Photo — fills the entire card by default (edge to edge), so
             it's the only thing visible until the user scrolls down.
@@ -291,6 +285,7 @@ export function ProfileCard({
                 "linear-gradient(to top, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.65) 30%, rgba(0,0,0,0.35) 55%, rgba(0,0,0,0.12) 78%, rgba(0,0,0,0) 100%)",
             }}
           />
+
           <div className="absolute bottom-3 left-4 right-4 pointer-events-none z-10">
             <h2 className="text-2xl font-['Syne'] font-bold text-white flex items-end gap-1.5 leading-tight">
               {profile.name} <span className="text-base font-normal text-white/80">{profile.age}</span>

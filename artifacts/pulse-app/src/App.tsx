@@ -8,8 +8,6 @@ import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { SparksProvider } from '@/contexts/SparksContext';
 import { InvitesProvider } from '@/contexts/InvitesContext';
 import { AppShell } from '@/components/AppShell';
-import { patchConsoleIntoDebugLog } from '@/lib/debugLog';
-patchConsoleIntoDebugLog();
 import NotFound from '@/pages/not-found';
 import SharedDatePage from '@/pages/SharedDatePage';
 import AuthPage from '@/pages/AuthPage';

@@ -167,7 +167,17 @@ export function RadiusSlider({
   min = 5,
   max = 150,
   step = 5,
-  unlimitedAt = 150,
+  // 2026-09-29 — previously defaulted to the SAME value as `max` (150),
+  // so dragging to the far right saved the literal number 150 and only
+  // *labeled* it "Anywhere" for display. The backend then filtered
+  // candidates with a genuine 150km radius, silently hiding anyone
+  // further away even though the person had picked "Anywhere." 100,000
+  // km is comfortably larger than the ~20,015 km maximum great-circle
+  // distance between any two points on Earth, so once this is stored as
+  // distance_km, buildDiscoverQueue()'s own `distance <= radiusKm` check
+  // is always true — i.e. genuinely unlimited, not just a very large
+  // real radius.
+  unlimitedAt = 100000,
 }: {
   label?: string;
   valueKm: number;
@@ -177,7 +187,14 @@ export function RadiusSlider({
   step?: number;
   unlimitedAt?: number;
 }) {
-  const displayValue = valueKm >= unlimitedAt ? "Anywhere" : `Within ${valueKm} km`;
+  // One extra notch on the native slider, past the highest real km
+  // value, reserved for the true unlimited sentinel. Every value up to
+  // `max` still means exactly what it says in km; only this last notch
+  // means no limit at all.
+  const sliderMax = max + step;
+  const isUnlimited = valueKm >= unlimitedAt;
+  const displayValue = isUnlimited ? "Anywhere" : `Within ${valueKm} km`;
+  const sliderValue = isUnlimited ? sliderMax : Math.min(valueKm, max);
 
   return (
     <div className="space-y-2">
@@ -187,10 +204,13 @@ export function RadiusSlider({
         <input
           type="range"
           min={min}
-          max={max}
+          max={sliderMax}
           step={step}
-          value={Math.min(valueKm, max)}
-          onChange={(e) => onChange(Number(e.target.value))}
+          value={sliderValue}
+          onChange={(e) => {
+            const raw = Number(e.target.value);
+            onChange(raw >= sliderMax ? unlimitedAt : raw);
+          }}
           className="w-full accent-primary"
           style={{ height: "6px" }}
         />

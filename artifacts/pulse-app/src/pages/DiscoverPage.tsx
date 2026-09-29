@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, memo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getUserIdFromToken } from "@/lib/tokenUtils";
 import { useLocation } from "wouter";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useMotionValue, useTransform, animate } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -22,9 +22,38 @@ interface Candidate extends ProfileCardData {
 
 type SwipeDirection = "like" | "pass" | "super_like";
 
-const EXIT_VARIANTS: Record<SwipeDirection, { x?: number; y?: number; opacity: number; rotate?: number; scale?: number }> = {
-  like: { x: 400, opacity: 0, rotate: 20 },
-  pass: { x: -400, opacity: 0, rotate: -20 },
+// Drag-to-decide thresholds. A swipe commits if it clears the distance
+// bar on its own, OR clears a much smaller minimum distance while also
+// flicked fast enough — that second path is what makes a quick flick
+// commit without needing to travel the full 120px, matching Tinder's
+// actual feel. It deliberately does NOT let velocity alone commit a
+// swipe (no minimum distance check): velocity is distance-over-time, so
+// even a tiny few-millimeter jitter done quickly produces a velocity
+// well past most reasonable thresholds — that was firing real swipes
+// from what were meant to be harmless taps/wobbles.
+const SWIPE_DISTANCE_THRESHOLD = 120;
+const SWIPE_FLICK_MIN_DISTANCE = 40;
+const SWIPE_VELOCITY_THRESHOLD = 500;
+
+// How far (in already-damped, on-screen pixels) a downward pull past the
+// scrollable content's own top can travel before releasing snaps it back
+// — this is a peek at the next card, not a decision, so it's deliberately
+// capped much shorter than an actual swipe.
+const PULL_REVEAL_THRESHOLD_PX = 50;
+// Minimum movement, in either direction, before a touch commits to being
+// either the horizontal swipe or a vertical scroll. Below this, jitter
+// from an imprecise finger-down wouldn't reliably indicate either axis.
+const AXIS_LOCK_THRESHOLD_PX = 8;
+
+// rotate is deliberately NOT included here even for "like"/"pass" — it's
+// derived live from the drag position via useTransform below (see
+// SwipeCard), and clamps to the same ±20deg this used to hardcode once x
+// reaches ±300, so the visual result is identical whether the card left
+// via a drag or a button tap. Animating x here alone is what drives that
+// derived rotate to its clamped end value.
+const EXIT_VARIANTS: Record<SwipeDirection, { x?: number; y?: number; opacity: number; scale?: number }> = {
+  like: { x: 400, opacity: 0 },
+  pass: { x: -400, opacity: 0 },
   super_like: { y: -400, opacity: 0, scale: 1.05 },
 };
 
@@ -35,6 +64,8 @@ const SwipeCard = memo(
     isExiting,
     exitDirection,
     stackIndex,
+    canDrag,
+    onSwipe,
     onReplyToVoiceQuestion,
   }: {
     candidate: Candidate;
@@ -42,12 +73,222 @@ const SwipeCard = memo(
     isExiting: boolean;
     exitDirection: SwipeDirection | null;
     stackIndex: number;
+    /** Whether the top card may currently be dragged — false while a
+     *  previous decision (button or drag) is still in flight, so a second
+     *  drag can't start on the card underneath before it's finished
+     *  animating out. */
+    canDrag: boolean;
+    /** Fired once a drag clears the commit threshold. Only ever "like" or
+     *  "pass" — Super Like stays a button-only action (a drag-up gesture
+     *  here would compete with ProfileCard's own pull-down-to-reveal
+     *  gesture on the same card, so it was deliberately left out). */
+    onSwipe: (direction: "like" | "pass") => void;
     onReplyToVoiceQuestion: (targetId: string, blob: Blob) => Promise<void>;
   }) {
+    // Single source of truth for horizontal position. Framer's drag
+    // gesture writes into this directly; rotate and the LIKE/NOPE stamp
+    // opacities are pure live derivations of it via useTransform, so
+    // they're always perfectly in sync with the drag with no extra state
+    // and no re-renders of this component while dragging.
+    const x = useMotionValue(0);
+    const rotate = useTransform(x, [-300, 300], [-20, 20]);
+    const likeStampOpacity = useTransform(x, [20, 120], [0, 1]);
+    const nopeStampOpacity = useTransform(x, [-120, -20], [1, 0]);
+
+    // 2026-09-27 — this entire component now owns ONE gesture recognizer
+    // for the whole card, replacing Framer's built-in `drag` prop (which
+    // handled only the horizontal swipe) plus a SEPARATE, independent
+    // axis-lock that used to live inside ProfileCard (for the pull-to-
+    // reveal-next-card peek). Those two were fundamentally racing each
+    // other for the same touch stream — on-device logs showed Framer
+    // claiming a gesture (onDragStart), then ProfileCard's own listener
+    // deciding moments later whether that SAME touch was "really" a
+    // pull, sometimes stealing it back after Framer had already started
+    // tracking it. No amount of tuning either recognizer's own threshold
+    // could fix that: with two independent deciders looking at the same
+    // touch, there's no way to guarantee only one of them acts on it.
+    //
+    // The fix is structural, not another tweak: decide the axis exactly
+    // ONCE per touch, in exactly one place, then drive everything for
+    // the rest of that gesture from here — the horizontal swipe (this
+    // card's own x motion value) AND ProfileCard's vertical scroll
+    // (imperatively, via scrollElRef.current.scrollTop) AND the
+    // pull-to-reveal-next-card peek (pullY below, only engaged when an
+    // upward-vs-downward scroll would go past the very top of the
+    // content). ProfileCard no longer runs any gesture recognition of
+    // its own — see its swipeContext prop.
+    const cardElRef = useRef<HTMLDivElement>(null);
+    const scrollElRef = useRef<HTMLDivElement>(null);
+    const [pullY, setPullY] = useState(0);
+    const gestureRef = useRef({
+      active: false,
+      axisLocked: false,
+      axis: "none" as "none" | "horizontal" | "vertical",
+      startX: 0,
+      startY: 0,
+      startScrollTop: 0,
+      lastMoveX: 0,
+      lastMoveTime: 0,
+      velocity: 0,
+    });
+
+    const commitOrSpringBack = () => {
+      const offset = x.get();
+      const absOffset = Math.abs(offset);
+      const velocity = gestureRef.current.velocity;
+      const clearedDistance = absOffset > SWIPE_DISTANCE_THRESHOLD;
+      const clearedFlick = absOffset > SWIPE_FLICK_MIN_DISTANCE && Math.abs(velocity) > SWIPE_VELOCITY_THRESHOLD;
+      if (!clearedDistance && !clearedFlick) {
+        // Short of the bar — spring x back to center EXPLICITLY, via
+        // Framer's imperative animate() on the raw motion value. (This
+        // is unrelated to the axis-race fix above — dragConstraints/
+        // dragElastic were already found, in an earlier round of
+        // on-device diagnostics, to clamp `x` rigidly for the whole
+        // drag rather than just easing it back on release, so the
+        // spring-back has been an explicit animate() call since then.)
+        animate(x, 0, { type: "spring", stiffness: 300, damping: 24 });
+        return;
+      }
+      onSwipe(offset > 0 ? "like" : "pass");
+    };
+
+    const handleTouchStart = (e: React.TouchEvent) => {
+      if (!isTop || !canDrag) return;
+      const t = e.touches[0];
+      gestureRef.current = {
+        active: true,
+        axisLocked: false,
+        axis: "none",
+        startX: t.clientX,
+        startY: t.clientY,
+        startScrollTop: scrollElRef.current?.scrollTop ?? 0,
+        lastMoveX: t.clientX,
+        lastMoveTime: performance.now(),
+        velocity: 0,
+      };
+    };
+
+    const endGesture = () => {
+      const g = gestureRef.current;
+      if (!g.active) return;
+      g.active = false;
+      if (g.axis === "horizontal") {
+        commitOrSpringBack();
+      } else {
+        // Vertical: always springs back — this is a peek, not a
+        // decision. The card underneath is only ever previewed, never
+        // actually swiped away by this gesture. A plain vertical scroll
+        // (not an overscroll past the top) leaves pullY at 0 already,
+        // so this is a no-op in that case.
+        setPullY(0);
+      }
+      g.axis = "none";
+      g.axisLocked = false;
+    };
+
+    // Native listener, not a JSX onTouchMove — React attaches its own
+    // touch handlers as passive by default, which silently makes
+    // preventDefault() a no-op inside a JSX handler (with a console
+    // warning). preventDefault here is what stops the WebView's own
+    // overscroll bounce/rubber-banding from fighting this gesture once
+    // an axis is locked; that requires the {passive:false} listener
+    // registered directly via addEventListener below.
+    useEffect(() => {
+      const el = cardElRef.current;
+      if (!el || !isTop || !canDrag) return;
+
+      const onTouchMove = (e: TouchEvent) => {
+        const g = gestureRef.current;
+        if (!g.active) return;
+        const t = e.touches[0];
+        const dx = t.clientX - g.startX;
+        const dy = t.clientY - g.startY;
+
+        if (!g.axisLocked) {
+          if (Math.abs(dx) < AXIS_LOCK_THRESHOLD_PX && Math.abs(dy) < AXIS_LOCK_THRESHOLD_PX) return;
+          g.axisLocked = true;
+          g.axis = Math.abs(dx) > Math.abs(dy) ? "horizontal" : "vertical";
+        }
+
+        e.preventDefault();
+
+        if (g.axis === "horizontal") {
+          const now = performance.now();
+          const dt = now - g.lastMoveTime;
+          if (dt > 0) g.velocity = ((t.clientX - g.lastMoveX) / dt) * 1000;
+          g.lastMoveX = t.clientX;
+          g.lastMoveTime = now;
+          x.set(dx);
+        } else {
+          // Vertical: mirror the drag directly onto the actual scroll
+          // container's scrollTop ourselves, rather than letting the
+          // browser's own touch-driven scrolling handle it. This is
+          // deliberate, not just a workaround: on-device evidence
+          // (scrollTop drifting during touches this same axis-lock
+          // correctly judged horizontal) showed native touch-scroll
+          // engaging on this element even under touch-action:"none",
+          // on this WebView, whenever a touch had ANY vertical
+          // component — which is virtually every real swipe. Driving
+          // scrollTop ourselves means there is no native scroll
+          // gesture left for the browser to (mis)engage at all; touch-
+          // action:"none" (still set, see ProfileCard's swipeContext
+          // handling) now only has to block the browser's default
+          // action, with nothing for it to arbitrate against JS over.
+          const scrollEl = scrollElRef.current;
+          const maxScroll = scrollEl ? scrollEl.scrollHeight - scrollEl.clientHeight : 0;
+          const target = g.startScrollTop - dy;
+          if (target < 0) {
+            // Already at the top and still pulling down further —
+            // redirect the excess into the next-card peek instead of
+            // trying to scroll past 0.
+            if (scrollEl) scrollEl.scrollTop = 0;
+            const overscroll = -target;
+            const eased =
+              overscroll < PULL_REVEAL_THRESHOLD_PX
+                ? overscroll
+                : PULL_REVEAL_THRESHOLD_PX + (overscroll - PULL_REVEAL_THRESHOLD_PX) * 0.35;
+            setPullY(eased);
+          } else {
+            setPullY(0);
+            if (scrollEl) scrollEl.scrollTop = Math.min(target, Math.max(maxScroll, 0));
+          }
+        }
+      };
+
+      el.addEventListener("touchmove", onTouchMove, { passive: false });
+      return () => el.removeEventListener("touchmove", onTouchMove);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isTop, canDrag]);
+
     return (
       <motion.div
+        ref={cardElRef}
         className="absolute inset-0"
-        style={{ zIndex: 10 - stackIndex }}
+        // touch-action:"none" is what stops the WebView from ever
+        // engaging its OWN default handling (native scroll/overscroll)
+        // on this element — everything about how the touch is actually
+        // interpreted (swipe vs. scroll vs. peek) is now decided and
+        // driven entirely by the manual touchstart/touchmove/touchend
+        // handlers above, not by Framer's built-in drag (removed) or by
+        // touch-action's pan-x/pan-y granularity (which, per on-device
+        // testing, this WebView didn't honor reliably for a nested
+        // scrollable descendant anyway).
+        // willChange/backfaceVisibility force this element onto its own
+        // GPU compositing layer from the very first paint rather than
+        // leaving the WebView to decide (possibly later, mid-gesture)
+        // that it's worth one — the promote/demote right at that moment
+        // is what produced a visible blink on earlier attempts.
+        style={{
+          zIndex: 10 - stackIndex,
+          x,
+          rotate,
+          touchAction: "none",
+          willChange: "transform",
+          backfaceVisibility: "hidden",
+        }}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={endGesture}
+        onTouchCancel={endGesture}
         // Do not animate a card into place. Even a subtle scale transform
         // causes native WebViews to re-composite the card while the photo is
         // decoding, which looks like a brief blink/vibration after mount.
@@ -56,16 +297,53 @@ const SwipeCard = memo(
         animate={
           isExiting && exitDirection
             ? EXIT_VARIANTS[exitDirection]
-            : { scale: 1, opacity: 1, x: 0, y: 0, rotate: 0 }
+            : { scale: 1, opacity: 1, x: 0, y: 0 }
         }
-        transition={isExiting ? { duration: 0.3, ease: "easeOut" } : { duration: 0 }}
+        // A real spring for the resting state (not the old flat
+        // duration:0) so releasing a drag short of the threshold snaps
+        // back with some natural bounce instead of teleporting to
+        // center. This still can't cause the mount-time blink the
+        // duration:0 was originally guarding against — initial={false}
+        // already rules out any transition running on first paint,
+        // regardless of what this says.
+        transition={
+          isExiting ? { duration: 0.3, ease: "easeOut" } : { type: "spring", stiffness: 300, damping: 24 }
+        }
       >
+        {isTop && (
+          <>
+            {/* Right swipe = like: a heart, matching the Heart icon already
+               used on the like button below rather than a text stamp. */}
+            <motion.div
+              className="absolute top-8 left-6 z-30 w-16 h-16 rounded-2xl border-4 border-emerald-500 flex items-center justify-center -rotate-12 pointer-events-none bg-background/40"
+              // willChange:"opacity" — 2026-09-27, addressing the same
+              // blink reported on release. This div's opacity swings
+              // fast during a spring-back (as x rushes back through the
+              // [20,120] range it's derived from), and without a
+              // pre-allocated layer, the browser promotes/demotes one
+              // for it right at that same instant — a second, smaller
+              // source of the same visible flash as ProfileCard's own
+              // pull-transform div.
+              style={{ opacity: likeStampOpacity, willChange: "opacity" }}
+            >
+              <Heart size={34} className="text-emerald-500 fill-emerald-500" />
+            </motion.div>
+            {/* Left swipe = pass: an X, matching the X icon already used on
+               the pass button below rather than a text stamp. */}
+            <motion.div
+              className="absolute top-8 right-6 z-30 w-16 h-16 rounded-2xl border-4 border-rose-500 flex items-center justify-center rotate-12 pointer-events-none bg-background/40"
+              style={{ opacity: nopeStampOpacity, willChange: "opacity" }}
+            >
+              <X size={34} className="text-rose-500" strokeWidth={3} />
+            </motion.div>
+          </>
+        )}
         <ProfileCard
           profile={candidate}
           active={isTop}
-          enablePullReveal={isTop}
           canReplyToVoiceQuestion={isTop}
           onReplyToVoiceQuestion={(blob) => onReplyToVoiceQuestion(candidate.id, blob)}
+          swipeContext={isTop ? { scrollRef: scrollElRef, pullY } : undefined}
         />
       </motion.div>
     );
@@ -84,12 +362,12 @@ const SwipeCard = memo(
   // that cascade at this boundary regardless of what's happening deeper
   // inside ProfileCard.
   //
-  // onReplyToVoiceQuestion is intentionally NOT in this comparison —
-  // it's recreated in the parent on every render, but it's a thin
-  // wrapper that only closes over candidate.id (passed fresh as an arg,
-  // not captured) and calls straight into a useCallback'd handler in
-  // the parent, so an older closure behaves identically to a newer one.
-  // Including it would defeat this whole memo, re-rendering every card
+  // onReplyToVoiceQuestion and onSwipe are intentionally NOT in this
+  // comparison — both are recreated in the parent on every render, but
+  // each is a thin wrapper that only closes over stable values (or, for
+  // onSwipe, calls straight into handleDecision) and behaves identically
+  // regardless of which render created the closure currently in scope.
+  // Including them would defeat this whole memo, re-rendering every card
   // on every parent render regardless of whether anything it actually
   // depends on changed.
   (prev, next) =>
@@ -97,7 +375,8 @@ const SwipeCard = memo(
     prev.isTop === next.isTop &&
     prev.isExiting === next.isExiting &&
     prev.exitDirection === next.exitDirection &&
-    prev.stackIndex === next.stackIndex,
+    prev.stackIndex === next.stackIndex &&
+    prev.canDrag === next.canDrag,
 );
 
 import { MatchCelebration } from "@/components/MatchCelebration";
@@ -786,6 +1065,8 @@ export default function DiscoverPage() {
                 stackIndex={i}
                 isExiting={exiting?.id === candidate.id}
                 exitDirection={exiting?.id === candidate.id ? exiting.direction : null}
+                canDrag={!isSwiping}
+                onSwipe={handleDecision}
                 onReplyToVoiceQuestion={handleReplyToVoiceQuestion}
               />
             ))}
