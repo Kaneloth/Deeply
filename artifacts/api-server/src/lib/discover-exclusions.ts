@@ -50,13 +50,53 @@ async function deleteExpiredInvites(
   return new Set(expiredTargetIds);
 }
 
+/** Admins are hidden from Discover/Search by default (see adminIds usage
+ *  below in getExcludedCandidateIds/getCandidateExclusionSets). The one
+ *  carve-out: if a specific admin has sent THIS viewer a pending
+ *  like/super_like invite (admin -> viewer — the reverse direction of
+ *  the viewer's own pendingInvitedIds, which is viewer -> admin), that
+ *  one admin becomes visible to that one viewer, so they can see the
+ *  profile, act on the invite from Invites Received, etc. Every other
+ *  admin the viewer hasn't been invited by stays fully hidden. This
+ *  deliberately doesn't filter out an invite that's past
+ *  invite_expiry_days the way deleteExpiredInvites does elsewhere —
+ *  getPendingInviterIds (the actual Invites Received list) already
+ *  enforces that expiry for what's actionable; this only controls raw
+ *  profile visibility, and an expired admin invite's underlying swipe
+ *  row either still exists (so the viewer keeps seeing them, matching
+ *  Invites Received's own "not yet actionable but still listed logic
+ *  doesn't apply here — simplest consistent behavior is: row exists ->
+ *  visible) or has already been deleted (so this returns nothing for
+ *  them, same as any other expired invite). */
+async function getVisibleAdminIds(userId: string, adminIds: string[]): Promise<Set<string>> {
+  if (adminIds.length === 0) return new Set();
+
+  const { data: adminInvites, error } = await supabase
+    .from("swipes")
+    .select("swiper_id")
+    .eq("target_id", userId)
+    .in("swiper_id", adminIds)
+    .in("direction", ["like", "super_like"]);
+
+  if (error) {
+    console.error(`INVITES DEBUG: failed to check admin-invite visibility for userId=${userId}: ${error.message}`);
+    // Fail closed — on a query error, treat no admin as visible rather
+    // than risk exposing every admin due to an empty/failed read.
+    return new Set();
+  }
+
+  return new Set((adminInvites ?? []).map((s) => s.swiper_id));
+}
+
 /** IDs to exclude from any discovery/search candidate list: the viewer
  *  themselves, anyone they've already swiped on, anyone they're already
  *  matched with, and anyone involved in a block relationship with them
  *  (either direction). The matches table is checked directly rather than
  *  relying solely on swipe history, since some paths (e.g.
  *  message-request) can create a match without necessarily recording a
- *  reciprocal swipe row for both users. */
+ *  reciprocal swipe row for both users. Admins are excluded too, EXCEPT
+ *  for an admin who has sent this specific viewer a pending invite — see
+ *  getVisibleAdminIds above. */
 export async function getExcludedCandidateIds(userId: string): Promise<string[]> {
   // These 5 queries are fully independent of each other's results, but
   // were previously awaited one after another — on every single
@@ -78,13 +118,15 @@ export async function getExcludedCandidateIds(userId: string): Promise<string[]>
     m.user1_id === userId ? m.user2_id : m.user1_id,
   );
   const adminIds = (adminRows ?? []).map((a) => a.id);
+  const visibleAdminIds = await getVisibleAdminIds(userId, adminIds);
+  const hiddenAdminIds = adminIds.filter((id) => !visibleAdminIds.has(id));
 
   return [
     userId,
     ...(alreadySwiped?.map((s) => s.target_id).filter((id) => !expiredIds.has(id)) ?? []),
     ...matchedPartnerIds,
     ...blockedIds,
-    ...adminIds,
+    ...hiddenAdminIds,
     ...blockedContactIds,
   ];
 }
@@ -97,9 +139,11 @@ export async function getExcludedCandidateIds(userId: string): Promise<string[]>
  *  should be able to find someone they've already invited (to check in,
  *  view the profile again, etc.), while passive browsing (Discover,
  *  Categories, filtered search without a name) should still hide them
- *  entirely, same as before. People who were passed on, matched,
- *  blocked, or are admins are always excluded regardless — this
- *  distinction only ever applies to pending invites specifically. */
+ *  entirely, same as before. People who were passed on, matched, or
+ *  blocked are always excluded regardless — this distinction only ever
+ *  applies to pending invites specifically. Admins are always excluded
+ *  too, EXCEPT for an admin who has sent this specific viewer a pending
+ *  invite — see getVisibleAdminIds above. */
 export async function getCandidateExclusionSets(
   userId: string,
 ): Promise<{ hardExcluded: string[]; pendingInvitedIds: string[] }> {
@@ -125,9 +169,11 @@ export async function getCandidateExclusionSets(
     m.user1_id === userId ? m.user2_id : m.user1_id,
   );
   const adminIds = (adminRows ?? []).map((a) => a.id);
+  const visibleAdminIds = await getVisibleAdminIds(userId, adminIds);
+  const hiddenAdminIds = adminIds.filter((id) => !visibleAdminIds.has(id));
 
   return {
-    hardExcluded: [userId, ...passedIds, ...matchedPartnerIds, ...blockedIds, ...adminIds, ...blockedContactIds],
+    hardExcluded: [userId, ...passedIds, ...matchedPartnerIds, ...blockedIds, ...hiddenAdminIds, ...blockedContactIds],
     pendingInvitedIds,
   };
 }
@@ -327,7 +373,12 @@ export async function getStickyReshuffleTimestamp(userId: string): Promise<strin
  *  per-invite timestamp comparison, not a blanket "have I ever swiped on
  *  them" check — an old pass/decision shouldn't permanently suppress a
  *  genuinely new invite attempt the same person sends later (e.g. trying
- *  again with a Super Invite after being declined once). */
+ *  again with a Super Invite after being declined once).
+ *
+ *  Deliberately does NOT filter out admin senders — an admin inviting
+ *  this user is exactly the case that's meant to reveal their profile
+ *  (see getVisibleAdminIds above), so admins flow through here exactly
+ *  like any other inviter, with no special-casing. */
 export async function getPendingInviterIds(userId: string): Promise<PendingInviter[]> {
   const { data: incomingLikes } = await supabase
     .from("swipes")
