@@ -31,6 +31,7 @@ import PayfastReturnPage from '@/pages/PayfastReturnPage';
 import PayfastCancelPage from '@/pages/PayfastCancelPage';
 import VerificationPayfastReturnPage from '@/pages/VerificationPayfastReturnPage';
 import VerificationPayfastCancelPage from '@/pages/VerificationPayfastCancelPage';
+import { PhotoRequirementGate } from '@/components/PhotoRequirementGate';
 const queryClient = new QueryClient();
 function ProtectedRoute({ component: Component, skipOnboardingCheck, ...rest }: any) {
   const { isAuthenticated, onboardingCompleted, checkOnboardingStatus } = useAuth();
@@ -130,8 +131,8 @@ function PublicRoute({ component: Component, ...rest }: any) {
 // longer cause a remount.
 const PublicAuthRoute = () => <PublicRoute component={AuthPage} />;
 const ProtectedOnboardingRoute = () => <ProtectedRoute component={OnboardingPage} skipOnboardingCheck />;
-const ProtectedDiscoverRoute = () => <ProtectedRoute component={DiscoverPage} />;
-const ProtectedSearchRoute = () => <ProtectedRoute component={SearchPage} />;
+const ProtectedDiscoverRoute = () => <PhotoRequirementGate><ProtectedRoute component={DiscoverPage} /></PhotoRequirementGate>;
+const ProtectedSearchRoute = () => <PhotoRequirementGate><ProtectedRoute component={SearchPage} /></PhotoRequirementGate>;
 const ProtectedInvitesRoute = () => <ProtectedRoute component={InvitesPage} />;
 const ProtectedMatchesRoute = () => <ProtectedRoute component={MatchesPage} />;
 const ProtectedMatchDetailRoute = () => <ProtectedRoute component={MatchDetailPage} />;

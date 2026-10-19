@@ -6,11 +6,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
-import { Image as ImageIcon, Check, ChevronLeft, Crown } from "lucide-react";
+import { Image as ImageIcon, ChevronLeft, Crown } from "lucide-react";
 import { captureError } from "@/lib/sentry";
 import { RadioList, ChipGrid } from "@/components/SelectorControls";
 import { RadiusSlider } from "@/components/DropdownControls";
 import { HeightInput } from "@/components/HeightInput";
+import { computePerceptualHash } from "@/lib/imageHash";
 import { PhoneVerificationFlow } from "@/components/PhoneVerificationFlow";
 import {
   INTERESTS,
@@ -194,7 +195,16 @@ export default function OnboardingPage() {
   const [languagesSpoken, setLanguagesSpoken] = useState<string[]>([]);
   const [languagesOther, setLanguagesOther] = useState("");
 
-  const [photoCount, setPhotoCount] = useState(0);
+  // The server decides what counts: only real photos of the person (a face
+  // was detected) count toward the 3 required, and duplicates count once.
+  // Photos of objects can still be uploaded, but are shown as "doesn't count".
+  // While the admin switch is off (default), onboarding behaves as before:
+  // any one uploaded photo is enough. When it's on, 3 counting photos are.
+  const [photoRuleEnforced, setPhotoRuleEnforced] = useState(false);
+  const REQUIRED_PHOTOS = photoRuleEnforced ? 3 : 1;
+  const MAX_ONBOARDING_PHOTOS = 8;
+  const [photos, setPhotos] = useState<{ id: string; photo_url: string; counts: boolean }[]>([]);
+  const [qualifyingCount, setQualifyingCount] = useState(0);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
@@ -356,6 +366,40 @@ export default function OnboardingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Photos already uploaded in an earlier attempt (they live on the server,
+  // not in the saved draft) — load them so the step shows the true count.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [photosRes, statusRes] = await Promise.all([
+          fetch("/api/profile/me/photos", { headers: { Authorization: `Bearer ${token}` } }),
+          fetch("/api/profile/me/photo-status", { headers: { Authorization: `Bearer ${token}` } }),
+        ]);
+        if (cancelled) return;
+        if (photosRes.ok) {
+          const rows = await photosRes.json();
+          setPhotos(
+            (rows as { id: string; photo_url: string; media_type: string; counts_toward_requirement: boolean }[])
+              .filter((r) => r.media_type === "image")
+              .map((r) => ({ id: r.id, photo_url: r.photo_url, counts: r.counts_toward_requirement })),
+          );
+        }
+        if (statusRes.ok) {
+          const status = await statusRes.json();
+          setQualifyingCount(status.qualifying_count ?? 0);
+          setPhotoRuleEnforced(status.enforced === true);
+        }
+      } catch {
+        // Non-fatal — the step just starts at zero.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const toggleIntention = (v: string) => {
     setIntentions((prev) => (prev.includes(v) ? prev.filter((i) => i !== v) : prev.length < 3 ? [...prev, v] : prev));
   };
@@ -378,6 +422,8 @@ export default function OnboardingPage() {
     try {
       const formData = new FormData();
       formData.append("photo", file);
+      const phash = await computePerceptualHash(file);
+      if (phash) formData.append("phash", phash);
       const res = await fetch("/api/profile/me/photos", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
@@ -385,7 +431,18 @@ export default function OnboardingPage() {
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Upload failed");
-      setPhotoCount((c) => c + 1);
+      setPhotos((prev) => [
+        ...prev,
+        { id: body.id, photo_url: body.photo_url, counts: body.counts_toward_requirement !== false },
+      ]);
+      setQualifyingCount(body.qualifying_count ?? 0);
+      if (body.requirement_enforced === true) setPhotoRuleEnforced(true);
+      if (body.counts_toward_requirement === false && body.requirement_enforced === true) {
+        toast({
+          title: "That one won't count",
+          description: "We couldn't see you in that photo. Add clear photos of yourself — it's fine to keep this one too.",
+        });
+      }
     } catch (err) {
       toast({
         title: "Error",
@@ -822,34 +879,55 @@ export default function OnboardingPage() {
         )}
 
         {step === 20 && (
-          <StepShell step={step} onBack={goBack} onContinue={goNext} continueLabel="Continue" continueDisabled={photoCount === 0}>
-            <h2 className="text-2xl font-['Syne'] font-bold mb-2">📸 Photos & Video</h2>
+          <StepShell
+            step={step}
+            onBack={goBack}
+            onContinue={goNext}
+            continueLabel="Continue"
+            continueDisabled={photoRuleEnforced ? qualifyingCount < REQUIRED_PHOTOS : photos.length < 1}
+          >
+            <h2 className="text-2xl font-['Syne'] font-bold mb-2">📸 Add your photos</h2>
             <p className="text-sm text-muted-foreground mb-6">
-              Add at least one photo to continue — you can add up to 8 photos and a 5-second clip from your Profile page any time.
+              {photoRuleEnforced
+                ? `Add at least ${REQUIRED_PHOTOS} clear photos of yourself to start browsing. Photos of objects or scenery don't count, and the same photo only counts once. You can add more photos and a 5-second clip from your Profile page any time.`
+                : "Add at least one photo to continue — you can add up to 8 photos and a 5-second clip from your Profile page any time."}
             </p>
             <div className="grid grid-cols-3 gap-3 mb-4">
-              {Array.from({ length: photoCount }).map((_, i) => (
-                <div key={i} className="aspect-square rounded-xl bg-secondary flex items-center justify-center">
-                  <Check size={20} className="text-primary" />
+              {photos.map((p) => (
+                <div key={p.id} className="relative aspect-square rounded-xl overflow-hidden bg-secondary">
+                  <img src={p.photo_url} alt="" className="w-full h-full object-cover" />
+                  {photoRuleEnforced && !p.counts && (
+                    <div className="absolute inset-x-0 bottom-0 bg-black/70 text-white text-[10px] font-semibold text-center py-1">
+                      Doesn't count
+                    </div>
+                  )}
                 </div>
               ))}
-              <button
-                onClick={() => photoInputRef.current?.click()}
-                disabled={isUploadingPhoto}
-                className="aspect-square rounded-xl border-2 border-dashed border-card-border flex flex-col items-center justify-center gap-1 text-muted-foreground hover:border-primary/50 hover:text-primary transition-colors disabled:opacity-50"
-              >
-                {isUploadingPhoto ? (
-                  <span className="text-xs">Uploading...</span>
-                ) : (
-                  <>
-                    <ImageIcon size={20} />
-                    <span className="text-xs">Add</span>
-                  </>
-                )}
-              </button>
+              {photos.length < MAX_ONBOARDING_PHOTOS && (
+                <button
+                  onClick={() => photoInputRef.current?.click()}
+                  disabled={isUploadingPhoto}
+                  className="aspect-square rounded-xl border-2 border-dashed border-card-border flex flex-col items-center justify-center gap-1 text-muted-foreground hover:border-primary/50 hover:text-primary transition-colors disabled:opacity-50"
+                >
+                  {isUploadingPhoto ? (
+                    <span className="text-xs">Uploading...</span>
+                  ) : (
+                    <>
+                      <ImageIcon size={20} />
+                      <span className="text-xs">Add</span>
+                    </>
+                  )}
+                </button>
+              )}
             </div>
             <input ref={photoInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handlePhotoSelected} className="hidden" />
-            {photoCount > 0 && <p className="text-xs text-primary">{photoCount} photo{photoCount === 1 ? "" : "s"} added</p>}
+            {photoRuleEnforced ? (
+              <p className={`text-xs ${qualifyingCount >= REQUIRED_PHOTOS ? "text-primary" : "text-muted-foreground"}`}>
+                {Math.min(qualifyingCount, REQUIRED_PHOTOS)} of {REQUIRED_PHOTOS} photos added
+              </p>
+            ) : (
+              photos.length > 0 && <p className="text-xs text-primary">{photos.length} photo{photos.length === 1 ? "" : "s"} added</p>
+            )}
           </StepShell>
         )}
 

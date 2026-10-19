@@ -200,6 +200,10 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
   const [isTogglingDealbreakers, setIsTogglingDealbreakers] = useState(false);
   const [referralProgramEnabled, setReferralProgramEnabled] = useState(true);
   const [isTogglingReferralProgram, setIsTogglingReferralProgram] = useState(false);
+  // Defaults to false (off) — a brand-new rule that changes who appears in
+  // Discover/Search must be a deliberate admin decision, never on by default.
+  const [photoRequirementEnabled, setPhotoRequirementEnabled] = useState(false);
+  const [isTogglingPhotoRequirement, setIsTogglingPhotoRequirement] = useState(false);
   // Defaults to true (not false, unlike incognito/dealbreakers above) —
   // this nudge already existed and worked with no admin control at all
   // until now, so an admin who never touches this new setting should
@@ -231,6 +235,7 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
         if (body) {
           setIncognitoEnabled(body.incognito_enabled === true);
           setDealbreakersEnabled(body.dealbreakers_enabled === true);
+          setPhotoRequirementEnabled(body.photo_requirement_enabled === true);
           // Defaults to true (not false, unlike incognito/dealbreakers
           // above) — matches voice_question_nudge_enabled's own
           // precedent and the backend's own default treatment.
@@ -302,6 +307,41 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
       });
     } finally {
       setIsTogglingDealbreakers(false);
+    }
+  };
+
+  const togglePhotoRequirementFeature = async () => {
+    const next = !photoRequirementEnabled;
+    if (
+      next &&
+      !window.confirm(
+        "Turn on the 3-photo requirement? Anyone without 3 real photos/clips of themselves will see a 'Complete your profile' prompt and can't browse Discover or Search until they add them. Other people can still see their profile.",
+      )
+    ) {
+      return;
+    }
+    setIsTogglingPhotoRequirement(true);
+    try {
+      const res = await fetch("/api/admin/settings", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ key: "photo_requirement_enabled", value: next }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "Failed to update setting");
+      setPhotoRequirementEnabled(next);
+      toast({ title: next ? "3-photo requirement enabled platform-wide" : "3-photo requirement disabled platform-wide" });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to update setting.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsTogglingPhotoRequirement(false);
     }
   };
 
@@ -446,6 +486,24 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
           </div>
           <div className={`h-6 w-10 rounded-full relative transition-colors shrink-0 ${dealbreakersEnabled ? "bg-primary" : "bg-secondary"}`}>
             <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${dealbreakersEnabled ? "right-1" : "left-1"}`} />
+          </div>
+        </button>
+
+        <button
+          onClick={togglePhotoRequirementFeature}
+          disabled={isTogglingPhotoRequirement}
+          className="w-full flex items-center justify-between bg-card border border-card-border rounded-2xl p-4 disabled:opacity-60 mt-2"
+        >
+          <div className="text-left">
+            <p className="text-sm font-medium">3-Photo Requirement</p>
+            <p className="text-xs text-muted-foreground">
+              {photoRequirementEnabled
+                ? "Enabled — users need 3 real photos/clips of themselves to browse Discover and Search (profiles with a real main photo stay visible to others)"
+                : "Disabled — no minimum number of photos needed to browse"}
+            </p>
+          </div>
+          <div className={`h-6 w-10 rounded-full relative transition-colors shrink-0 ${photoRequirementEnabled ? "bg-primary" : "bg-secondary"}`}>
+            <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${photoRequirementEnabled ? "right-1" : "left-1"}`} />
           </div>
         </button>
 

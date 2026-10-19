@@ -13,15 +13,9 @@ import { PageHeader } from "@/components/PageHeader";
 import { TopBar } from "@/components/TopBar";
 import { BottomNav } from "@/components/BottomNav";
 import { MatchCelebration } from "@/components/MatchCelebration";
-import { Search as SearchIcon, Heart, X, MessageCircle, SlidersHorizontal, Sparkles, ShieldCheck, Mic, MapPin, TrendingUp, ChevronLeft, Star, Gem, Flame, Users } from "lucide-react";
+import { Search as SearchIcon, Heart, X, MessageCircle, Sparkles, ShieldCheck, Mic, MapPin, TrendingUp, ChevronLeft, Star, Gem, Flame, Users } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { captureUserLocation } from "@/lib/captureLocation";
-
-const PERSONALITY_TAGS = [
-  "Sarcastic", "Curious", "Night Owl", "Coffee Snob",
-  "Bookworm", "Dog Person", "Foodie", "Traveler",
-  "Introvert", "Empath", "Creative", "Ambitious",
-];
 
 // Expanded to match everything ProfileCard.tsx's redesigned, categorized
 // sections can display (Lifestyle & Habits, Interests, More About Me) —
@@ -308,11 +302,6 @@ export default function SearchPage() {
   const [, setLocation] = useLocation();
 
   const [name, setName] = useState("");
-  const [minAge, setMinAge] = useState("");
-  const [maxAge, setMaxAge] = useState("");
-  const [city, setCity] = useState("");
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [showFilters, setShowFilters] = useState(false);
 
   const [results, setResults] = useState<Result[] | null>(null);
   const [isSearching, setIsSearching] = useState(false);
@@ -418,21 +407,16 @@ export default function SearchPage() {
     setResults(null);
   };
 
-  const toggleTag = (tag: string) => {
-    setSelectedTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
-  };
-
   const handleSearch = async (e?: React.FormEvent) => {
     e?.preventDefault();
+    // Name search only — an empty search would just list people, which
+    // defeats the point of swiping. Needs at least 2 characters.
+    if (name.trim().length < 2) return;
     setActiveCategory(null);
     setIsSearching(true);
     try {
       const params = new URLSearchParams();
       if (name.trim()) params.set("name", name.trim());
-      if (minAge) params.set("min_age", minAge);
-      if (maxAge) params.set("max_age", maxAge);
-      if (city.trim()) params.set("city", city.trim());
-      if (selectedTags.length > 0) params.set("tags", selectedTags.join(","));
 
       const res = await fetch(`/api/discover/search?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -701,77 +685,9 @@ export default function SearchPage() {
                 className="bg-card border-card-border pl-10 h-12 rounded-xl"
               />
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-12 w-12 rounded-xl shrink-0 border-card-border bg-card p-0"
-              onClick={() => setShowFilters((v) => !v)}
-            >
-              <SlidersHorizontal size={18} className={showFilters ? "text-primary" : "text-muted-foreground"} />
-            </Button>
           </div>
 
-          {showFilters && (
-            <div className="bg-card border border-card-border rounded-2xl p-4 space-y-4">
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <label className="text-xs font-medium text-muted-foreground">Min age</label>
-                  <Input
-                    type="number"
-                    value={minAge}
-                    onChange={(e) => setMinAge(e.target.value)}
-                    placeholder="18"
-                    className="bg-background border-card-border h-10 mt-1"
-                  />
-                </div>
-                <div className="flex-1">
-                  <label className="text-xs font-medium text-muted-foreground">Max age</label>
-                  <Input
-                    type="number"
-                    value={maxAge}
-                    onChange={(e) => setMaxAge(e.target.value)}
-                    placeholder="99"
-                    className="bg-background border-card-border h-10 mt-1"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-medium text-muted-foreground">City</label>
-                <Input
-                  value={city}
-                  onChange={(e) => setCity(e.target.value)}
-                  placeholder="e.g. Cape Town"
-                  className="bg-background border-card-border h-10 mt-1"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-medium text-muted-foreground mb-2 block">Interests</label>
-                <div className="flex flex-wrap gap-2">
-                  {PERSONALITY_TAGS.map((tag) => {
-                    const isSelected = selectedTags.includes(tag);
-                    return (
-                      <button
-                        key={tag}
-                        type="button"
-                        onClick={() => toggleTag(tag)}
-                        className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${
-                          isSelected
-                            ? "bg-primary border-primary text-primary-foreground"
-                            : "bg-background border-card-border text-muted-foreground hover:border-muted-foreground/50"
-                        }`}
-                      >
-                        {tag}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          )}
-
-          <Button type="submit" disabled={isSearching} className="w-full h-12 rounded-xl bg-gradient-accent border-0 text-white font-semibold">
+          <Button type="submit" disabled={isSearching || name.trim().length < 2} className="w-full h-12 rounded-xl bg-gradient-accent border-0 text-white font-semibold">
             {isSearching ? "Searching..." : "Search"}
           </Button>
         </form>
@@ -780,7 +696,7 @@ export default function SearchPage() {
       {results === null ? (
         <div className="flex flex-col items-center text-center px-4 mt-6 text-muted-foreground">
           <SearchIcon size={28} className="mb-4 opacity-40" />
-          <p className="max-w-[240px] text-sm">Search by name, or use filters to narrow down by age, city, or interests.</p>
+          <p className="max-w-[240px] text-sm">Search for someone by name, or explore the groups above.</p>
         </div>
       ) : isSearching ? (
         activeCategory ? (

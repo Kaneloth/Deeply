@@ -43,6 +43,9 @@ interface GalleryPhoto {
   photo_url: string;
   media_type: "image" | "video";
   position: number;
+  // Set by the server: false when no face was detected in an image, meaning
+  // it can stay on the profile but doesn't count toward the 3 required.
+  counts_toward_requirement?: boolean;
 }
 
 interface VoiceQuestion {
@@ -102,6 +105,7 @@ const MIN_BIRTHDATE = new Date(_today.getFullYear() - 100, _today.getMonth(), _t
 import { readPersistentCache, writePersistentCache, registerCacheResetter } from "@/lib/persistentCache";
 import { useRefetchOnAppResume } from "@/hooks/useRefetchOnAppResume";
 import { usePullToRefresh } from "@/contexts/PullToRefreshContext";
+import { computePerceptualHash } from "@/lib/imageHash";
 
 const PROFILE_DATA_CACHE_KEY = "profile_data";
 const PROFILE_PHOTOS_CACHE_KEY = "profile_photos";
@@ -224,6 +228,9 @@ export default function ProfilePage() {
   const [isBoosting, setIsBoosting] = useState(false);
 
   const [photos, setPhotos] = useState<GalleryPhoto[]>(cachedPhotos ?? []);
+  // Whether the admin has switched the minimum-photos rule on. While off
+  // (default) none of the "counts toward the 3" UI is shown.
+  const [photoRuleEnforced, setPhotoRuleEnforced] = useState(false);
   const [isLoadingPhotos, setIsLoadingPhotos] = useState(cachedPhotos === null);
   const [isUploading, setIsUploading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -253,6 +260,12 @@ export default function ProfilePage() {
 
   // Run once on mount only — same reasoning as fetchProfile above.
   useEffect(() => {
+    fetch("/api/profile/me/photo-status", { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (body) setPhotoRuleEnforced(body.enforced === true);
+      })
+      .catch(() => {});
     fetchPhotos();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -732,6 +745,10 @@ export default function ProfilePage() {
       try {
         const formData = new FormData();
         formData.append("photo", file);
+        if (isImage) {
+          const phash = await computePerceptualHash(file);
+          if (phash) formData.append("phash", phash);
+        }
 
         const res = await fetch("/api/profile/me/photos", {
           method: "POST",
@@ -750,6 +767,13 @@ export default function ProfilePage() {
         });
         successCount++;
 
+        if (body.counts_toward_requirement === false && body.requirement_enforced === true) {
+          toast({
+            title: "That photo won't count",
+            description: "We couldn't see you in it. It stays on your profile, but add clear photos of yourself to reach the 3 required.",
+          });
+        }
+
         if (body.sparks_charged > 0) {
           totalSparksCharged += body.sparks_charged;
         }
@@ -764,6 +788,14 @@ export default function ProfilePage() {
     }
 
     setIsUploading(false);
+
+    // The server may have changed the main photo / order (a non-face photo
+    // is never allowed to lead), so re-read both instead of trusting the
+    // local running copy.
+    if (successCount > 0) {
+      fetchPhotos();
+      fetchProfile();
+    }
 
     if (totalSparksCharged > 0) {
       refreshSparksBadge();
@@ -1148,6 +1180,14 @@ export default function ProfilePage() {
             <p className="text-xs text-muted-foreground">
               {photos.length}/{MAX_FREE_PHOTOS} free — extra items cost {EXTRA_PHOTO_COST} Sparks each
             </p>
+            {(() => {
+              const counted = photos.filter((p) => p.media_type === "video" || p.counts_toward_requirement !== false).length;
+              return photoRuleEnforced && counted < 3 ? (
+                <p className="text-xs text-primary mt-1">
+                  {counted} of 3 required photos/clips of you — you need 3 to browse Discover and Search.
+                </p>
+              ) : null;
+            })()}
           </div>
           <ImageIcon size={18} className="text-muted-foreground shrink-0" />
         </div>
@@ -1170,6 +1210,11 @@ export default function ProfilePage() {
                 {idx === 0 && photo.media_type === "image" && (
                   <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-full bg-black/60 text-white text-[10px] font-semibold">
                     Main
+                  </span>
+                )}
+                {photoRuleEnforced && photo.media_type === "image" && photo.counts_toward_requirement === false && (
+                  <span className="absolute top-1.5 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded-full bg-black/70 text-white text-[10px] font-semibold whitespace-nowrap">
+                    Doesn't count
                   </span>
                 )}
                 {photo.media_type === "video" && (

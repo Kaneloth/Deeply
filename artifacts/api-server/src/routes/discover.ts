@@ -11,6 +11,7 @@ import { createNotification } from "../lib/notifications-helper";
 import { haversineDistanceKm } from "../lib/geo";
 import { genderSatisfiesPreference, passesDealbreakers, passesAgeRange, computeCompatibilityScore, passesEnabledPreferenceFilters, passesHeightRange } from "../lib/matching";
 import { getEconomyConfig } from "../lib/economy-config";
+import { requirePhotoRequirement } from "../lib/photo-requirements";
 
 const router: IRouter = Router();
 
@@ -127,7 +128,7 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
         "nightlife_frequency, has_tattoos, pets, activity_level, height_cm, education, languages_spoken, languages_other, love_language, latitude, longitude",
     )
     .not("id", "in", `(${excludedIds.join(",")})`)
-    .eq("is_incognito", false).eq("onboarding_completed", true).or(notSnoozedFilter())
+    .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter())
     // Without this, the query has no explicit order at all, meaning
     // Postgres returns whatever 300 rows it happens to fetch first —
     // with no guarantee a currently-boosted profile is even among
@@ -244,7 +245,7 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
   return { candidates: withComputedAges(withPhotosAndVoiceQuestion), error: null };
 }
 
-router.get("/discover/queue", requireAuth, async (req, res): Promise<void> => {
+router.get("/discover/queue", requireAuth, requirePhotoRequirement, async (req, res): Promise<void> => {
   const userId = req.user!.id;
   const { candidates, error } = await buildDiscoverQueue(userId);
 
@@ -286,7 +287,7 @@ router.get("/discover/reshuffle-status", requireAuth, async (req, res): Promise<
   res.json({ isFree, cost: cost_reshuffle, nextFreeAt: isFree ? null : nextFreeAt });
 });
 
-router.post("/discover/reshuffle", requireAuth, async (req, res): Promise<void> => {
+router.post("/discover/reshuffle", requireAuth, requirePhotoRequirement, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -494,7 +495,7 @@ async function createMatchWithAnyPendingMessages(
   return match;
 }
 
-router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
+router.post("/discover/swipe", requireAuth, requirePhotoRequirement, async (req, res): Promise<void> => {
   const userId = req.user!.id;
   const { targetId, direction, clientTimezone, skipInviteQuota } = req.body as {
     targetId?: string;
@@ -575,7 +576,7 @@ router.post("/discover/swipe", requireAuth, async (req, res): Promise<void> => {
  *  touches consumeFreeInviteOrCharge). Stored as an ordinary swipes row
  *  with voice_reply_url set, so it flows through the exact same
  *  match-creation path as any other invite. */
-router.post("/discover/voice-question/:targetUserId/reply", requireAuth, async (req, res): Promise<void> => {
+router.post("/discover/voice-question/:targetUserId/reply", requireAuth, requirePhotoRequirement, async (req, res): Promise<void> => {
   const userId = req.user!.id;
   const targetUserId = Array.isArray(req.params.targetUserId) ? req.params.targetUserId[0] : req.params.targetUserId;
   const { audio_url } = req.body as { audio_url?: string };
@@ -898,15 +899,16 @@ router.post("/discover/invites/reveal", requireAuth, async (req, res): Promise<v
   res.json({ invites: withComputedAges(withPhotosAndVoiceQuestion), balance });
 });
 
-router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
+router.get("/discover/search", requireAuth, requirePhotoRequirement, async (req, res): Promise<void> => {
   const userId = req.user!.id;
-  const { name, min_age, max_age, city, tags } = req.query as {
-    name?: string;
-    min_age?: string;
-    max_age?: string;
-    city?: string;
-    tags?: string;
-  };
+  // Search is by name only — age/city/interest filters were removed on
+  // purpose (they worked against the swipe experience). Any such params
+  // sent by an older app version are simply ignored.
+  const { name } = req.query as { name?: string };
+  if (!name || name.trim().length < 2) {
+    res.json({ results: [] });
+    return;
+  }
 
   const { hardExcluded, pendingInvitedIds } = await getCandidateExclusionSets(userId);
 
@@ -929,8 +931,8 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
   const radiusKm = viewer?.distance_km ?? 25;
   const dealbreakers: string[] = viewer?.dealbreakers ?? [];
 
-  const effectiveMinAge = min_age ? Number(min_age) : viewer?.pref_age_min ?? 18;
-  const effectiveMaxAge = max_age ? Number(max_age) : viewer?.pref_age_max ?? 99;
+  const effectiveMinAge = viewer?.pref_age_min ?? 18;
+  const effectiveMaxAge = viewer?.pref_age_max ?? 99;
 
   let query = supabase
     .from("profiles")
@@ -940,7 +942,7 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
         "education, languages_spoken, languages_other, love_language, latitude, longitude",
     )
     .not("id", "in", `(${excludedIds.join(",")})`)
-    .eq("is_incognito", false).eq("onboarding_completed", true).or(notSnoozedFilter());
+    .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter());
 
   if (name) {
     query = query.ilike("name", `%${name}%`);
@@ -953,15 +955,6 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
   // null/stale — the actual cause of search always returning zero
   // results regardless of what name was typed. Applied in JS below,
   // after fetching, using the same pattern as everywhere else instead.
-  if (city) {
-    query = query.ilike("city", `%${city}%`);
-  }
-  if (tags) {
-    const tagList = tags.split(",").map((t) => t.trim()).filter(Boolean);
-    if (tagList.length > 0) {
-      query = query.overlaps("personality_tags", tagList);
-    }
-  }
 
   const { data: rawResults, error } = await query.limit(150);
 
@@ -1004,7 +997,7 @@ router.get("/discover/search", requireAuth, async (req, res): Promise<void> => {
   res.json({ results: withComputedAges(withPhotosAndVoiceQuestion) });
 });
 
-router.get("/discover/categories", requireAuth, async (req, res): Promise<void> => {
+router.get("/discover/categories", requireAuth, requirePhotoRequirement, async (req, res): Promise<void> => {
   const userId = req.user!.id;
 
   const excludedIds = await getExcludedCandidateIds(userId);
@@ -1066,7 +1059,7 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
       .from("profiles")
       .select(PREVIEW_FIELDS)
       .not("id", "in", excludeClause)
-      .eq("is_incognito", false).eq("onboarding_completed", true).or(notSnoozedFilter())
+      .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter())
       .gte("created_at", sevenDaysAgo)
       .limit(300);
     categories.push({ key: "new_here", label: "New Here", ...applyHardFilters(data ?? []) });
@@ -1077,7 +1070,7 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
       .from("profiles")
       .select(PREVIEW_FIELDS)
       .not("id", "in", excludeClause)
-      .eq("is_incognito", false).eq("onboarding_completed", true).or(notSnoozedFilter())
+      .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter())
       .eq("is_verified", true)
       .limit(300);
     categories.push({ key: "verified", label: "Verified", ...applyHardFilters(data ?? []) });
@@ -1101,7 +1094,7 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
         .from("profiles")
         .select(PREVIEW_FIELDS)
         .in("id", audioUserIds)
-        .eq("is_incognito", false).eq("onboarding_completed", true).or(notSnoozedFilter());
+        .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter());
       result = applyHardFilters(data ?? []);
     }
     categories.push({ key: "has_audio", label: "Voice Questions", ...result });
@@ -1125,7 +1118,7 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
       .from("profiles")
       .select(PREVIEW_FIELDS)
       .not("id", "in", excludeClause)
-      .eq("is_incognito", false).eq("onboarding_completed", true).or(notSnoozedFilter())
+      .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter())
       .not("latitude", "is", null)
       .not("longitude", "is", null)
       .limit(500);
@@ -1150,7 +1143,7 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
       .from("profiles")
       .select(PREVIEW_FIELDS)
       .not("id", "in", excludeClause)
-      .eq("is_incognito", false).eq("onboarding_completed", true).or(notSnoozedFilter())
+      .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter())
       .limit(300);
     const sorted = (data ?? [])
       .map((c) => ({ c, score: viewerProfile ? computeCompatibilityScore(c, { ...viewerProfile, dealbreakers }) : 0 }))
@@ -1178,7 +1171,7 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
         .from("profiles")
         .select(PREVIEW_FIELDS)
         .in("id", likedIds)
-        .eq("is_incognito", false).eq("onboarding_completed", true).or(notSnoozedFilter());
+        .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter());
       const sorted = (data ?? []).sort((a, b) => (countMap.get(b.id) ?? 0) - (countMap.get(a.id) ?? 0));
       result = applyHardFilters(sorted);
     }
@@ -1203,7 +1196,7 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
       .from("profiles")
       .select(PREVIEW_FIELDS)
       .not("id", "in", excludeClause)
-      .eq("is_incognito", false).eq("onboarding_completed", true).or(notSnoozedFilter())
+      .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter())
       .in(
         "relationship_type",
         RELATIONSHIP_CATEGORY_DEFS.map((d) => d.value),
@@ -1218,7 +1211,7 @@ router.get("/discover/categories", requireAuth, async (req, res): Promise<void> 
   res.json({ categories });
 });
 
-router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<void> => {
+router.get("/discover/categories/:key", requireAuth, requirePhotoRequirement, async (req, res): Promise<void> => {
   const userId = req.user!.id;
   const key = Array.isArray(req.params.key) ? req.params.key[0] : req.params.key;
 
@@ -1253,7 +1246,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
         .from("profiles")
         .select(SELECT_FIELDS)
         .not("id", "in", excludeClause)
-        .eq("is_incognito", false).eq("onboarding_completed", true).or(notSnoozedFilter())
+        .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter())
         .gte("created_at", sevenDaysAgo)
         .order("created_at", { ascending: false })
         .limit(30);
@@ -1265,7 +1258,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
         .from("profiles")
         .select(SELECT_FIELDS)
         .not("id", "in", excludeClause)
-        .eq("is_incognito", false).eq("onboarding_completed", true).or(notSnoozedFilter())
+        .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter())
         .eq("is_verified", true)
         .limit(30);
       results = data ?? [];
@@ -1282,7 +1275,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
           .from("profiles")
           .select(SELECT_FIELDS)
           .in("id", audioUserIds.slice(0, 30))
-          .eq("is_incognito", false).eq("onboarding_completed", true).or(notSnoozedFilter());
+          .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter());
         results = data ?? [];
       }
       break;
@@ -1299,7 +1292,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
           .from("profiles")
           .select(SELECT_FIELDS)
           .not("id", "in", excludeClause)
-          .eq("is_incognito", false).eq("onboarding_completed", true).or(notSnoozedFilter())
+          .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter())
           .not("latitude", "is", null)
           .not("longitude", "is", null)
           .limit(500);
@@ -1318,7 +1311,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
         .from("profiles")
         .select(SELECT_FIELDS)
         .not("id", "in", excludeClause)
-        .eq("is_incognito", false).eq("onboarding_completed", true).or(notSnoozedFilter())
+        .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter())
         .limit(300);
 
       results = (data ?? [])
@@ -1342,7 +1335,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
       }
       const topIds = [...countMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([id]) => id);
       if (topIds.length > 0) {
-        const { data } = await supabase.from("profiles").select(SELECT_FIELDS).in("id", topIds).eq("is_incognito", false).eq("onboarding_completed", true).or(notSnoozedFilter());
+        const { data } = await supabase.from("profiles").select(SELECT_FIELDS).in("id", topIds).eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter());
         results = topIds.map((id) => (data ?? []).find((p) => p.id === id)).filter(Boolean);
       }
       break;
@@ -1365,7 +1358,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
         .from("profiles")
         .select(SELECT_FIELDS)
         .not("id", "in", excludeClause)
-        .eq("is_incognito", false).eq("onboarding_completed", true).or(notSnoozedFilter())
+        .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter())
         .eq("relationship_type", relationshipValue)
         .limit(30);
       results = data ?? [];
@@ -1419,7 +1412,7 @@ router.get("/discover/categories/:key", requireAuth, async (req, res): Promise<v
  *  half-agreed-upon match caused real confusion (e.g. "match not found"
  *  errors once one side later interacted with a match the other side
  *  had never consciously accepted). */
-router.post("/discover/message-request", requireAuth, async (req, res): Promise<void> => {
+router.post("/discover/message-request", requireAuth, requirePhotoRequirement, async (req, res): Promise<void> => {
   const userId = req.user!.id;
   const { targetId, content } = req.body as { targetId?: string; content?: string };
 

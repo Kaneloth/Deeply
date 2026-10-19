@@ -11,6 +11,7 @@ import { createNotification, createNotificationForUsers, recordProfileView, sche
 import { attachPhotoGalleries } from "../lib/photo-galleries";
 import { attachVoiceQuestions } from "../lib/voice-questions-helper";
 import { checkImageSafety } from "../lib/content-moderation";
+import { sha256, sanitizePerceptualHash, isDuplicateUpload, syncPhotoState, isQualifying, isPhotoRequirementEnabled } from "../lib/photo-requirements";
 import { getEconomyConfig, invalidateEconomyConfigCache } from "../lib/economy-config";
 import { verifyAndConsumeGooglePurchase } from "../lib/google-play-helper";
 import { buildPayfastCheckout } from "../lib/payfast-helper";
@@ -286,7 +287,10 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
   if (age !== undefined) updates.age = age;
   if (bio !== undefined) updates.bio = bio;
   if (city !== undefined) updates.city = city;
-  if (photo_url !== undefined) updates.photo_url = photo_url;
+  // photo_url is intentionally NOT accepted from the client: the main photo
+  // is derived server-side from the gallery (see syncPhotoState) so that a
+  // non-face photo can never be forced in as the main one.
+  void photo_url;
   if (personality_tags !== undefined) updates.personality_tags = personality_tags;
   // These columns have CHECK constraints (only specific values allowed)
   // or are DATE columns — an empty string from an unfilled/unselected
@@ -1047,11 +1051,25 @@ router.delete("/voice-question", requireAuth, async (req, res): Promise<void> =>
 router.get("/profile/me/photos", requireAuth, async (req, res): Promise<void> => {
   const { data: photos } = await supabase
     .from("profile_photos")
-    .select("id, photo_url, media_type, position, created_at")
+    .select("id, photo_url, media_type, position, created_at, has_face")
     .eq("user_id", req.user!.id)
     .order("position", { ascending: true });
 
-  res.json(photos ?? []);
+  res.json(
+    (photos ?? []).map((p) => ({
+      ...p,
+      counts_toward_requirement: isQualifying({ media_type: p.media_type, has_face: p.has_face ?? null }),
+    })),
+  );
+});
+
+/** GET /api/profile/me/photo-status — how many real, distinct photos/clips
+ *  the user has toward the required minimum. Also re-syncs their main
+ *  photo and photo_requirement_met flag (and lazily backfills face checks
+ *  and hashes for older uploads), so it is always current. */
+router.get("/profile/me/photo-status", requireAuth, async (req, res): Promise<void> => {
+  const [state, enforced] = await Promise.all([syncPhotoState(req.user!.id), isPhotoRequirementEnabled()]);
+  res.json({ qualifying_count: state.qualifying, required: state.required, met: state.met, enforced });
 });
 
 /** POST /api/profile/me/photos — upload a new gallery photo (multipart,
@@ -1112,6 +1130,16 @@ router.post(
       return;
     }
 
+    // Duplicate check — same picture uploaded twice (byte-identical, or for
+    // images, visually near-identical via the client-supplied perceptual
+    // hash). Runs before moderation and before any Sparks are charged.
+    const contentHash = sha256(req.file.buffer);
+    const perceptualHash = isVideo ? null : sanitizePerceptualHash((req.body as { phash?: unknown })?.phash);
+    if (await isDuplicateUpload(userId, contentHash, perceptualHash)) {
+      res.status(409).json({ error: "You've already added this photo. Please choose a different one.", code: "DUPLICATE_PHOTO" });
+      return;
+    }
+
     // Content moderation — images only (see doc comment in
     // content-moderation.ts for why video isn't covered here).
     let hasFace: boolean | null = null;
@@ -1162,7 +1190,16 @@ router.post(
 
     const { data: photo, error: insertError } = await supabase
       .from("profile_photos")
-      .insert({ user_id: userId, photo_url: publicUrl, storage_path: storagePath, position, media_type: mediaType, has_face: hasFace })
+      .insert({
+        user_id: userId,
+        photo_url: publicUrl,
+        storage_path: storagePath,
+        position,
+        media_type: mediaType,
+        has_face: hasFace,
+        content_hash: contentHash,
+        perceptual_hash: perceptualHash,
+      })
       .select("id, photo_url, media_type, position, created_at")
       .single();
 
@@ -1171,14 +1208,23 @@ router.post(
       return;
     }
 
-    // Keep the legacy single photo_url field pointed at the first item,
-    // but only if it's an image (avatars elsewhere in the app expect a
-    // static image, not a video).
-    if (position === 0 && !isVideo) {
-      await supabase.from("profiles").update({ photo_url: publicUrl }).eq("id", userId);
-    }
+    // Recomputes the main photo (never a confirmed non-face image) and
+    // whether the user now meets the minimum-photos requirement. This
+    // replaces the old "position 0 image becomes main" shortcut, which is
+    // what let a random object become the main photo during onboarding.
+    const [state, requirementEnforced] = await Promise.all([syncPhotoState(userId), isPhotoRequirementEnabled()]);
 
-    res.status(201).json({ ...photo, sparks_charged: sparksCharged, balance: balanceAfter });
+    res.status(201).json({
+      ...photo,
+      has_face: hasFace,
+      counts_toward_requirement: isVideo || hasFace !== false,
+      qualifying_count: state.qualifying,
+      required: state.required,
+      requirement_met: state.met,
+      requirement_enforced: requirementEnforced,
+      sparks_charged: sparksCharged,
+      balance: balanceAfter,
+    });
   },
 );
 
@@ -1226,12 +1272,9 @@ router.delete("/profile/me/photos/:photoId", requireAuth, async (req, res): Prom
     }
   }
 
-  // If we deleted the first photo, keep profiles.photo_url in sync with
-  // the new first IMAGE in the gallery (never a video), or null if none.
-  if (photo.position === 0) {
-    const newFirstImage = remaining?.find((p) => p.media_type === "image");
-    await supabase.from("profiles").update({ photo_url: newFirstImage?.photo_url ?? null }).eq("id", userId);
-  }
+  // Re-derives the main photo and the minimum-photos flag from what's left
+  // (replaces the old "new first image becomes main" shortcut).
+  await syncPhotoState(userId);
 
   res.sendStatus(204);
 });
@@ -1323,6 +1366,7 @@ router.put("/profile/me/photos/:photoId/set-main", requireAuth, async (req, res)
   }
 
   await supabase.from("profiles").update({ photo_url: target.photo_url }).eq("id", userId);
+  await syncPhotoState(userId);
 
   res.json({ success: true });
 });
@@ -1651,6 +1695,20 @@ router.put("/admin/settings", requireAuth, requireAdminScope("manage_users"), as
   if (!key || value === undefined) {
     res.status(400).json({ error: "key and value are required" });
     return;
+  }
+
+  // Switching the 3-photo requirement ON first re-syncs everyone's
+  // photo_requirement_met flag in one database call, so nobody is wrongly
+  // hidden or let through because of a stale flag. Done BEFORE saving the
+  // setting so a failure here leaves the requirement off.
+  if (key === "photo_requirement_enabled" && value === true) {
+    const { error: refreshError } = await supabase.rpc("refresh_photo_requirement_flags");
+    if (refreshError) {
+      res.status(500).json({
+        error: `Couldn't prepare the photo requirement (${refreshError.message}). Run photo_requirement_refresh_function.sql in Supabase first.`,
+      });
+      return;
+    }
   }
 
   const { error } = await supabase
