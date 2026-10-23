@@ -50,7 +50,7 @@ const SOURCE_OPTIONS = [
   { value: "other", label: "Other" },
 ];
 
-const TOTAL_STEPS = 23;
+const TOTAL_STEPS = 24;
 
 // Birthday picker bounds: must be at least 18, and a sane upper bound of
 // 100 years old.
@@ -422,8 +422,23 @@ export default function OnboardingPage() {
     setLanguagesSpoken((prev) => (prev.includes(v) ? prev.filter((i) => i !== v) : prev.length < 5 ? [...prev, v] : prev));
   };
 
-  const goNext = () => setStep((s) => Math.min(s + 1, TOTAL_STEPS - 1));
-  const goBack = () => setStep((s) => Math.max(s - 1, 0));
+  // Step 22 is the "How did you hear about Deeply?" question. It is skipped
+  // entirely (in both directions) when a valid referral code was entered —
+  // that already tells us a friend sent them.
+  const SOURCE_STEP = 22;
+  const skipSourceStep = referralCheck.status === "valid";
+  const goNext = () =>
+    setStep((s) => {
+      let n = Math.min(s + 1, TOTAL_STEPS - 1);
+      if (n === SOURCE_STEP && skipSourceStep) n += 1;
+      return n;
+    });
+  const goBack = () =>
+    setStep((s) => {
+      let n = Math.max(s - 1, 0);
+      if (n === SOURCE_STEP && skipSourceStep) n -= 1;
+      return n;
+    });
 
   const handlePhotoSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1036,33 +1051,40 @@ export default function OnboardingPage() {
           </motion.div>
         )}
 
-        {step === 22 && (
+        {step === SOURCE_STEP && (
+          <StepShell
+            step={step}
+            onBack={goBack}
+            onContinue={goNext}
+            continueLabel={acquisitionSource ? "Continue" : "Skip for now"}
+          >
+            <h2 className="text-2xl font-['Syne'] font-bold mb-2">How did you hear about Deeply?</h2>
+            <p className="text-sm text-muted-foreground mb-6">Optional — it helps us understand what's working.</p>
+            <div className="flex flex-wrap gap-2">
+              {SOURCE_OPTIONS.map((o) => (
+                <button
+                  key={o.value}
+                  type="button"
+                  onClick={() => setAcquisitionSource((c) => (c === o.value ? "" : o.value))}
+                  className={`px-4 py-3 rounded-full text-sm border transition-colors ${
+                    acquisitionSource === o.value
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-card border-card-border text-foreground"
+                  }`}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          </StepShell>
+        )}
+
+        {step === 23 && (
           <motion.div key={step} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex-1 flex flex-col">
             <div className="flex-1 flex flex-col items-center justify-center text-center">
               <div className="text-5xl mb-6">🎉</div>
               <h1 className="text-3xl font-['Syne'] font-bold mb-3">You're all set!</h1>
               <p className="text-muted-foreground mb-6">Welcome to Deeply.</p>
-              {referralCheck.status !== "valid" && (
-                <div className="w-full max-w-sm mb-6">
-                  <p className="text-sm font-medium mb-3">How did you hear about Deeply? <span className="text-muted-foreground font-normal">(optional)</span></p>
-                  <div className="flex flex-wrap justify-center gap-2">
-                    {SOURCE_OPTIONS.map((o) => (
-                      <button
-                        key={o.value}
-                        type="button"
-                        onClick={() => setAcquisitionSource((c) => (c === o.value ? "" : o.value))}
-                        className={`px-3 py-2 rounded-full text-sm border transition-colors ${
-                          acquisitionSource === o.value
-                            ? "bg-primary text-primary-foreground border-primary"
-                            : "bg-card border-card-border text-foreground"
-                        }`}
-                      >
-                        {o.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
               <p className="text-xs text-muted-foreground max-w-xs">💡 Tip: Add more photos and record a Voice Question from your profile to stand out.</p>
             </div>
             <Button
