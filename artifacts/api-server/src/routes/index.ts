@@ -12,6 +12,7 @@ import phoneVerificationRouter from "./phone-verification";
 import blockedContactsRouter from "./blocked-contacts";
 import videoCallsRouter from "./video-calls";
 import pushTokensRouter from "./push-tokens";
+import acquisitionRouter from "./acquisition";
 
 const router: IRouter = Router();
 
@@ -28,5 +29,6 @@ router.use(phoneVerificationRouter);
 router.use(blockedContactsRouter);
 router.use(videoCallsRouter);
 router.use(pushTokensRouter);
+router.use(acquisitionRouter);
 
 export default router;

@@ -39,6 +39,17 @@ import {
 // that feature no longer exists (superseded by Voice Question, now
 // recorded from the Profile page instead of during onboarding). Phone
 // verification shifts from 22 to 21, Welcome from 23 to 22.
+const SOURCE_OPTIONS = [
+  { value: "tiktok", label: "TikTok" },
+  { value: "instagram", label: "Instagram" },
+  { value: "facebook", label: "Facebook" },
+  { value: "store_search", label: "App Store / Play Store search" },
+  { value: "google", label: "Google search" },
+  { value: "friend", label: "A friend told me" },
+  { value: "event", label: "Campus or club event" },
+  { value: "other", label: "Other" },
+];
+
 const TOTAL_STEPS = 23;
 
 // Birthday picker bounds: must be at least 18, and a sane upper bound of
@@ -209,6 +220,7 @@ export default function OnboardingPage() {
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   const [notifySparks, setNotifySparks] = useState(true);
+  const [acquisitionSource, setAcquisitionSource] = useState("");
 
   const [referralCode, setReferralCode] = useState("");
   const [referralCheck, setReferralCheck] = useState<{ status: "idle" | "checking" | "valid" | "invalid"; referrerName?: string }>({
@@ -520,6 +532,19 @@ export default function OnboardingPage() {
       // that second, later read returned stale data even though this
       // PUT had already genuinely succeeded moments earlier.
       markOnboardingCompleted();
+      // Best-effort, after success only — never blocks or fails onboarding.
+      // A valid referral code means a friend sent them, so that is recorded
+      // without asking.
+      {
+        const source = referralCheck.status === "valid" ? "friend" : acquisitionSource;
+        if (source) {
+          fetch("/api/profile/me/acquisition-source", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ source }),
+          }).catch(() => {});
+        }
+      }
       if (body.is_founder) {
         setFounderReveal({ rank: body.founder_rank, cap: body.founder_cap });
       } else {
@@ -958,6 +983,27 @@ export default function OnboardingPage() {
               <div className="text-5xl mb-6">🎉</div>
               <h1 className="text-3xl font-['Syne'] font-bold mb-3">You're all set!</h1>
               <p className="text-muted-foreground mb-6">Welcome to Deeply.</p>
+              {referralCheck.status !== "valid" && (
+                <div className="w-full max-w-sm mb-6">
+                  <p className="text-sm font-medium mb-3">How did you hear about Deeply? <span className="text-muted-foreground font-normal">(optional)</span></p>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {SOURCE_OPTIONS.map((o) => (
+                      <button
+                        key={o.value}
+                        type="button"
+                        onClick={() => setAcquisitionSource((c) => (c === o.value ? "" : o.value))}
+                        className={`px-3 py-2 rounded-full text-sm border transition-colors ${
+                          acquisitionSource === o.value
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-card border-card-border text-foreground"
+                        }`}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <p className="text-xs text-muted-foreground max-w-xs">💡 Tip: Add more photos and record a Voice Question from your profile to stand out.</p>
             </div>
             <Button

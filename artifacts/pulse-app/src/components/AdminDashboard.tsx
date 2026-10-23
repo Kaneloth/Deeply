@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { AcquisitionSourcesCard } from "@/components/AcquisitionSourcesCard";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -452,6 +453,8 @@ function OverviewSection({ token, toast }: { token: string | null; toast: any })
           </div>
         ))}
       </div>
+
+      <AcquisitionSourcesCard token={token} />
 
       <div>
         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2 pl-1">Platform Settings</p>
