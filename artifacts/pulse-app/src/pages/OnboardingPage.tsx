@@ -6,7 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
-import { Image as ImageIcon, ChevronLeft, Crown } from "lucide-react";
+import { Image as ImageIcon, ChevronLeft, Crown, X } from "lucide-react";
 import { captureError } from "@/lib/sentry";
 import { RadioList, ChipGrid } from "@/components/SelectorControls";
 import { RadiusSlider } from "@/components/DropdownControls";
@@ -466,6 +466,50 @@ export default function OnboardingPage() {
     }
   };
 
+  const [deletingPhotoId, setDeletingPhotoId] = useState<string | null>(null);
+
+  const handleDeletePhoto = async (photoId: string) => {
+    if (deletingPhotoId) return;
+    setDeletingPhotoId(photoId);
+    try {
+      const res = await fetch(`/api/profile/me/photos/${photoId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        let msg = "Failed to remove photo.";
+        try {
+          const body = await res.json();
+          if (body?.error) msg = body.error;
+        } catch {
+          // No JSON body — keep the generic message.
+        }
+        throw new Error(msg);
+      }
+      setPhotos((prev) => prev.filter((p) => p.id !== photoId));
+      // The server decides what still counts (e.g. a duplicate pair, or the
+      // main photo moving), so ask it rather than guessing locally.
+      try {
+        const statusRes = await fetch("/api/profile/me/photo-status", { headers: { Authorization: `Bearer ${token}` } });
+        if (statusRes.ok) {
+          const status = await statusRes.json();
+          setQualifyingCount(status.qualifying_count ?? 0);
+          setPhotoRuleEnforced(status.enforced === true);
+        }
+      } catch {
+        // Non-fatal — count refreshes on the next upload.
+      }
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to remove photo.",
+        variant: "destructive",
+      });
+    } finally {
+      setDeletingPhotoId(null);
+    }
+  };
+
   const handleComplete = async () => {
     setIsSaving(true);
     try {
@@ -908,19 +952,27 @@ export default function OnboardingPage() {
             step={step}
             onBack={goBack}
             onContinue={goNext}
-            continueLabel="Continue"
-            continueDisabled={photoRuleEnforced ? qualifyingCount < REQUIRED_PHOTOS : photos.length < 1}
+            continueLabel={(photoRuleEnforced ? qualifyingCount >= REQUIRED_PHOTOS : photos.length >= 1) ? "Continue" : "Skip for now"}
           >
             <h2 className="text-2xl font-['Syne'] font-bold mb-2">📸 Add your photos</h2>
             <p className="text-sm text-muted-foreground mb-6">
               {photoRuleEnforced
-                ? `Add at least ${REQUIRED_PHOTOS} clear photos of yourself to start browsing. Photos of objects or scenery don't count, and the same photo only counts once. You can add more photos and a 5-second clip from your Profile page any time.`
-                : "Add at least one photo to continue — you can add up to 8 photos and a 5-second clip from your Profile page any time."}
+                ? `Add at least ${REQUIRED_PHOTOS} clear photos of yourself to start browsing. Photos of objects or scenery don't count, and the same photo only counts once. You can skip this for now and add them later from your Profile page.`
+                : "Add a photo so people can see you. You can skip this for now and add photos (and a 5-second clip) from your Profile page any time."}
             </p>
             <div className="grid grid-cols-3 gap-3 mb-4">
               {photos.map((p) => (
                 <div key={p.id} className="relative aspect-square rounded-xl overflow-hidden bg-secondary">
                   <img src={p.photo_url} alt="" className="w-full h-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => handleDeletePhoto(p.id)}
+                    disabled={deletingPhotoId !== null}
+                    aria-label="Remove photo"
+                    className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/70 text-white flex items-center justify-center disabled:opacity-50"
+                  >
+                    <X size={14} />
+                  </button>
                   {photoRuleEnforced && !p.counts && (
                     <div className="absolute inset-x-0 bottom-0 bg-black/70 text-white text-[10px] font-semibold text-center py-1">
                       Doesn't count
@@ -947,9 +999,16 @@ export default function OnboardingPage() {
             </div>
             <input ref={photoInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handlePhotoSelected} className="hidden" />
             {photoRuleEnforced ? (
-              <p className={`text-xs ${qualifyingCount >= REQUIRED_PHOTOS ? "text-primary" : "text-muted-foreground"}`}>
-                {Math.min(qualifyingCount, REQUIRED_PHOTOS)} of {REQUIRED_PHOTOS} photos added
-              </p>
+              <>
+                <p className={`text-xs ${qualifyingCount >= REQUIRED_PHOTOS ? "text-primary" : "text-muted-foreground"}`}>
+                  {Math.min(qualifyingCount, REQUIRED_PHOTOS)} of {REQUIRED_PHOTOS} photos added
+                </p>
+                {qualifyingCount < REQUIRED_PHOTOS && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    If you skip, you can still finish setting up — you'll just need {REQUIRED_PHOTOS} photos before you can browse, and you won't appear to others until you add a photo.
+                  </p>
+                )}
+              </>
             ) : (
               photos.length > 0 && <p className="text-xs text-primary">{photos.length} photo{photos.length === 1 ? "" : "s"} added</p>
             )}
