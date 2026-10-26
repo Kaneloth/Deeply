@@ -184,7 +184,10 @@ export default function OnboardingPage() {
   const [lookingForGender, setLookingForGender] = useState("");
 
   const [city, setCity] = useState("");
-  const [distanceKm, setDistanceKm] = useState<number>(25);
+  // Defaults to the "Anywhere" sentinel (100000, same value RadiusSlider uses
+  // for its unlimited notch) so someone who skips this never lands on an
+  // empty Discover just because nobody lives within 25 km.
+  const [distanceKm, setDistanceKm] = useState<number>(100000);
 
   const [relationshipType, setRelationshipType] = useState("");
   const [intentions, setIntentions] = useState<string[]>([]);

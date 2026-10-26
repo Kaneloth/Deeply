@@ -17,6 +17,29 @@ const router: IRouter = Router();
 
 const RESHUFFLE_FREE_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 
+// Dynamic Discovery: when fewer than this many eligible profiles fall inside
+// the viewer's own radius, the main Discover queue quietly tops itself up with
+// the NEAREST profiles beyond it, so the feed never looks empty. Nothing in the
+// response says this happened — the viewer's saved radius setting is untouched.
+const MIN_DISCOVER_POOL = 20;
+
+// Admin kill switch (app_settings.dynamic_discovery_enabled). Unlike most
+// switches this defaults ON when the row doesn't exist; only an explicit
+// false/"false" turns it off. A failed read also leaves it on.
+async function isDynamicDiscoveryEnabled(): Promise<boolean> {
+  try {
+    const { data } = await supabase
+      .from("app_settings")
+      .select("value")
+      .eq("key", "dynamic_discovery_enabled")
+      .maybeSingle();
+    if (!data) return true;
+    return !(data.value === false || data.value === "false");
+  } catch {
+    return true;
+  }
+}
+
 // Excludes snoozed profiles from every Discover surface — the main
 // queue, every category, search, everywhere a candidate query exists in
 // this file. A snoozed profile should be completely invisible to new
@@ -97,7 +120,7 @@ async function attachDistances<T extends { id: string; latitude?: number | null;
 }
 
 async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []) {
-  const [excludedFromHistory, { data: viewer }, enabledFilters] = await Promise.all([
+  const [excludedFromHistory, { data: viewer }, enabledFilters, dynamicDiscoveryEnabled] = await Promise.all([
     getExcludedCandidateIds(userId),
     supabase
       .from("profiles")
@@ -109,6 +132,7 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
       .eq("id", userId)
       .single(),
     getEnabledPreferenceFilters(),
+    isDynamicDiscoveryEnabled(),
   ]);
   const excludedIds = [...excludedFromHistory, ...extraExcludeIds];
 
@@ -167,6 +191,22 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
     ? withDistance.filter((c) => c.distance_km === null || c.distance_km <= radiusKm)
     : withDistance;
 
+  // Dynamic Discovery — only when the viewer's own radius yields a thin pool.
+  // Takes just enough of the nearest out-of-radius profiles (with a known
+  // distance) to reach MIN_DISCOVER_POOL; they are appended AFTER everyone
+  // inside the radius, boosted ones first, then nearest-first.
+  let expansion: typeof withDistance = [];
+  if (dynamicDiscoveryEnabled && viewerHasLocation && withinRadius.length < MIN_DISCOVER_POOL) {
+    const insideIds = new Set(withinRadius.map((c) => c.id));
+    const nearest = withDistance
+      .filter((c) => !insideIds.has(c.id) && c.distance_km !== null && !!c.photo_url)
+      .sort((a, b) => (a.distance_km as number) - (b.distance_km as number))
+      .slice(0, MIN_DISCOVER_POOL - withinRadius.length);
+    const isBoostedNow = (c: { boosted_until?: string | null }) =>
+      !!c.boosted_until && new Date(c.boosted_until).getTime() > Date.now();
+    expansion = [...nearest.filter(isBoostedNow), ...nearest.filter((c) => !isBoostedNow(c))];
+  }
+
   const now = Date.now();
   // Three tiers, in this exact priority order: boosted-with-photo,
   // then everyone else with a photo, then anyone with NO photo at all
@@ -211,7 +251,12 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
     return result;
   };
 
-  const prioritized = [...weightedShuffle(boosted), ...weightedShuffle(rest), ...weightedShuffle(noPhoto)].slice(0, 20);
+  const prioritized = [
+    ...weightedShuffle(boosted),
+    ...weightedShuffle(rest),
+    ...weightedShuffle(noPhoto),
+    ...expansion,
+  ].slice(0, 20);
 
   // Previously this stripped `gender` and `relationship_type` out
   // entirely before sending to the frontend, along with the genuinely
