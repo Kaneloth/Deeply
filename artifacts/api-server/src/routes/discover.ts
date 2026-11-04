@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { requireAuth } from "../middlewares/auth";
 import { supabase } from "../lib/supabase";
 import { spendSparks } from "../lib/sparks-helper";
+import { hasReshuffleExtra, applyReshuffleExtra, consumeExtra, currentBalance, expireIncognitoIfDue } from "../lib/spark-bundles";
 import { attachPhotoGalleries } from "../lib/photo-galleries";
 import { attachVoiceQuestions } from "../lib/voice-questions-helper";
 import { withComputedAge, withComputedAges, calculateAge } from "../lib/age";
@@ -120,6 +121,7 @@ async function attachDistances<T extends { id: string; latitude?: number | null;
 }
 
 async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []) {
+  await expireIncognitoIfDue();
   const [excludedFromHistory, { data: viewer }, enabledFilters, dynamicDiscoveryEnabled] = await Promise.all([
     getExcludedCandidateIds(userId),
     supabase
@@ -329,7 +331,8 @@ router.get("/discover/reshuffle-status", requireAuth, async (req, res): Promise<
   const nextFreeAt = lastFree ? new Date(lastFree.getTime() + RESHUFFLE_FREE_INTERVAL_MS).toISOString() : null;
 
   const { cost_reshuffle } = await getEconomyConfig();
-  res.json({ isFree, cost: cost_reshuffle, nextFreeAt: isFree ? null : nextFreeAt });
+  const hasExtra = isFree ? false : await hasReshuffleExtra(req.user!.id);
+  res.json({ isFree: isFree || hasExtra, cost: cost_reshuffle, nextFreeAt: isFree || hasExtra ? null : nextFreeAt });
 });
 
 router.post("/discover/reshuffle", requireAuth, requirePhotoRequirement, async (req, res): Promise<void> => {
@@ -345,6 +348,7 @@ router.post("/discover/reshuffle", requireAuth, requirePhotoRequirement, async (
   const isFree = !lastFree || Date.now() - lastFree.getTime() >= RESHUFFLE_FREE_INTERVAL_MS;
 
   const { cost_reshuffle } = await getEconomyConfig();
+  let usedExtra = false;
 
   if (isFree) {
     const nowIso = new Date().toISOString();
@@ -363,10 +367,14 @@ router.post("/discover/reshuffle", requireAuth, requirePhotoRequirement, async (
     // which is what actually protects the very next rapid tap.
     await rememberReshuffleTimestamp(userId, nowIso);
   } else {
-    const spend = await spendSparks(userId, cost_reshuffle, "Discover reshuffle");
-    if (!spend.success) {
-      res.status(400).json({ error: "Not enough Sparks to reshuffle" });
-      return;
+    // Unlimited-reshuffle time, or a Reshuffle extra, covers it before any Sparks are spent.
+    usedExtra = await applyReshuffleExtra(userId);
+    if (!usedExtra) {
+      const spend = await spendSparks(userId, cost_reshuffle, "Discover reshuffle");
+      if (!spend.success) {
+        res.status(400).json({ error: "Not enough Sparks to reshuffle" });
+        return;
+      }
     }
   }
 
@@ -376,7 +384,7 @@ router.post("/discover/reshuffle", requireAuth, requirePhotoRequirement, async (
     return;
   }
 
-  res.json({ candidates, wasFree: isFree, cost: cost_reshuffle });
+  res.json({ candidates, wasFree: isFree || usedExtra, cost: usedExtra ? 0 : cost_reshuffle });
 });
 
 /** Creates a match between two users — idempotent, returns the existing
@@ -726,10 +734,16 @@ router.post("/discover/undo", requireAuth, async (req, res): Promise<void> => {
   }
 
   const { cost_undo_swipe } = await getEconomyConfig();
-  const spend = await spendSparks(userId, cost_undo_swipe, "Undo swipe");
-  if (!spend.success) {
-    res.status(402).json({ error: `Insufficient Sparks (need ${cost_undo_swipe})`, balance: spend.balance });
-    return;
+  // A Rewind extra (from a Sparks package) is used first, at no Sparks cost.
+  let spend: { success: boolean; balance: number };
+  if (await consumeExtra(userId, "rewind")) {
+    spend = { success: true, balance: await currentBalance(userId) };
+  } else {
+    spend = await spendSparks(userId, cost_undo_swipe, "Undo swipe");
+    if (!spend.success) {
+      res.status(402).json({ error: `Insufficient Sparks (need ${cost_undo_swipe})`, balance: spend.balance });
+      return;
+    }
   }
 
   await supabase.from("swipes").delete().eq("id", lastSwipe.id);

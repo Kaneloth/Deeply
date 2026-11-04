@@ -4,43 +4,18 @@ import { supabase } from "../lib/supabase";
 import { getSparksSummary, addPaidSparks } from "../lib/sparks-helper";
 import { verifyAndConsumeGooglePurchase, TestPurchaseError } from "../lib/google-play-helper";
 import { buildPayfastCheckout, validateItn } from "../lib/payfast-helper";
-import { getEconomyConfig, type EconomyConfig } from "../lib/economy-config";
+import { getEconomyConfig } from "../lib/economy-config";
+import { getSparkBundles, grantBundleExtrasSafely } from "../lib/spark-bundles";
 
 const router: IRouter = Router();
 
-// google_product_id must exactly match an in-app product created in
-// Google Play Console under this app's package (za.co.deeplydating.app)
-// — permanent once created there, so this stays a fixed constant, never
-// admin-editable. sparks (the quantity granted) is likewise fixed: it's
-// what the bundle actually IS, not a price. Only price_zar is admin-
-// configurable — see price_config_key below and economy-config.ts.
-const BUNDLE_DEFINITIONS = [
-  { id: "starter", sparks: 120, google_product_id: "sparks_starter", price_config_key: "sparks_price_starter" as const },
-  { id: "popular", sparks: 300, google_product_id: "sparks_popular", price_config_key: "sparks_price_popular" as const },
-  { id: "date_night", sparks: 600, google_product_id: "sparks_date_night", price_config_key: "sparks_price_date_night" as const },
-  { id: "power_user", sparks: 1500, google_product_id: "sparks_power_user", price_config_key: "sparks_price_power_user" as const },
-  { id: "deep_connection", sparks: 4000, google_product_id: "sparks_deep_connection", price_config_key: "sparks_price_deep_connection" as const },
-];
-
-/** Attaches the current admin-configured price_zar to every bundle
- *  definition. Async (unlike the old static BUNDLES array) since prices
- *  now live in app_settings via getEconomyConfig() rather than being
- *  hardcoded here — this is what actually makes them admin-editable
- *  from the dashboard, the same mechanism already used for the ID
- *  verification fee. Note this ONLY affects price_zar (what PayFast
- *  charges on web, and what's displayed in the app) — it has zero
- *  effect on what Google Play itself charges for a native purchase,
- *  which is set entirely separately, directly in Play Console. The two
- *  are never automatically synced; changing one doesn't change the
- *  other. */
+/** Packages now live in the spark_bundles table (price, Sparks amount and free
+ *  extras are all admin-editable) — see lib/spark-bundles.ts. google_product_id
+ *  stays fixed per package because it must match the in-app product in Play Console.
+ *  NOTE: price_zar only affects PayFast (web) and the web display; Google Play charges
+ *  whatever is set in Play Console, and the two are never synced. */
 async function getBundlesWithPrices() {
-  const config = await getEconomyConfig();
-  return BUNDLE_DEFINITIONS.map((b) => ({
-    id: b.id,
-    sparks: b.sparks,
-    google_product_id: b.google_product_id,
-    price_zar: config[b.price_config_key as keyof EconomyConfig] as number,
-  }));
+  return getSparkBundles();
 }
 
 /** GET /api/sparks — current balance, next monthly grant date, and the
@@ -98,7 +73,7 @@ router.post("/sparks/purchase/google", requireAuth, async (req, res): Promise<vo
   // backend, and verifyAndConsumeGooglePurchase below confirms that
   // against Google's own records rather than trusting any price we'd
   // supply here. Only google_product_id and sparks matter for this flow.
-  const bundle = BUNDLE_DEFINITIONS.find((b) => b.id === bundle_id);
+  const bundle = (await getSparkBundles()).find((b) => b.id === bundle_id);
   if (!bundle) {
     res.status(400).json({ error: "Invalid bundle_id" });
     return;
@@ -147,6 +122,7 @@ router.post("/sparks/purchase/google", requireAuth, async (req, res): Promise<vo
   }
 
   const newBalance = await addPaidSparks(userId, bundle.sparks, `Purchased ${bundle.id} bundle via Google Play`);
+  await grantBundleExtrasSafely(userId, bundle.extras, "google_play", bundle.id);
   res.json({ balance: newBalance });
 });
 
@@ -183,6 +159,7 @@ router.post("/sparks/checkout/payfast", requireAuth, async (req, res): Promise<v
       bundle_id: bundle.id,
       sparks: bundle.sparks,
       amount_zar: bundle.price_zar,
+      extras: bundle.extras,
     })
     .select("m_payment_id")
     .single();
@@ -323,6 +300,7 @@ router.post("/sparks/payfast/itn", async (req, res): Promise<void> => {
       });
     } else {
       await addPaidSparks(txn.user_id, txn.sparks, `Purchased ${txn.bundle_id} bundle via PayFast`);
+      await grantBundleExtrasSafely(txn.user_id, txn.extras, "payfast", txn.bundle_id);
     }
     res.sendStatus(200);
   } catch (err) {

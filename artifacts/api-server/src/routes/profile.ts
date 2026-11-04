@@ -15,6 +15,7 @@ import { sha256, sanitizePerceptualHash, isDuplicateUpload, syncPhotoState, isQu
 import { getEconomyConfig, invalidateEconomyConfigCache } from "../lib/economy-config";
 import { verifyAndConsumeGooglePurchase } from "../lib/google-play-helper";
 import { buildPayfastCheckout } from "../lib/payfast-helper";
+import { consumeExtra, currentBalance, expireIncognitoIfDue } from "../lib/spark-bundles";
 
 const router: IRouter = Router();
 
@@ -52,6 +53,7 @@ const EXT_BY_MIME: Record<string, string> = {
 
 /** GET /api/profile/me */
 router.get("/profile/me", requireAuth, async (req, res): Promise<void> => {
+  await expireIncognitoIfDue();
   const { data: profile, error } = await supabase
     .from("profiles")
     .select("*")
@@ -404,6 +406,7 @@ router.put("/profile/me", requireAuth, async (req, res): Promise<void> => {
       }
     }
     updates.is_incognito = is_incognito;
+    if (!is_incognito) updates.incognito_until = null;
   }
   // Founders program: award the badge + free verification at the exact
   // moment onboarding_completed transitions from not-true to true — not
@@ -803,11 +806,17 @@ router.post("/profile/boost", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
-  const { cost_boost } = await getEconomyConfig();
-  const spend = await spendSparks(userId, cost_boost, "Profile Boost");
-  if (!spend.success) {
-    res.status(402).json({ error: `Insufficient Sparks (need ${cost_boost})`, balance: spend.balance });
-    return;
+  // A Boost extra (from a Sparks package) is used first, at no Sparks cost.
+  let spend: { success: boolean; balance: number };
+  if (await consumeExtra(userId, "boost")) {
+    spend = { success: true, balance: await currentBalance(userId) };
+  } else {
+    const { cost_boost } = await getEconomyConfig();
+    spend = await spendSparks(userId, cost_boost, "Profile Boost");
+    if (!spend.success) {
+      res.status(402).json({ error: `Insufficient Sparks (need ${cost_boost})`, balance: spend.balance });
+      return;
+    }
   }
 
   const now = new Date();
