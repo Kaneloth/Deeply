@@ -4,6 +4,7 @@ import { AcquisitionSourcesCard } from "@/components/AcquisitionSourcesCard";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SparkBundlesEditor } from "@/components/SparkBundlesEditor";
 import {
   X, Users, Flag, Coins, Megaphone, LayoutDashboard, Loader2, Search,
   Ban, ShieldOff, Crown, Plus, Trash2, CheckCircle2, XCircle, ChevronLeft,
@@ -2528,13 +2529,6 @@ function EconomySection({ token, toast }: { token: string | null; toast: any }) 
     },
     { title: "Timing & Expiry", keys: ["invite_expiry_days", "voice_question_expiry_days", "voice_question_nudge_cooldown_days"] },
     { title: "Real-Money Fees", keys: ["id_verification_fee_zar"] },
-    {
-      title: "Sparks Bundle Prices (ZAR)",
-      keys: [
-        "sparks_price_starter", "sparks_price_popular", "sparks_price_date_night",
-        "sparks_price_power_user", "sparks_price_deep_connection",
-      ],
-    },
   ];
 
   return (
@@ -2591,6 +2585,7 @@ function EconomySection({ token, toast }: { token: string | null; toast: any }) 
           </div>
         </div>
       ))}
+      <SparkBundlesEditor token={token} toast={toast} />
     </div>
   );
 }

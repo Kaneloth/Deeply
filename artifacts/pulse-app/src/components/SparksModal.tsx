@@ -5,6 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useSparks } from "@/contexts/SparksContext";
 import { useToast } from "@/hooks/use-toast";
 import { SparkIcon } from "@/components/Icons";
+import { MyExtrasSection } from "@/components/MyExtrasSection";
 import { X, ChevronDown, Loader2 } from "lucide-react";
 
 interface Bundle {
@@ -12,6 +13,7 @@ interface Bundle {
   sparks: number;
   price_zar: number;
   google_product_id: string;
+  extras_labels?: string[];
 }
 
 interface SparksSummary {
@@ -324,6 +326,8 @@ export function SparksModal({ onClose }: { onClose: () => void }) {
               )}
             </div>
 
+            <MyExtrasSection token={token} refreshKey={summary?.balance} />
+
             {/* Recharge */}
             <div>
               <h3 className="text-sm font-semibold mb-3">Recharge Sparks</h3>
@@ -342,6 +346,11 @@ export function SparksModal({ onClose }: { onClose: () => void }) {
                         <div>
                           <p className="font-['Syne'] font-bold text-lg leading-tight">{bundle.sparks}</p>
                           <p className="text-xs text-muted-foreground leading-tight">{BUNDLE_NAMES[bundle.id] ?? bundle.id}</p>
+                          {bundle.extras_labels && bundle.extras_labels.length > 0 && (
+                            <p className="text-[11px] text-muted-foreground leading-snug mt-1">
+                              Includes {bundle.extras_labels.join(" · ")}
+                            </p>
+                          )}
                         </div>
                       </div>
                       <button
