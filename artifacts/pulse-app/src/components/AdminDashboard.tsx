@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { AcquisitionSourcesCard } from "@/components/AcquisitionSourcesCard";
 import { useToast } from "@/hooks/use-toast";
@@ -1128,6 +1129,13 @@ function ColumnHeaderMenu({
 }) {
   const [distinctValues, setDistinctValues] = useState<string[]>([]);
   const [loadingValues, setLoadingValues] = useState(false);
+  // Ticks are collected in `draft` and only applied when "Apply" is pressed.
+  // Applying on every tick reloaded the whole table immediately, which made
+  // it impossible to choose more than one value.
+  const [draft, setDraft] = useState<string[]>(selectedValues ?? []);
+  const [valueSearch, setValueSearch] = useState("");
+  const [pos, setPos] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const isActive = sortBy === column || (selectedValues && selectedValues.length > 0);
 
   useEffect(() => {
@@ -1141,65 +1149,119 @@ function ColumnHeaderMenu({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, filterable, column, token]);
 
+  // Each time the menu opens: start from what's currently applied, and work out
+  // where to draw it. The menu is drawn on the page itself (a portal) rather
+  // than inside the table, so a short table (e.g. a filter leaving one row)
+  // can no longer cut it off.
+  useEffect(() => {
+    if (!isOpen) return;
+    setDraft(selectedValues ?? []);
+    setValueSearch("");
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (rect) {
+      const MENU_WIDTH = 208;
+      const top = rect.bottom + 4;
+      setPos({
+        top,
+        left: Math.max(8, Math.min(rect.left, window.innerWidth - MENU_WIDTH - 8)),
+        maxHeight: Math.max(200, window.innerHeight - top - 12),
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  const visibleValues = valueSearch.trim()
+    ? distinctValues.filter((v) => v.toLowerCase().includes(valueSearch.trim().toLowerCase()))
+    : distinctValues;
+
   return (
     <div className="relative">
-      <button onClick={onToggle} className={`flex items-center gap-1 ${isActive ? "text-primary" : ""}`}>
+      <button ref={buttonRef} onClick={onToggle} className={`flex items-center gap-1 ${isActive ? "text-primary" : ""}`}>
         {label}
         <ChevronDown size={12} />
       </button>
-      {isOpen && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={onToggle} />
-          <div className="absolute left-0 top-full mt-1 z-50 w-48 bg-card border border-card-border rounded-xl shadow-lg p-2 text-left font-normal normal-case">
-            <button
-              onClick={() => onSort(column, "asc")}
-              className={`w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded-lg hover:bg-secondary ${sortBy === column && sortOrder === "asc" ? "bg-secondary text-primary" : ""}`}
+      {isOpen &&
+        pos &&
+        createPortal(
+          <>
+            <div className="fixed inset-0 z-[1000]" onClick={onToggle} />
+            <div
+              className="fixed z-[1001] w-52 overflow-y-auto bg-card border border-card-border rounded-xl shadow-lg p-2 text-left text-sm font-normal normal-case text-foreground"
+              style={{ top: pos.top, left: pos.left, maxHeight: pos.maxHeight }}
             >
-              <ArrowUpAZ size={13} /> Sort A-Z
-            </button>
-            <button
-              onClick={() => onSort(column, "desc")}
-              className={`w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded-lg hover:bg-secondary ${sortBy === column && sortOrder === "desc" ? "bg-secondary text-primary" : ""}`}
-            >
-              <ArrowDownAZ size={13} /> Sort Z-A
-            </button>
-            {filterable && (
-              <>
-                <div className="border-t border-card-border my-1.5" />
-                <p className="px-2 py-1 text-xs text-muted-foreground">Filter by</p>
-                <div className="max-h-40 overflow-y-auto">
-                  {loadingValues ? (
-                    <div className="flex justify-center py-3">
-                      <Loader2 size={14} className="animate-spin text-muted-foreground" />
-                    </div>
-                  ) : distinctValues.length === 0 ? (
-                    <p className="px-2 py-1.5 text-xs text-muted-foreground">No values found</p>
-                  ) : (
-                    distinctValues.map((v) => (
-                      <label key={v} className="flex items-center gap-2 px-2 py-1.5 text-xs rounded-lg hover:bg-secondary cursor-pointer capitalize">
-                        <input
-                          type="checkbox"
-                          checked={selectedValues?.includes(v) ?? false}
-                          onChange={(e) => {
-                            const current = selectedValues ?? [];
-                            onFilterChange?.(e.target.checked ? [...current, v] : current.filter((x) => x !== v));
-                          }}
-                        />
-                        {v}
-                      </label>
-                    ))
+              <button
+                onClick={() => onSort(column, "asc")}
+                className={`w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded-lg hover:bg-secondary ${sortBy === column && sortOrder === "asc" ? "bg-secondary text-primary" : ""}`}
+              >
+                <ArrowUpAZ size={13} /> Sort A-Z
+              </button>
+              <button
+                onClick={() => onSort(column, "desc")}
+                className={`w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded-lg hover:bg-secondary ${sortBy === column && sortOrder === "desc" ? "bg-secondary text-primary" : ""}`}
+              >
+                <ArrowDownAZ size={13} /> Sort Z-A
+              </button>
+              {filterable && (
+                <>
+                  <div className="border-t border-card-border my-1.5" />
+                  <p className="px-2 py-1 text-xs text-muted-foreground">
+                    Filter by{draft.length > 0 ? ` (${draft.length} selected)` : ""}
+                  </p>
+                  {distinctValues.length > 8 && (
+                    <input
+                      value={valueSearch}
+                      onChange={(e) => setValueSearch(e.target.value)}
+                      placeholder="Search..."
+                      className="w-full h-8 px-2 mb-1 rounded-lg bg-background border border-card-border text-xs outline-none"
+                    />
                   )}
-                </div>
-                {selectedValues && selectedValues.length > 0 && (
-                  <button onClick={() => onFilterChange?.([])} className="w-full text-center px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground mt-1">
-                    Clear filter
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-        </>
-      )}
+                  <div className="max-h-48 overflow-y-auto">
+                    {loadingValues ? (
+                      <div className="flex justify-center py-3">
+                        <Loader2 size={14} className="animate-spin text-muted-foreground" />
+                      </div>
+                    ) : visibleValues.length === 0 ? (
+                      <p className="px-2 py-1.5 text-xs text-muted-foreground">No values found</p>
+                    ) : (
+                      visibleValues.map((v) => (
+                        <label key={v} className="flex items-center gap-2 px-2 py-1.5 text-xs rounded-lg hover:bg-secondary cursor-pointer capitalize">
+                          <input
+                            type="checkbox"
+                            checked={draft.includes(v)}
+                            onChange={(e) => setDraft((cur) => (e.target.checked ? [...cur, v] : cur.filter((x) => x !== v)))}
+                          />
+                          {v}
+                        </label>
+                      ))
+                    )}
+                  </div>
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      onClick={() => {
+                        onFilterChange?.([]);
+                        onToggle();
+                      }}
+                      disabled={(selectedValues?.length ?? 0) === 0 && draft.length === 0}
+                      className="flex-1 h-8 rounded-lg bg-secondary text-xs text-muted-foreground hover:text-foreground disabled:opacity-40"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      onClick={() => {
+                        onFilterChange?.(draft);
+                        onToggle();
+                      }}
+                      className="flex-1 h-8 rounded-lg bg-primary text-primary-foreground text-xs font-semibold"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </>,
+          document.body,
+        )}
     </div>
   );
 }
@@ -1367,7 +1429,7 @@ function UsersSection({ token, toast, isSuperAdmin }: { token: string | null; to
                       }}
                       filterable
                       selectedValues={genderFilter}
-                      onFilterChange={setGenderFilter}
+                      onFilterChange={(v) => { setGenderFilter(v); setPage(1); }}
                       isOpen={openHeaderMenu === "gender"}
                       onToggle={() => setOpenHeaderMenu((v) => (v === "gender" ? null : "gender"))}
                       token={token}
@@ -1402,7 +1464,7 @@ function UsersSection({ token, toast, isSuperAdmin }: { token: string | null; to
                       }}
                       filterable
                       selectedValues={cityFilter}
-                      onFilterChange={setCityFilter}
+                      onFilterChange={(v) => { setCityFilter(v); setPage(1); }}
                       isOpen={openHeaderMenu === "city"}
                       onToggle={() => setOpenHeaderMenu((v) => (v === "city" ? null : "city"))}
                       token={token}
