@@ -55,6 +55,12 @@ async function isDynamicDiscoveryEnabled(): Promise<boolean> {
 // loaded.
 const notSnoozedFilter = () => `snooze_until.is.null,snooze_until.lte.${new Date().toISOString()}`;
 
+// Banned people, and people whose suspension hasn't ended yet, must never be
+// shown to anyone. A suspension lifts by itself once suspended_until passes.
+// Each .or() below is ANDed with the others by PostgREST.
+const notBannedFilter = () => "banned.is.null,banned.eq.false";
+const notSuspendedFilter = () => `suspended_until.is.null,suspended_until.lte.${new Date().toISOString()}`;
+
 // Shared between /discover/categories (preview counts) and
 // /discover/categories/:key (actual results) — both must use the exact
 // same radius for "Near You" or the tile's advertised count could
@@ -154,7 +160,7 @@ async function buildDiscoverQueue(userId: string, extraExcludeIds: string[] = []
         "nightlife_frequency, has_tattoos, pets, activity_level, height_cm, education, languages_spoken, languages_other, love_language, latitude, longitude",
     )
     .not("id", "in", `(${excludedIds.join(",")})`)
-    .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter())
+    .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter()).or(notBannedFilter()).or(notSuspendedFilter())
     // Without this, the query has no explicit order at all, meaning
     // Postgres returns whatever 300 rows it happens to fetch first —
     // with no guarantee a currently-boosted profile is even among
@@ -1001,7 +1007,7 @@ router.get("/discover/search", requireAuth, requirePhotoRequirement, async (req,
         "education, languages_spoken, languages_other, love_language, latitude, longitude",
     )
     .not("id", "in", `(${excludedIds.join(",")})`)
-    .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter());
+    .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter()).or(notBannedFilter()).or(notSuspendedFilter());
 
   if (name) {
     query = query.ilike("name", `%${name}%`);
@@ -1118,7 +1124,7 @@ router.get("/discover/categories", requireAuth, requirePhotoRequirement, async (
       .from("profiles")
       .select(PREVIEW_FIELDS)
       .not("id", "in", excludeClause)
-      .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter())
+      .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter()).or(notBannedFilter()).or(notSuspendedFilter())
       .gte("created_at", sevenDaysAgo)
       .limit(300);
     categories.push({ key: "new_here", label: "New Here", ...applyHardFilters(data ?? []) });
@@ -1129,7 +1135,7 @@ router.get("/discover/categories", requireAuth, requirePhotoRequirement, async (
       .from("profiles")
       .select(PREVIEW_FIELDS)
       .not("id", "in", excludeClause)
-      .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter())
+      .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter()).or(notBannedFilter()).or(notSuspendedFilter())
       .eq("is_verified", true)
       .limit(300);
     categories.push({ key: "verified", label: "Verified", ...applyHardFilters(data ?? []) });
@@ -1153,7 +1159,7 @@ router.get("/discover/categories", requireAuth, requirePhotoRequirement, async (
         .from("profiles")
         .select(PREVIEW_FIELDS)
         .in("id", audioUserIds)
-        .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter());
+        .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter()).or(notBannedFilter()).or(notSuspendedFilter());
       result = applyHardFilters(data ?? []);
     }
     categories.push({ key: "has_audio", label: "Voice Questions", ...result });
@@ -1177,7 +1183,7 @@ router.get("/discover/categories", requireAuth, requirePhotoRequirement, async (
       .from("profiles")
       .select(PREVIEW_FIELDS)
       .not("id", "in", excludeClause)
-      .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter())
+      .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter()).or(notBannedFilter()).or(notSuspendedFilter())
       .not("latitude", "is", null)
       .not("longitude", "is", null)
       .limit(500);
@@ -1202,7 +1208,7 @@ router.get("/discover/categories", requireAuth, requirePhotoRequirement, async (
       .from("profiles")
       .select(PREVIEW_FIELDS)
       .not("id", "in", excludeClause)
-      .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter())
+      .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter()).or(notBannedFilter()).or(notSuspendedFilter())
       .limit(300);
     const sorted = (data ?? [])
       .map((c) => ({ c, score: viewerProfile ? computeCompatibilityScore(c, { ...viewerProfile, dealbreakers }) : 0 }))
@@ -1230,7 +1236,7 @@ router.get("/discover/categories", requireAuth, requirePhotoRequirement, async (
         .from("profiles")
         .select(PREVIEW_FIELDS)
         .in("id", likedIds)
-        .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter());
+        .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter()).or(notBannedFilter()).or(notSuspendedFilter());
       const sorted = (data ?? []).sort((a, b) => (countMap.get(b.id) ?? 0) - (countMap.get(a.id) ?? 0));
       result = applyHardFilters(sorted);
     }
@@ -1255,7 +1261,7 @@ router.get("/discover/categories", requireAuth, requirePhotoRequirement, async (
       .from("profiles")
       .select(PREVIEW_FIELDS)
       .not("id", "in", excludeClause)
-      .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter())
+      .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter()).or(notBannedFilter()).or(notSuspendedFilter())
       .in(
         "relationship_type",
         RELATIONSHIP_CATEGORY_DEFS.map((d) => d.value),
@@ -1305,7 +1311,7 @@ router.get("/discover/categories/:key", requireAuth, requirePhotoRequirement, as
         .from("profiles")
         .select(SELECT_FIELDS)
         .not("id", "in", excludeClause)
-        .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter())
+        .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter()).or(notBannedFilter()).or(notSuspendedFilter())
         .gte("created_at", sevenDaysAgo)
         .order("created_at", { ascending: false })
         .limit(30);
@@ -1317,7 +1323,7 @@ router.get("/discover/categories/:key", requireAuth, requirePhotoRequirement, as
         .from("profiles")
         .select(SELECT_FIELDS)
         .not("id", "in", excludeClause)
-        .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter())
+        .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter()).or(notBannedFilter()).or(notSuspendedFilter())
         .eq("is_verified", true)
         .limit(30);
       results = data ?? [];
@@ -1334,7 +1340,7 @@ router.get("/discover/categories/:key", requireAuth, requirePhotoRequirement, as
           .from("profiles")
           .select(SELECT_FIELDS)
           .in("id", audioUserIds.slice(0, 30))
-          .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter());
+          .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter()).or(notBannedFilter()).or(notSuspendedFilter());
         results = data ?? [];
       }
       break;
@@ -1351,7 +1357,7 @@ router.get("/discover/categories/:key", requireAuth, requirePhotoRequirement, as
           .from("profiles")
           .select(SELECT_FIELDS)
           .not("id", "in", excludeClause)
-          .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter())
+          .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter()).or(notBannedFilter()).or(notSuspendedFilter())
           .not("latitude", "is", null)
           .not("longitude", "is", null)
           .limit(500);
@@ -1370,7 +1376,7 @@ router.get("/discover/categories/:key", requireAuth, requirePhotoRequirement, as
         .from("profiles")
         .select(SELECT_FIELDS)
         .not("id", "in", excludeClause)
-        .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter())
+        .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter()).or(notBannedFilter()).or(notSuspendedFilter())
         .limit(300);
 
       results = (data ?? [])
@@ -1394,7 +1400,7 @@ router.get("/discover/categories/:key", requireAuth, requirePhotoRequirement, as
       }
       const topIds = [...countMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([id]) => id);
       if (topIds.length > 0) {
-        const { data } = await supabase.from("profiles").select(SELECT_FIELDS).in("id", topIds).eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter());
+        const { data } = await supabase.from("profiles").select(SELECT_FIELDS).in("id", topIds).eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter()).or(notBannedFilter()).or(notSuspendedFilter());
         results = topIds.map((id) => (data ?? []).find((p) => p.id === id)).filter(Boolean);
       }
       break;
@@ -1417,7 +1423,7 @@ router.get("/discover/categories/:key", requireAuth, requirePhotoRequirement, as
         .from("profiles")
         .select(SELECT_FIELDS)
         .not("id", "in", excludeClause)
-        .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter())
+        .eq("is_incognito", false).eq("onboarding_completed", true).not("photo_url", "is", null).neq("photo_url", "").or(notSnoozedFilter()).or(notBannedFilter()).or(notSuspendedFilter())
         .eq("relationship_type", relationshipValue)
         .limit(30);
       results = data ?? [];
